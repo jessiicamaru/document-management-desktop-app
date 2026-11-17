@@ -140,6 +140,21 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
       </section>
 
       <section>
+        <h3>Đọc sách (EPUB, Kindle)</h3>
+        <Row label="Số trang trên màn hình">
+          <Segmented
+            value={ui.epubSpread}
+            options={[
+              ['single', 'Một trang'],
+              ['auto', 'Hai trang khi cửa sổ rộng']
+            ]}
+            onChange={(v) => set('epubSpread', v)}
+          />
+        </Row>
+        <p className="hint">Màu, kiểu chữ và cỡ chữ của sách theo phần "Đọc Markdown" ở trên.</p>
+      </section>
+
+      <section>
         <h3>Thanh bên</h3>
         <Row label="Sắp xếp bài trong thư mục">
           <Segmented

@@ -88,7 +88,8 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
     readingSize: Math.min(24, Math.max(13, Math.round(Number(ui.readingSize) || DEFAULT_UI.readingSize))),
     readingFont: pick(ui.readingFont, ['sans', 'serif'] as const, DEFAULT_UI.readingFont),
     readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth),
-    sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort)
+    sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort),
+    epubSpread: pick(ui.epubSpread, ['single', 'auto'] as const, DEFAULT_UI.epubSpread)
   }
 }
 

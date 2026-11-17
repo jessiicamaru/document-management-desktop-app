@@ -16,6 +16,8 @@ export function applyUiSettings(ui: UiSettings): void {
   root.setProperty('--read-size', `${ui.readingSize}px`)
   root.setProperty('--read-width', WIDTHS[ui.readingWidth])
   root.setProperty('--read-font', FONTS[ui.readingFont])
+  // Read by EpubView, which also watches it to switch right away.
+  document.documentElement.dataset.epubSpread = ui.epubSpread
 }
 
 /** "5 phút trước", "hôm qua"... */

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import JSZip from 'jszip'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -56,6 +57,18 @@ writeFileSync(
 )
 writeFileSync(path.join(library, 'backend', 'tool.py'), 'print("this must never run")\n')
 writeFileSync(path.join(library, 'backend', 'readme.txt'), 'plain text\n')
+// A book whose outline points at sections inside ONE file (common in real books): the
+// outline must follow the page you are on, not stay on the first section of that file.
+{
+  const para = (n) => Array.from({ length: 40 }, (_, i) => `<p>Đoạn ${i + 1} của phần ${n}. Viết dài một chút để mỗi phần chiếm vài trang khi đọc.</p>`).join('')
+  const zip = new JSZip()
+  zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' })
+  zip.file('META-INF/container.xml', '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
+  zip.file('OEBPS/book.xhtml', `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>Một file</title></head><body>${[1, 2, 3].map((n) => `<h2 id="s${n}">Phần ${n}</h2>${para(n)}`).join('')}</body></html>`)
+  zip.file('OEBPS/nav.xhtml', '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Mục lục</title></head><body><nav epub:type="toc"><ol>' + [1, 2, 3].map((n) => `<li><a href="book.xhtml#s${n}">Phần ${n}</a></li>`).join('') + '</ol></nav></body></html>')
+  zip.file('OEBPS/content.opf', '<?xml version="1.0" encoding="utf-8"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">mot-file</dc:identifier><dc:title>Sách một file</dc:title><dc:language>vi</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="b" href="book.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="b"/></spine></package>')
+  writeFileSync(path.join(library, 'sach', 'Sách một file.epub'), await zip.generateAsync({ type: 'nodebuffer' }))
+}
 const CRLF = 'frontend/Windows note.md'
 writeFileSync(path.join(library, 'frontend', 'Windows note.md'), '# Windows note\r\n\r\nDòng một.\r\nDòng hai.\r\n')
 const file = (rel) => path.join(library, rel)
@@ -585,6 +598,56 @@ try {
   const kindleNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['sach/Docker nhanh.mobi']?.items ?? []
   check(kindleNotes.length === 1 && kindleNotes[0].cfi?.startsWith('epubcfi(') && kindleNotes[0].quote === 'volume', 'Kindle book: highlight saved with its position')
   await page.screenshot({ path: shot('14b-kindle') })
+
+  // Outline follows the page being read, also for sections inside one file.
+  step('18h. Book outline follows the reading position')
+  await openDoc('Sách một file')
+  await page.waitForFunction(() => document.querySelectorAll('.outline-item').length === 3, null, { timeout: 15000 })
+  const activeItem = () => page.evaluate(() => document.querySelector('.outline-item.active')?.textContent ?? '')
+  await page.waitForFunction(() => document.querySelector('.outline-item.active')?.textContent === 'Phần 1', null, { timeout: 10000 })
+  await page.click('.outline-item >> text=Phần 3')
+  await page.waitForFunction(() => document.querySelector('.outline-item.active')?.textContent === 'Phần 3', null, { timeout: 10000 }).catch(() => {})
+  check((await activeItem()) === 'Phần 3', `outline highlights the section shown (${await activeItem()})`)
+  await page.click('.epub-bar .icon-btn >> nth=0') // previous page: the end of section 2
+  await page.waitForTimeout(800)
+  check((await activeItem()) === 'Phần 2', `turning back a page highlights the section before (${await activeItem()})`)
+
+  // One page or two side by side (Settings > Đọc sách), on a wide window.
+  step('18i. One or two pages')
+  /** Text of the first paragraph on screen. */
+  const shownText = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('.epub-host').getBoundingClientRect()
+      const frame = document.querySelector('.epub-host iframe')
+      const box = frame.getBoundingClientRect()
+      const p = [...frame.contentDocument.querySelectorAll('p')].find((el) => {
+        const x = box.left + el.getBoundingClientRect().left
+        return x >= host.left && x < host.right
+      })
+      return p?.textContent ?? ''
+    })
+  await page.setViewportSize({ width: 2000, height: 1000 })
+  await page.waitForTimeout(1500)
+  const pagesShown = () =>
+    page.evaluate(() => {
+      const host = document.querySelector('.epub-host')
+      const frame = host.querySelector('iframe')
+      const col = parseFloat(getComputedStyle(frame.contentDocument.body).columnWidth)
+      return Math.round(host.clientWidth / col)
+    })
+  const wide = await pagesShown()
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await page.click('dialog.settings >> text=Một trang')
+  await page.click('dialog.settings >> text=Xong')
+  await page.waitForTimeout(1500)
+  const single = await pagesShown()
+  check(wide === 2 && single === 1, `wide window: 2 pages by default, 1 page after choosing "Một trang" (${wide} -> ${single})`)
+  // Switching keeps the reading position (and the outline in step with it).
+  const firstShown = await shownText()
+  check(firstShown.includes('phần 2') && (await activeItem()) === 'Phần 2', `changing the page layout keeps your place ("${firstShown.slice(0, 20)}…", outline: ${await activeItem()})`)
+  await page.screenshot({ path: shot('14c-epub-single') })
+  await page.setViewportSize({ width: 1320, height: 860 })
+  await page.waitForTimeout(500)
 
   // 19. Issue #1: a page can't open programs, and asks before opening other files.
   step('19. Safety: opening files from a page')

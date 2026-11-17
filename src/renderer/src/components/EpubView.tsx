@@ -7,7 +7,7 @@
 // position is remembered as an EPUB CFI (an exact position in the book), highlights too.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import ePub from 'epubjs'
+import ePub, { EpubCFI } from 'epubjs'
 import type { Annotation, DocEntry } from '../../../shared/types'
 import { loadLocal, saveLocal } from '../lib/docs'
 import { generateLocations } from '../lib/epub-locations'
@@ -82,6 +82,17 @@ function toTextRange(range: Range): Range {
   return r
 }
 const css = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+/** Settings > Đọc sách: "none" = always one page; "auto" = two pages when the book area is wide. */
+const spreadSetting = (): 'none' | 'auto' => (document.documentElement.dataset.epubSpread === 'single' ? 'none' : 'auto')
+const MIN_SPREAD_WIDTH = 1100
+
+/** The part of epub.js's Contents (one shown chapter) used to place outline entries. */
+interface ShownChapter {
+  sectionIndex: number
+  document: Document
+  cfiFromNode(node: Node): string
+}
 
 /** Colours and reading font follow the app (Settings > Đọc Markdown, light/dark). */
 function applyTheme(rendition: Rendition): void {
@@ -178,6 +189,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
   useEffect(() => {
     let book: Book | null = null
     let disposeBook: (() => void) | undefined
+    let stopWatching: (() => void) | undefined
     let cancelled = false
     const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const onScheme = (): void => {
@@ -202,11 +214,46 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     }
     window.addEventListener('keydown', onKey)
     // Re-layout the pages when the window or the side panel changes size.
+    //
+    // Laying the pages out again (new window size, one or two pages) makes epub.js lose the
+    // page you were on. So: remember the place you were reading (lastCfi, from 'relocated'),
+    // ignore the positions epub.js reports while it re-lays out, and go back there after.
+    let lastCfi: string | null = null
+    let restoring: string | null = null
+    let exactAfterRestore: string | null = null
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined
+    const relayout = (change: () => void): void => {
+      restoring ??= lastCfi
+      change()
+      clearTimeout(restoreTimer)
+      restoreTimer = setTimeout(async () => {
+        const at = restoring
+        try {
+          if (at && !cancelled) await rendition.current?.display(at)
+        } finally {
+          // Keep the exact place, not the start of the page(s) now shown: with two pages that
+          // is the left page, and each re-layout would move you back a little. epub.js reports
+          // the new position just after display() finishes, so remember it for that report.
+          if (restoring === at) restoring = null
+          if (at) {
+            lastCfi = at
+            exactAfterRestore = at
+            setTimeout(() => (exactAfterRestore = null), 400)
+          }
+        }
+      }, 200)
+    }
+    // epub.js re-lays out by itself when the window is resized (shortly after this event);
+    // catch it first so the place you were reading is kept.
+    const onWindowResize = (): void => {
+      if ((rendition.current as unknown as { manager?: unknown } | null)?.manager) relayout(() => {})
+    }
+    window.addEventListener('resize', onWindowResize, true)
     const resize = new ResizeObserver(() => {
       const host = hostRef.current
       // The view manager only exists once the book has opened; earlier size changes are picked up by display().
       const r = rendition.current as unknown as { manager?: unknown; resize: (w: number, h: number) => void } | null
-      if (host && r?.manager) r.resize(host.clientWidth, host.clientHeight)
+      if (host && r?.manager) relayout(() => r.resize(host.clientWidth, host.clientHeight))
     })
     resize.observe(hostRef.current!)
 
@@ -228,8 +275,8 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
         width: '100%',
         height: '100%',
         flow: 'paginated',
-        spread: 'auto',
-        minSpreadWidth: 1100, // two pages side by side when there is room
+        spread: spreadSetting(),
+        minSpreadWidth: MIN_SPREAD_WIDTH, // two pages side by side when there is room (if allowed)
         allowScriptedContent: false
       })
       rendition.current = r
@@ -245,15 +292,18 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
         ])
       toc.current = flatten(nav.toc, 1).map((t) => ({ ...t, href: chapterHref(t.href) }))
       cb.current.onOutline(toc.current.map((t) => ({ level: Math.min(t.level, 3), text: t.label })))
+      // Position of each outline entry in the reading order (-1 if it points nowhere).
+      const spine = book.spine as unknown as { get(target: string): { index: number } | null }
+      const tocSpine = toc.current.map((t) => spine.get(t.href.split('#')[0])?.index ?? -1)
+      const cfiCompare = new EpubCFI()
 
       // Where you are: remember the position, highlight the current chapter in the outline.
-      r.on('relocated', (location: { start: { cfi: string; href: string; percentage?: number } }) => {
+      r.on('relocated', (location: { start: { cfi: string; href: string; index: number }; end: { cfi: string } }) => {
+        if (restoring) return // a passing position while the pages are laid out again
+        lastCfi = exactAfterRestore ?? location.start.cfi
+        exactAfterRestore = null
         saveLocal(positionKey(doc.path), location.start.cfi)
-        // The last outline entry in this chapter that starts at or before here.
-        let active = -1
-        toc.current.forEach((t, i) => {
-          if (t.href.split('#')[0] === location.start.href) active = active < 0 ? i : active
-        })
+        const active = activeEntry(location)
         cb.current.onReading(0, active)
         const ready = (book?.locations as unknown as { length(): number } | undefined)?.length() ?? 0
         setProgress({
@@ -261,6 +311,38 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
           percent: ready ? Math.round((book!.locations.percentageFromCfi(location.start.cfi) ?? 0) * 100) : null
         })
       })
+      /**
+       * The outline entry being read: the last one that starts on or before the pages shown.
+       * Entries in earlier files count; in the file being read, an entry pointing at a place
+       * inside it (#section) counts once that place is on or before the last page shown.
+       * Files that are not in the outline keep the entry before them highlighted.
+       */
+      function activeEntry(location: { start: { index: number }; end: { cfi: string } }): number {
+        const here = location.start.index
+        const shown = (r.getContents() as unknown as ShownChapter[]).find((c) => c.sectionIndex === here)
+        let active = -1
+        toc.current.forEach((t, i) => {
+          const at = tocSpine[i]
+          if (at < 0 || at > here) return
+          const hash = t.href.split('#')[1]
+          if (at === here && hash && shown) {
+            const el = shown.document.getElementById(decodeURIComponent(hash))
+            try {
+              if (el && cfiCompare.compare(shown.cfiFromNode(el), location.end.cfi) > 0) return // further on
+            } catch {
+              // can't place it: treat it as the start of its file
+            }
+          }
+          if (active < 0 || at >= tocSpine[active]) active = i
+        })
+        return active
+      }
+
+      // Settings > Đọc sách changed: one page or two, right away.
+      const spreadWatch = new MutationObserver(() => relayout(() => r.spread(spreadSetting(), MIN_SPREAD_WIDTH)))
+      spreadWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-epub-spread'] })
+      stopWatching = () => spreadWatch.disconnect()
+
       // Turning pages with the keyboard / mouse wheel while the book has the focus.
       r.on('keyup', (e: KeyboardEvent) => {
         if (e.altKey || e.ctrlKey || e.metaKey) return
@@ -326,6 +408,8 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       cancelled = true
       window.removeEventListener('keydown', onKey)
       resize.disconnect()
+      clearTimeout(restoreTimer)
+      window.removeEventListener('resize', onWindowResize, true)
       darkQuery.removeEventListener('change', onScheme)
       rendition.current?.destroy()
       rendition.current = null
@@ -333,6 +417,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       bookRef.current = null
       book?.destroy()
       disposeBook?.()
+      stopWatching?.()
     }
   }, [doc.path, doc.mtime])
 

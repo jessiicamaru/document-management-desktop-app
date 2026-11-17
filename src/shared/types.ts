@@ -134,6 +134,8 @@ export interface UiSettings {
   readingWidth: 'narrow' | 'normal' | 'wide'
   /** Sidebar order inside each folder (issue #23). */
   sidebarSort: 'name' | 'modified'
+  /** Books (EPUB, Kindle): always one page, or two side by side when the window is wide. */
+  epubSpread: 'single' | 'auto'
 }
 
 export const DEFAULT_UI: UiSettings = {
@@ -142,7 +144,8 @@ export const DEFAULT_UI: UiSettings = {
   readingSize: 16,
   readingFont: 'sans',
   readingWidth: 'normal',
-  sidebarSort: 'name'
+  sidebarSort: 'name',
+  epubSpread: 'auto'
 }
 
 /** One edited block of an HTML document: which element (by position) and its new inner HTML. */
