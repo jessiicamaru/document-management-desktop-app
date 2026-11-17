@@ -31,7 +31,7 @@ git push
 npm run release
 ```
 
-`npm run release` từ chối chạy nếu còn thay đổi chưa commit/push, hoặc nếu version đó đã được phát hành. Token GitHub lấy từ `gh auth token` (GitHub CLI), không lưu vào file nào.
+`npm run release` từ chối chạy nếu còn thay đổi chưa commit/push, hoặc nếu version đó đã được phát hành. Việc tải lên dùng GitHub CLI (`gh`) đã đăng nhập sẵn, không lưu token vào file nào. Nếu lần chạy trước dừng giữa chừng, chạy lại sẽ tải tiếp phần còn thiếu.
 
 Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồi hỏi có xoá settings trong `%APPDATA%\Study Docs` không. Thư mục tài liệu không bị đụng tới.
 
