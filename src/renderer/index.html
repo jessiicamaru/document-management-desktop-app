@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Study Docs</title>
+    <!-- Documents are shown from doc:// inside sandboxed iframes; the app itself only runs its own code. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' doc: data: https:; font-src 'self' data:; frame-src doc:"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

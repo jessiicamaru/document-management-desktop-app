@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Event Sourcing — Bài học để chép vào vở</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f4ef;
+    --paper:#fffdf9;
+    --ink:#1f2328;
+    --ink-soft:#4a5056;
+    --line:#e5e0d6;
+    --accent:#b4531f;
+    --accent-soft:#f4e6dc;
+    --blue:#2f5d8a;
+    --blue-soft:#e4edf5;
+    --green:#3b6b45;
+    --green-soft:#e4efe6;
+    --amber:#9a6a12;
+    --amber-soft:#f6ecd6;
+    --violet:#5b4a86;
+    --violet-soft:#ece7f5;
+    --code-bg:#2a2f36;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Be Vietnam Pro',system-ui,sans-serif;
+    line-height:1.72;font-size:17px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:820px;margin:0 auto;padding:0 20px 120px}
+
+  /* Header */
+  header.hero{
+    max-width:820px;margin:0 auto;padding:56px 20px 36px;
+  }
+  .kicker{
+    display:inline-block;font-size:12px;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--accent);
+    background:var(--accent-soft);padding:5px 12px;border-radius:999px;
+  }
+  h1{
+    font-size:clamp(30px,6vw,46px);line-height:1.1;font-weight:800;
+    margin:20px 0 10px;letter-spacing:-.02em;
+  }
+  .sub{font-size:18px;color:var(--ink-soft);max-width:60ch;margin:0}
+  .meta{margin-top:18px;font-size:14px;color:var(--ink-soft);display:flex;gap:16px;flex-wrap:wrap}
+  .meta span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+
+  /* TOC */
+  .toc{
+    background:var(--paper);border:1px solid var(--line);border-radius:16px;
+    padding:22px 26px;margin:8px auto 44px;
+  }
+  .toc h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);margin:0 0 12px}
+  .toc ol{margin:0;padding-left:0;counter-reset:toc;list-style:none;
+    display:grid;grid-template-columns:1fr 1fr;gap:4px 28px}
+  .toc li{counter-increment:toc;font-size:15px;padding:3px 0}
+  .toc li::before{content:counter(toc)".";color:var(--accent);font-weight:700;margin-right:8px}
+  .toc a{color:var(--ink);text-decoration:none;border-bottom:1px solid transparent}
+  .toc a:hover{border-bottom-color:var(--accent)}
+  @media(max-width:620px){.toc ol{grid-template-columns:1fr}}
+
+  /* Sections */
+  section{margin:0 0 10px;scroll-margin-top:20px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin:52px 0 6px}
+  .sec-num{
+    font-size:14px;font-weight:800;color:#fff;background:var(--accent);
+    min-width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;transform:translateY(-2px)
+  }
+  h2.sec-title{font-size:25px;font-weight:800;margin:0;letter-spacing:-.01em;line-height:1.2}
+  h3{font-size:19px;font-weight:700;margin:30px 0 6px}
+  p{margin:14px 0}
+  strong{font-weight:700;color:var(--ink)}
+  em{font-style:normal;background:linear-gradient(transparent 62%,var(--accent-soft) 62%);padding:0 2px;font-weight:600}
+  ul,ol.body-list{margin:14px 0;padding-left:22px}
+  li{margin:7px 0}
+  code.inline{
+    font-family:'JetBrains Mono',monospace;font-size:.86em;
+    background:#efe9df;padding:2px 6px;border-radius:5px;color:#8a3d12;font-weight:500;
+  }
+  a.ref{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-soft)}
+
+  /* Figure / diagram */
+  figure{margin:26px 0;background:var(--paper);border:1px solid var(--line);border-radius:16px;
+    padding:22px 20px 16px;overflow:hidden}
+  figure svg{display:block;width:100%;height:auto}
+  figcaption{font-size:13.5px;color:var(--ink-soft);text-align:center;margin-top:12px;font-style:italic}
+
+  /* Callouts */
+  .note{
+    border-radius:14px;padding:16px 18px 16px 20px;margin:22px 0;position:relative;
+    border:1px solid var(--line);
+  }
+  .note .tag{font-size:11.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;
+    display:block;margin-bottom:5px}
+  .note p{margin:4px 0}
+  .note p:first-of-type{margin-top:0}
+  .remember{background:var(--accent-soft);border-color:#e9cdb8}
+  .remember .tag{color:var(--accent)}
+  .tip{background:var(--blue-soft);border-color:#cfdeec}
+  .tip .tag{color:var(--blue)}
+  .warn{background:var(--amber-soft);border-color:#ecdcb6}
+  .warn .tag{color:var(--amber)}
+
+  /* Code block */
+  pre{
+    background:var(--code-bg);color:#e8e6e1;border-radius:12px;padding:16px 18px;
+    overflow-x:auto;margin:20px 0;font-family:'JetBrains Mono',monospace;font-size:13.5px;line-height:1.7;
+  }
+  pre .c{color:#8a929c}         /* comment */
+  pre .k{color:#e0936b}         /* keyword */
+  pre .s{color:#9fc08a}         /* string */
+  pre .n{color:#7fb0d8}         /* name/number */
+
+  /* comparison table */
+  .cmp{width:100%;border-collapse:collapse;margin:22px 0;font-size:15px;
+    background:var(--paper);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .cmp th,.cmp td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  .cmp thead th{background:#efe9df;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-soft)}
+  .cmp tr:last-child td{border-bottom:none}
+  .cmp td:first-child{font-weight:600;width:34%}
+
+  /* two col pros cons */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:22px 0}
+  .cols .card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;background:var(--paper)}
+  .cols .card h4{margin:0 0 8px;font-size:15px;display:flex;align-items:center;gap:8px}
+  .cols .card ul{margin:0;padding-left:18px;font-size:14.5px}
+  .cols .card li{margin:6px 0}
+  .pro h4{color:var(--green)} .con h4{color:var(--accent)}
+  @media(max-width:620px){.cols{grid-template-columns:1fr}}
+
+  .divider{height:1px;background:var(--line);margin:40px 0;border:none}
+
+  /* cheat sheet */
+  .cheat{background:#2a2f36;color:#edeae3;border-radius:18px;padding:26px 24px;margin:34px 0}
+  .cheat h2{color:#fff;margin:0 0 4px;font-size:22px}
+  .cheat p.lead{color:#b9bfc7;margin:0 0 18px;font-size:14.5px}
+  .cheat dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:10px 16px}
+  .cheat dt{font-family:'JetBrains Mono',monospace;color:#e0936b;font-weight:600;font-size:13.5px;white-space:nowrap}
+  .cheat dd{margin:0;font-size:14.5px;color:#d7d3ca}
+  @media(max-width:560px){.cheat dl{grid-template-columns:1fr;gap:2px 0}.cheat dd{margin-bottom:12px}}
+
+  footer{max-width:820px;margin:60px auto 0;padding:24px 20px;border-top:1px solid var(--line);
+    font-size:13.5px;color:var(--ink-soft);text-align:center}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <span class="kicker">Backend · Kiến trúc dữ liệu</span>
+  <h1>Event Sourcing</h1>
+  <p class="sub">Một bài học gọn, có sơ đồ vẽ sẵn — đọc để hiểu, rồi chép vào vở cho nhớ. Từ ý tưởng cốt lõi đến những cái bẫy khi lên production.</p>
+  <div class="meta">
+    <span><span class="dot"></span> 12 phần</span>
+    <span><span class="dot"></span> 6 sơ đồ</span>
+    <span><span class="dot"></span> Có cheat sheet ôn nhanh</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <nav class="toc">
+    <h2>Mục lục</h2>
+    <ol>
+      <li><a href="#s1">Event Sourcing là gì?</a></li>
+      <li><a href="#s2">Ba khái niệm nền tảng</a></li>
+      <li><a href="#s3">Dựng lại state bằng Replay</a></li>
+      <li><a href="#s4">Snapshot — tối ưu tốc độ</a></li>
+      <li><a href="#s5">Projection / Read Model</a></li>
+      <li><a href="#s6">CQRS &amp; quan hệ với ES</a></li>
+      <li><a href="#s7">Concurrency — Optimistic</a></li>
+      <li><a href="#s8">Schema evolution — Upcaster</a></li>
+      <li><a href="#s9">Eventual consistency</a></li>
+      <li><a href="#s10">Compensating event</a></li>
+      <li><a href="#s11">Idempotency khi rebuild</a></li>
+      <li><a href="#s12">Ưu / nhược &amp; khi nào dùng</a></li>
+    </ol>
+  </nav>
+
+  <!-- 1 -->
+  <section id="s1">
+    <div class="sec-head"><span class="sec-num">1</span><h2 class="sec-title">Event Sourcing là gì?</h2></div>
+    <p>Trong cách làm <strong>CRUD</strong> truyền thống, database chỉ lưu <strong>trạng thái hiện tại</strong> của dữ liệu. Mỗi lần cập nhật, giá trị cũ bị <em>ghi đè</em> — lịch sử biến mất.</p>
+    <p><strong>Event Sourcing (ES)</strong> lật ngược điều đó: thay vì lưu state, ta lưu lại <strong>toàn bộ chuỗi sự kiện (event)</strong> đã làm thay đổi dữ liệu. State hiện tại không được lưu trực tiếp mà được <strong>dựng lại</strong> bằng cách chạy lại (replay) các event theo thứ tự.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 290" role="img" aria-label="So sánh CRUD và Event Sourcing">
+        <!-- CRUD side -->
+        <text x="190" y="26" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328" font-family="Be Vietnam Pro">CRUD — chỉ giữ state hiện tại</text>
+        <rect x="90" y="48" width="200" height="54" rx="10" fill="#f4e6dc" stroke="#b4531f" stroke-width="1.5"/>
+        <text x="190" y="72" text-anchor="middle" font-size="13" fill="#8a3d12" font-family="JetBrains Mono">balance = 50</text>
+        <text x="190" y="90" text-anchor="middle" font-size="11" fill="#8a5a3a" font-family="Be Vietnam Pro">(ghi đè mỗi lần đổi)</text>
+        <text x="190" y="128" text-anchor="middle" font-size="12" fill="#b4531f" font-family="JetBrains Mono">↓ nạp 30 nữa</text>
+        <rect x="90" y="142" width="200" height="40" rx="10" fill="#f4e6dc" stroke="#b4531f" stroke-width="1.5"/>
+        <text x="190" y="167" text-anchor="middle" font-size="13" fill="#8a3d12" font-family="JetBrains Mono">balance = 80</text>
+        <text x="190" y="214" text-anchor="middle" font-size="12" fill="#9a4a20" font-family="Be Vietnam Pro" font-style="italic">Giá trị cũ (50) đã mất.</text>
+        <text x="190" y="232" text-anchor="middle" font-size="12" fill="#9a4a20" font-family="Be Vietnam Pro" font-style="italic">Không biết vì sao thành 80.</text>
+
+        <!-- divider -->
+        <line x1="380" y1="40" x2="380" y2="250" stroke="#e5e0d6" stroke-width="1.5" stroke-dasharray="4 5"/>
+
+        <!-- ES side -->
+        <text x="570" y="26" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328" font-family="Be Vietnam Pro">Event Sourcing — giữ chuỗi event</text>
+        <g font-family="JetBrains Mono" font-size="12">
+          <rect x="450" y="48" width="240" height="34" rx="8" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="464" y="70" fill="#234d73">+ Opened(balance=0)</text>
+          <rect x="450" y="90" width="240" height="34" rx="8" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="464" y="112" fill="#234d73">+ Deposited(50)</text>
+          <rect x="450" y="132" width="240" height="34" rx="8" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="464" y="154" fill="#234d73">+ Deposited(30)</text>
+        </g>
+        <text x="570" y="196" text-anchor="middle" font-size="12" fill="#2f5d8a" font-family="JetBrains Mono">replay → balance = 80</text>
+        <text x="570" y="222" text-anchor="middle" font-size="12" fill="#234d73" font-family="Be Vietnam Pro" font-style="italic">Giữ đủ lịch sử: biết 80 đến</text>
+        <text x="570" y="240" text-anchor="middle" font-size="12" fill="#234d73" font-family="Be Vietnam Pro" font-style="italic">từ đâu, mốc nào.</text>
+      </svg>
+      <figcaption>CRUD ghi đè state; Event Sourcing cộng dồn các event bất biến rồi tính ra state.</figcaption>
+    </figure>
+
+    <div class="note remember">
+      <span class="tag">Ghi nhớ</span>
+      <p>Nguồn sự thật (<em>source of truth</em>) trong ES là <strong>chuỗi event</strong>, không phải state. State chỉ là kết quả tính ra từ event.</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="s2">
+    <div class="sec-head"><span class="sec-num">2</span><h2 class="sec-title">Ba khái niệm nền tảng</h2></div>
+
+    <h3>① Event</h3>
+    <p>Là một <strong>sự thật đã xảy ra</strong> trong quá khứ. Vì nó đã diễn ra rồi, event luôn được đặt tên ở <strong>thì quá khứ</strong>: <code class="inline">OrderCreated</code>, <code class="inline">EmailChanged</code>, <code class="inline">OrderCancelled</code>.</p>
+    <p>Phân biệt với <strong>Command</strong> (mệnh lệnh) — đặt tên thì hiện tại: <code class="inline">CreateOrder</code>. Command là <em>ý định</em>, có thể bị từ chối. Event là <em>kết quả</em> đã xảy ra, không thể bị từ chối.</p>
+
+    <h3>② Event Store</h3>
+    <p>Nơi lưu event. Đặc tính quan trọng nhất: <strong>append-only</strong> (chỉ ghi thêm, không sửa, không xoá). Event là lịch sử bất biến — sửa quá khứ sẽ phá vỡ audit trail và làm sai replay.</p>
+
+    <h3>③ Stream / Aggregate</h3>
+    <p>Các event của <strong>cùng một đối tượng</strong> (ví dụ một đơn hàng cụ thể) được gom vào một <strong>stream</strong>. Mỗi event trong stream có một số thứ tự tăng dần gọi là <strong>version</strong>. Đối tượng mà ta dựng lại từ stream đó gọi là <strong>aggregate</strong>.</p>
+
+    <div class="note tip">
+      <span class="tag">Mẹo đặt tên</span>
+      <p>Command = thì hiện tại (ý định) · Event = thì quá khứ (đã xảy ra). Nếu bạn lỡ đặt event là <code class="inline">UpdateEmail</code> thì sai — phải là <code class="inline">EmailChanged</code>.</p>
+    </div>
+  </section>
+
+  <!-- 3 -->
+  <section id="s3">
+    <div class="sec-head"><span class="sec-num">3</span><h2 class="sec-title">Dựng lại state bằng Replay</h2></div>
+    <p>Muốn biết trạng thái hiện tại của một aggregate, ta <strong>đọc tất cả event trong stream</strong> rồi áp lần lượt từng event vào một state khởi tạo. Hàm áp event thường gọi là <code class="inline">apply(state, event)</code>.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 210" role="img" aria-label="Replay các event để dựng lại state">
+        <defs>
+          <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#2f5d8a"/>
+          </marker>
+        </defs>
+        <text x="20" y="34" font-size="13" font-weight="700" fill="#1f2328" font-family="Be Vietnam Pro">Event stream (đọc từ trái sang phải)</text>
+        <g font-family="JetBrains Mono" font-size="11.5">
+          <rect x="20" y="48" width="150" height="46" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="95" y="70" text-anchor="middle" fill="#234d73">OrderCreated</text>
+          <text x="95" y="86" text-anchor="middle" fill="#6a7580" font-size="10">v1</text>
+
+          <rect x="200" y="48" width="150" height="46" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="275" y="70" text-anchor="middle" fill="#234d73">ItemAdded</text>
+          <text x="275" y="86" text-anchor="middle" fill="#6a7580" font-size="10">v2</text>
+
+          <rect x="380" y="48" width="150" height="46" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="455" y="70" text-anchor="middle" fill="#234d73">ItemAdded</text>
+          <text x="455" y="86" text-anchor="middle" fill="#6a7580" font-size="10">v3</text>
+
+          <rect x="560" y="48" width="150" height="46" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="635" y="70" text-anchor="middle" fill="#234d73">OrderPaid</text>
+          <text x="635" y="86" text-anchor="middle" fill="#6a7580" font-size="10">v4</text>
+        </g>
+        <line x1="170" y1="71" x2="196" y2="71" stroke="#2f5d8a" stroke-width="1.5" marker-end="url(#ar)"/>
+        <line x1="350" y1="71" x2="376" y2="71" stroke="#2f5d8a" stroke-width="1.5" marker-end="url(#ar)"/>
+        <line x1="530" y1="71" x2="556" y2="71" stroke="#2f5d8a" stroke-width="1.5" marker-end="url(#ar)"/>
+
+        <line x1="380" y1="112" x2="380" y2="140" stroke="#3b6b45" stroke-width="1.5" marker-end="url(#ar)" style="--c:#3b6b45"/>
+        <text x="398" y="132" font-size="12" fill="#3b6b45" font-family="Be Vietnam Pro">apply() từng event</text>
+
+        <rect x="230" y="150" width="300" height="46" rx="10" fill="#e4efe6" stroke="#3b6b45" stroke-width="1.5"/>
+        <text x="380" y="170" text-anchor="middle" font-size="12.5" fill="#2c5234" font-family="JetBrains Mono">State: { items:2, status:"paid" }</text>
+        <text x="380" y="187" text-anchor="middle" font-size="10.5" fill="#3b6b45" font-family="Be Vietnam Pro">= kết quả sau khi replay tới v4</text>
+      </svg>
+      <figcaption>State hiện tại = gấp (fold) toàn bộ event trong stream qua hàm apply().</figcaption>
+    </figure>
+
+    <p>Vấn đề: stream càng dài, replay từ đầu càng chậm. Đó là lý do có <strong>Snapshot</strong> ở phần sau.</p>
+  </section>
+
+  <!-- 4 -->
+  <section id="s4">
+    <div class="sec-head"><span class="sec-num">4</span><h2 class="sec-title">Snapshot — tối ưu tốc độ</h2></div>
+    <p>Khi một aggregate tích luỹ hàng nghìn event, replay từ v1 mỗi lần load sẽ rất chậm. <strong>Snapshot</strong> là bản lưu lại state đã tính tại một version N. Lần sau chỉ cần nạp snapshot rồi replay các event <strong>từ N+1 trở đi</strong>.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 180" role="img" aria-label="Snapshot giúp giảm số event cần replay">
+        <text x="20" y="30" font-size="13" font-weight="700" fill="#1f2328" font-family="Be Vietnam Pro">Stream dài 1000 event</text>
+        <rect x="20" y="44" width="470" height="40" rx="9" fill="#efe9df" stroke="#cbc3b4" stroke-width="1.2"/>
+        <text x="255" y="69" text-anchor="middle" font-size="12" fill="#6a6456" font-family="JetBrains Mono">v1 … v998  (bỏ qua, không replay)</text>
+
+        <rect x="500" y="44" width="110" height="40" rx="9" fill="#f6ecd6" stroke="#9a6a12" stroke-width="1.5"/>
+        <text x="555" y="62" text-anchor="middle" font-size="11.5" fill="#7a540e" font-family="JetBrains Mono">SNAPSHOT</text>
+        <text x="555" y="77" text-anchor="middle" font-size="10" fill="#9a6a12" font-family="Be Vietnam Pro">@ v998</text>
+
+        <rect x="620" y="44" width="120" height="40" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+        <text x="680" y="69" text-anchor="middle" font-size="11.5" fill="#234d73" font-family="JetBrains Mono">v999, v1000</text>
+
+        <text x="680" y="112" text-anchor="middle" font-size="11.5" fill="#2f5d8a" font-family="Be Vietnam Pro">chỉ replay 2 event này</text>
+        <path d="M555 90 L555 120 L665 120" fill="none" stroke="#9a6a12" stroke-width="1.5"/>
+        <path d="M680 90 L680 120" fill="none" stroke="#2f5d8a" stroke-width="1.5"/>
+        <rect x="470" y="130" width="270" height="34" rx="9" fill="#e4efe6" stroke="#3b6b45" stroke-width="1.4"/>
+        <text x="605" y="152" text-anchor="middle" font-size="12" fill="#2c5234" font-family="JetBrains Mono">state @ v1000 (nhanh)</text>
+      </svg>
+      <figcaption>Nạp snapshot @v998 rồi chỉ replay v999–v1000, thay vì chạy lại cả 1000 event.</figcaption>
+    </figure>
+
+    <div class="note warn">
+      <span class="tag">Lưu ý quan trọng</span>
+      <p>Snapshot chỉ là <strong>cache để tăng tốc</strong>. Event store vẫn là nguồn sự thật — có thể xoá hết snapshot và dựng lại từ event bất cứ lúc nào.</p>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section id="s5">
+    <div class="sec-head"><span class="sec-num">5</span><h2 class="sec-title">Projection / Read Model</h2></div>
+    <p>Event store rất hợp để <em>ghi thêm</em> và <em>replay</em>, nhưng lại <strong>dở cho truy vấn phức tạp</strong> (ví dụ "liệt kê tất cả đơn chưa thanh toán, sắp theo ngày"). Replay toàn bộ event mỗi lần query là không khả thi.</p>
+    <p>Giải pháp: <strong>Projection</strong> — lắng nghe các event và xây sẵn một <strong>read model</strong> (thường là bảng phẳng trong DB thường) tối ưu cho việc đọc.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 190" role="img" aria-label="Projection dựng nhiều read model từ một event stream">
+        <defs>
+          <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#5b4a86"/>
+          </marker>
+        </defs>
+        <rect x="20" y="66" width="180" height="56" rx="11" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.5"/>
+        <text x="110" y="90" text-anchor="middle" font-size="13" font-weight="600" fill="#234d73" font-family="Be Vietnam Pro">Event Store</text>
+        <text x="110" y="108" text-anchor="middle" font-size="10.5" fill="#4a6a88" font-family="Be Vietnam Pro">(một chuỗi event)</text>
+
+        <g font-family="JetBrains Mono" font-size="11">
+          <line x1="200" y1="94" x2="300" y2="50" stroke="#5b4a86" stroke-width="1.5" marker-end="url(#ar2)"/>
+          <line x1="200" y1="94" x2="300" y2="94" stroke="#5b4a86" stroke-width="1.5" marker-end="url(#ar2)"/>
+          <line x1="200" y1="94" x2="300" y2="138" stroke="#5b4a86" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+          <rect x="306" y="28" width="230" height="40" rx="9" fill="#ece7f5" stroke="#5b4a86" stroke-width="1.3"/>
+          <text x="421" y="52" text-anchor="middle" fill="#463a69">Bảng "Đơn chưa thanh toán"</text>
+
+          <rect x="306" y="74" width="230" height="40" rx="9" fill="#ece7f5" stroke="#5b4a86" stroke-width="1.3"/>
+          <text x="421" y="98" text-anchor="middle" fill="#463a69">Bảng "Doanh thu theo ngày"</text>
+
+          <rect x="306" y="120" width="230" height="40" rx="9" fill="#ece7f5" stroke="#5b4a86" stroke-width="1.3"/>
+          <text x="421" y="144" text-anchor="middle" fill="#463a69">Chỉ mục tìm kiếm</text>
+        </g>
+        <text x="650" y="90" text-anchor="middle" font-size="12.5" fill="#5b4a86" font-family="Be Vietnam Pro" font-weight="600">UI đọc</text>
+        <text x="650" y="108" text-anchor="middle" font-size="12.5" fill="#5b4a86" font-family="Be Vietnam Pro" font-weight="600">từ đây →</text>
+        <line x1="540" y1="48" x2="600" y2="90" stroke="#cdc5de" stroke-width="1.3"/>
+        <line x1="540" y1="94" x2="600" y2="94" stroke="#cdc5de" stroke-width="1.3"/>
+        <line x1="540" y1="140" x2="600" y2="98" stroke="#cdc5de" stroke-width="1.3"/>
+      </svg>
+      <figcaption>Từ một event stream có thể dựng ra nhiều projection khác nhau, mỗi cái phục vụ một nhu cầu đọc.</figcaption>
+    </figure>
+
+    <div class="note remember">
+      <span class="tag">Ghi nhớ</span>
+      <p>Write đi qua event. Read đi qua projection. Projection luôn có thể <strong>dựng lại từ đầu</strong> bằng cách replay — nên nó cũng chỉ là một dạng cache.</p>
+    </div>
+  </section>
+
+  <!-- 6 -->
+  <section id="s6">
+    <div class="sec-head"><span class="sec-num">6</span><h2 class="sec-title">CQRS &amp; quan hệ với ES</h2></div>
+    <p><strong>CQRS</strong> (Command Query Responsibility Segregation) = <strong>tách đường ghi khỏi đường đọc</strong>. Write model xử lý command; read model phục vụ query. Hai bên có thể có cấu trúc dữ liệu khác hẳn nhau.</p>
+    <p>ES và CQRS là <strong>hai pattern độc lập</strong> nhưng ghép với nhau rất tự nhiên: write model sinh ra event, read model chính là projection từ event đó.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 250" role="img" aria-label="Luồng đầy đủ CQRS kết hợp Event Sourcing">
+        <defs>
+          <marker id="ar3" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#1f2328"/>
+          </marker>
+        </defs>
+        <!-- write path -->
+        <text x="30" y="30" font-size="12.5" font-weight="700" fill="#b4531f" font-family="Be Vietnam Pro">ĐƯỜNG GHI (write)</text>
+        <rect x="30" y="42" width="120" height="44" rx="10" fill="#fff" stroke="#b4531f" stroke-width="1.5"/>
+        <text x="90" y="69" text-anchor="middle" font-size="12.5" fill="#8a3d12" font-family="Be Vietnam Pro">Command</text>
+
+        <rect x="200" y="42" width="130" height="44" rx="10" fill="#f4e6dc" stroke="#b4531f" stroke-width="1.5"/>
+        <text x="265" y="63" text-anchor="middle" font-size="12.5" fill="#8a3d12" font-family="Be Vietnam Pro">Aggregate</text>
+        <text x="265" y="78" text-anchor="middle" font-size="10" fill="#9a5a30" font-family="Be Vietnam Pro">(kiểm tra luật)</text>
+
+        <rect x="380" y="42" width="130" height="44" rx="10" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.6"/>
+        <text x="445" y="63" text-anchor="middle" font-size="12.5" fill="#234d73" font-family="Be Vietnam Pro">Event Store</text>
+        <text x="445" y="78" text-anchor="middle" font-size="10" fill="#4a6a88" font-family="Be Vietnam Pro">(append event)</text>
+
+        <line x1="150" y1="64" x2="196" y2="64" stroke="#1f2328" stroke-width="1.5" marker-end="url(#ar3)"/>
+        <line x1="330" y1="64" x2="376" y2="64" stroke="#1f2328" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+        <!-- event bus down -->
+        <line x1="445" y1="86" x2="445" y2="128" stroke="#2f5d8a" stroke-width="1.5" marker-end="url(#ar3)"/>
+        <text x="455" y="112" font-size="11" fill="#2f5d8a" font-family="Be Vietnam Pro">phát event</text>
+
+        <rect x="360" y="130" width="170" height="40" rx="10" fill="#ece7f5" stroke="#5b4a86" stroke-width="1.5"/>
+        <text x="445" y="155" text-anchor="middle" font-size="12" fill="#463a69" font-family="Be Vietnam Pro">Projection cập nhật</text>
+
+        <!-- read path -->
+        <text x="30" y="200" font-size="12.5" font-weight="700" fill="#3b6b45" font-family="Be Vietnam Pro">ĐƯỜNG ĐỌC (read)</text>
+        <rect x="30" y="210" width="120" height="30" rx="8" fill="#fff" stroke="#3b6b45" stroke-width="1.5"/>
+        <text x="90" y="230" text-anchor="middle" font-size="12" fill="#2c5234" font-family="Be Vietnam Pro">Query</text>
+        <rect x="360" y="206" width="170" height="40" rx="10" fill="#e4efe6" stroke="#3b6b45" stroke-width="1.6"/>
+        <text x="445" y="231" text-anchor="middle" font-size="12" fill="#2c5234" font-family="Be Vietnam Pro">Read Model</text>
+        <line x1="150" y1="225" x2="356" y2="225" stroke="#1f2328" stroke-width="1.5" marker-end="url(#ar3)"/>
+        <line x1="445" y1="170" x2="445" y2="204" stroke="#5b4a86" stroke-width="1.4" stroke-dasharray="3 3"/>
+
+        <text x="600" y="130" font-size="11.5" fill="#6a7078" font-family="Be Vietnam Pro" font-style="italic">Ghi và đọc</text>
+        <text x="600" y="147" font-size="11.5" fill="#6a7078" font-family="Be Vietnam Pro" font-style="italic">đi hai nhánh</text>
+        <text x="600" y="164" font-size="11.5" fill="#6a7078" font-family="Be Vietnam Pro" font-style="italic">riêng biệt.</text>
+      </svg>
+      <figcaption>Command → Aggregate → Event Store → (phát event) → Projection → Read Model ← Query.</figcaption>
+    </figure>
+
+    <div class="note tip">
+      <span class="tag">Đừng nhầm</span>
+      <p>Có thể dùng CQRS mà không ES (hai DB thường), hoặc ES mà không CQRS. Không cái nào là phiên bản mới/cũ của cái nào, và không cái nào bắt buộc cái kia.</p>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section id="s7">
+    <div class="sec-head"><span class="sec-num">7</span><h2 class="sec-title">Concurrency — Optimistic</h2></div>
+    <p>Hai request cùng sửa một aggregate một lúc thì sao? Cách phổ biến nhất là <strong>optimistic concurrency theo version</strong>: khi append, ta khẳng định "tôi đang dựa trên version N" (<code class="inline">expectedVersion = N</code>). Nếu stream đã nhảy lên N+1 do request khác ghi trước, store sẽ <strong>từ chối</strong>, và caller phải <strong>load lại rồi thử lại</strong>.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 210" role="img" aria-label="Xung đột optimistic concurrency theo version">
+        <text x="30" y="28" font-size="12.5" fill="#6a7078" font-family="Be Vietnam Pro">Cả hai cùng đọc aggregate ở <tspan font-family="JetBrains Mono" fill="#1f2328">version 5</tspan></text>
+
+        <rect x="30" y="44" width="300" height="56" rx="11" fill="#e4efe6" stroke="#3b6b45" stroke-width="1.5"/>
+        <text x="48" y="66" font-size="12" fill="#2c5234" font-family="Be Vietnam Pro" font-weight="600">Request A</text>
+        <text x="48" y="86" font-size="11.5" fill="#3b6b45" font-family="JetBrains Mono">append(expectedVersion = 5) ✓</text>
+
+        <rect x="430" y="44" width="300" height="56" rx="11" fill="#f4e6dc" stroke="#b4531f" stroke-width="1.5"/>
+        <text x="448" y="66" font-size="12" fill="#8a3d12" font-family="Be Vietnam Pro" font-weight="600">Request B (chậm hơn một nhịp)</text>
+        <text x="448" y="86" font-size="11.5" fill="#b4531f" font-family="JetBrains Mono">append(expectedVersion = 5) ✗</text>
+
+        <text x="180" y="128" text-anchor="middle" font-size="11.5" fill="#3b6b45" font-family="Be Vietnam Pro">Store nhận → version thành 6</text>
+        <text x="580" y="128" text-anchor="middle" font-size="11.5" fill="#b4531f" font-family="Be Vietnam Pro">Store từ chối: hiện tại đã là 6 ≠ 5</text>
+
+        <rect x="430" y="146" width="300" height="48" rx="11" fill="#fff" stroke="#b4531f" stroke-width="1.3" stroke-dasharray="4 4"/>
+        <text x="580" y="166" text-anchor="middle" font-size="11.5" fill="#8a3d12" font-family="Be Vietnam Pro">B load lại ở version 6,</text>
+        <text x="580" y="183" text-anchor="middle" font-size="11.5" fill="#8a3d12" font-family="Be Vietnam Pro">kiểm tra lại luật, rồi thử append lần nữa</text>
+      </svg>
+      <figcaption>So khớp expectedVersion chặn "lost update" mà không cần khoá cả store.</figcaption>
+    </figure>
+
+    <p>Vì sao không dùng timestamp? Vì đồng hồ các máy lệch nhau (<em>clock skew</em>) nên "cái mới hơn thì thắng" không đáng tin. Version của stream là tăng đơn điệu, chắc chắn.</p>
+  </section>
+
+  <!-- 8 -->
+  <section id="s8">
+    <div class="sec-head"><span class="sec-num">8</span><h2 class="sec-title">Schema evolution — Upcaster</h2></div>
+    <p>Sau vài tháng, bạn cần thêm field vào một loại event cũ. Nhưng event cũ đã nằm trong store và <strong>không được sửa</strong>. Có hai hướng đúng:</p>
+    <ul>
+      <li><strong>Weak schema:</strong> thêm field mới dạng <em>optional</em>, event cũ thiếu field thì dùng giá trị mặc định khi đọc.</li>
+      <li><strong>Versioned event + Upcaster:</strong> tạo <code class="inline">OrderPlacedV2</code>, viết một hàm <em>upcaster</em> chuyển V1 → V2 ngay lúc đọc event lên. Store vẫn giữ nguyên V1.</li>
+    </ul>
+
+    <pre><span class="c">// Upcaster: nâng cấp event cũ khi ĐỌC, không đụng vào store</span>
+<span class="k">function</span> <span class="n">upcast</span>(e) {
+  <span class="k">if</span> (e.type === <span class="s">"OrderPlacedV1"</span>) {
+    <span class="k">return</span> {
+      type: <span class="s">"OrderPlacedV2"</span>,
+      ...e,
+      currency: <span class="s">"VND"</span>   <span class="c">// field mới, mặc định cho dữ liệu cũ</span>
+    };
+  }
+  <span class="k">return</span> e;
+}</pre>
+
+    <div class="note warn">
+      <span class="tag">Tuyệt đối tránh</span>
+      <p>Chạy <code class="inline">UPDATE</code> trực tiếp lên các event cũ trong store để "thêm field". Đó là sửa lịch sử bất biến — phá audit trail và có thể làm sai replay.</p>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section id="s9">
+    <div class="sec-head"><span class="sec-num">9</span><h2 class="sec-title">Eventual consistency</h2></div>
+    <p>Khi projection cập nhật <strong>bất đồng bộ</strong> (sau khi event đã ghi), read model không phản ánh thay đổi ngay lập tức. Có một <strong>độ trễ nhỏ</strong>: user bấm "lưu" thành công, nhưng đọc lại danh sách có thể chưa thấy ngay. Đây gọi là <strong>eventual consistency</strong> — rồi sẽ nhất quán, chỉ là không tức thì.</p>
+    <p>Cách xử lý ở phía giao diện:</p>
+    <ul>
+      <li><strong>Optimistic UI</strong>: hiển thị kết quả như đã thành công ngay, rồi âm thầm đồng bộ.</li>
+      <li>Hiện trạng thái <em>"đang xử lý"</em> cho tới khi projection bắt kịp.</li>
+      <li><strong>Read-your-writes</strong>: với thao tác vừa ghi, đọc tạm từ write model để user luôn thấy kết quả của chính mình.</li>
+    </ul>
+    <div class="note tip">
+      <span class="tag">Đổi lại được gì</span>
+      <p>Chịu độ trễ nhỏ để đổi lấy khả năng mở rộng, nhiều read model độc lập và tách biệt write/read. Ép tất cả vào một ACID transaction là mất đi lợi ích này.</p>
+    </div>
+  </section>
+
+  <!-- 10 -->
+  <section id="s10">
+    <div class="sec-head"><span class="sec-num">10</span><h2 class="sec-title">Compensating event</h2></div>
+    <p>Muốn "hoàn tác" một việc đã xảy ra — ví dụ huỷ một đơn đã duyệt — thì <strong>không xoá, không sửa</strong> event cũ. Thay vào đó ta <strong>append một event bù trừ</strong> (compensating event) mới.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 120" role="img" aria-label="Compensating event thay vì xoá event cũ">
+        <defs>
+          <marker id="ar4" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 Z" fill="#2f5d8a"/>
+          </marker>
+        </defs>
+        <g font-family="JetBrains Mono" font-size="12">
+          <rect x="30" y="44" width="180" height="44" rx="9" fill="#e4edf5" stroke="#2f5d8a" stroke-width="1.3"/>
+          <text x="120" y="71" text-anchor="middle" fill="#234d73">OrderApproved</text>
+          <rect x="290" y="44" width="200" height="44" rx="9" fill="#f4e6dc" stroke="#b4531f" stroke-width="1.5"/>
+          <text x="390" y="71" text-anchor="middle" fill="#8a3d12">OrderCancelled</text>
+        </g>
+        <line x1="210" y1="66" x2="286" y2="66" stroke="#2f5d8a" stroke-width="1.5" marker-end="url(#ar4)"/>
+        <text x="560" y="60" font-size="12" fill="#6a7078" font-family="Be Vietnam Pro">Lịch sử giữ cả hai:</text>
+        <text x="560" y="78" font-size="12" fill="#6a7078" font-family="Be Vietnam Pro">từng duyệt, rồi bị huỷ.</text>
+      </svg>
+    </figure>
+
+    <div class="note remember">
+      <span class="tag">Ghi nhớ</span>
+      <p>Event bất biến ⇒ muốn đảo chiều thì <strong>thêm event</strong>, không bớt. Lịch sử phản ánh đúng thực tế nghiệp vụ và giữ nguyên audit trail.</p>
+    </div>
+  </section>
+
+  <!-- 11 -->
+  <section id="s11">
+    <div class="sec-head"><span class="sec-num">11</span><h2 class="sec-title">Idempotency khi rebuild</h2></div>
+    <p>Khi <strong>dựng lại projection từ đầu</strong> (rebuild), hoặc khi hệ thống giao event theo kiểu <em>at-least-once</em>, một event có thể bị xử lý <strong>hơn một lần</strong>. Nếu handler cộng dồn vô điều kiện, bạn sẽ bị <strong>đếm trùng / ghi lặp</strong>.</p>
+    <p>Vì vậy handler cần <strong>idempotent</strong>: xử lý cùng một event nhiều lần vẫn cho ra <strong>cùng một kết quả</strong>. Cách làm thường gặp:</p>
+    <ul>
+      <li>Ghi nhớ <code class="inline">event id</code> / <code class="inline">version</code> đã xử lý, gặp lại thì bỏ qua.</li>
+      <li>Dùng <code class="inline">upsert</code> (ghi theo khoá) thay vì <code class="inline">insert</code> hay cộng dồn.</li>
+    </ul>
+    <div class="note warn">
+      <span class="tag">Vì sao cần</span>
+      <p>Rebuild = chạy lại toàn bộ event một lần nữa. Nếu handler không idempotent, mỗi lần rebuild lại ra số liệu khác — read model hỏng.</p>
+    </div>
+  </section>
+
+  <!-- 12 -->
+  <section id="s12">
+    <div class="sec-head"><span class="sec-num">12</span><h2 class="sec-title">Ưu / nhược &amp; khi nào dùng</h2></div>
+
+    <div class="cols">
+      <div class="card pro">
+        <h4>✓ Ưu điểm</h4>
+        <ul>
+          <li>Audit trail đầy đủ, "miễn phí" — biết mọi thứ đã xảy ra thế nào.</li>
+          <li>Temporal query: tái hiện state tại bất kỳ mốc thời gian nào.</li>
+          <li>Dựng projection mới từ lịch sử cũ — trả lời câu hỏi chưa nghĩ tới lúc thiết kế.</li>
+          <li>Hợp tự nhiên với CQRS và event-driven.</li>
+        </ul>
+      </div>
+      <div class="card con">
+        <h4>✗ Cái giá phải trả</h4>
+        <ul>
+          <li>Phức tạp hơn CRUD nhiều — khó hơn khi mới học.</li>
+          <li>Phải xử lý eventual consistency ở UI.</li>
+          <li>Schema evolution (versioning, upcaster) tốn công.</li>
+          <li>Không phải lúc nào cũng nhanh hơn; vẫn cần lưu trữ &amp; backup.</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Khi nào nên dùng?</h3>
+    <p>Hợp với các domain mà <strong>lịch sử và kiểm toán là cốt lõi</strong>: tài chính, ngân hàng, kho vận, đặt chỗ, quy trình nghiệp vụ nhiều bước. Ngược lại, với CRUD đơn giản (quản lý profile, cấu hình), ES thường là <strong>over-engineering</strong>.</p>
+    <div class="note tip">
+      <span class="tag">Quy tắc ngón tay cái</span>
+      <p>Nếu khách hàng/nghiệp vụ hay hỏi "<em>tại sao nó thành ra thế này?</em>" hoặc "<em>lúc đó trạng thái ra sao?</em>" — đó là tín hiệu Event Sourcing phát huy giá trị.</p>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <!-- cheat sheet -->
+  <div class="cheat">
+    <h2>Cheat sheet — ôn nhanh</h2>
+    <p class="lead">Chép riêng khung này ra một trang để ôn trước khi thi / phỏng vấn.</p>
+    <dl>
+      <dt>Source of truth</dt><dd>Chuỗi event, không phải state. State = replay event.</dd>
+      <dt>Event</dt><dd>Sự thật đã xảy ra, đặt tên thì quá khứ (OrderCreated).</dd>
+      <dt>Event Store</dt><dd>Append-only, bất biến. Không sửa, không xoá.</dd>
+      <dt>Replay</dt><dd>Áp apply() từng event để dựng lại state.</dd>
+      <dt>Snapshot</dt><dd>Cache state @ version N; chỉ replay từ N+1. Có thể bỏ, dựng lại từ event.</dd>
+      <dt>Projection</dt><dd>Read model dựng từ event, tối ưu cho đọc. Cũng là cache.</dd>
+      <dt>CQRS</dt><dd>Tách write / read. Độc lập với ES nhưng ghép rất hợp.</dd>
+      <dt>Concurrency</dt><dd>Optimistic theo expectedVersion; lệch thì reject → load lại &amp; retry.</dd>
+      <dt>Schema evolution</dt><dd>Weak schema hoặc versioned event + upcaster. KHÔNG UPDATE event cũ.</dd>
+      <dt>Eventual consistency</dt><dd>Read model trễ một nhịp. Xử lý ở UX.</dd>
+      <dt>Undo</dt><dd>Compensating event (thêm), không xoá/sửa.</dd>
+      <dt>Idempotency</dt><dd>Handler chạy lại nhiều lần vẫn cùng kết quả → rebuild an toàn.</dd>
+    </dl>
+  </div>
+
+</div>
+
+<footer>
+  Bài học Event Sourcing · soạn để học và chép tay · 2026
+</footer>
+
+</body>
+</html>
