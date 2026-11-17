@@ -3,3 +3,4 @@ out/
 release/
 scripts/*.png
 sample-library/.docs-meta*
+sample-library/.docs-notes*

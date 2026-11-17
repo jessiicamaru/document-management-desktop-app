@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_UI, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type StudyStatus, type UiSettings } from '../../shared/types'
+import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type StudyStatus, type UiSettings } from '../../shared/types'
 import { buildIndex, errorMessage, loadLocal, metaOf, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
 import Sidebar, { type SearchHit } from './components/Sidebar'
@@ -7,6 +7,9 @@ import DocView from './components/DocView'
 import SettingsDialog from './components/SettingsDialog'
 
 export type StatusFilter = StudyStatus | 'all'
+
+/** Shared empty list, so documents without notes don't get a new array (and a redraw) on every render. */
+const NO_NOTES: Annotation[] = []
 
 /** Where to scroll inside the open document. `n` changes on every jump so the same #hash can be reused. */
 export interface ScrollTarget {
@@ -293,6 +296,8 @@ export default function App() {
             onShortcut={runShortcut}
             history={historyPos}
             onHistory={goHistory}
+            annotations={lib?.notes[current.path] ?? NO_NOTES}
+            onAnnotationsChange={(items) => setLib((l) => l && { ...l, notes: { ...l.notes, [current.path]: items } })}
             rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (

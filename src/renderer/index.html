@@ -6,7 +6,7 @@
     <!-- Documents are shown from doc:// inside sandboxed iframes; the app itself only runs its own code. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' doc: data: https:; font-src 'self' data:; frame-src doc:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' doc: data: blob: https:; font-src 'self' data: blob:; connect-src 'self' blob:; frame-src doc: blob:"
     />
   </head>
   <body>

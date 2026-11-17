@@ -349,6 +349,128 @@ try {
   await page.waitForTimeout(2500)
   await page.screenshot({ path: shot('10-pdf-viewer-html') })
 
+  // 18a. Highlights + notes in Markdown: stored next to the doc, the doc itself untouched.
+  step('18a. Highlights in Markdown')
+  const notesFile = file('.docs-notes.json')
+  const reactBefore = read(REACT)
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.waitForSelector('.markdown h2')
+  /** Selects `text` inside the first element matching `selector` (in the page or a frame) and releases the mouse. */
+  const selectText = (target, selector, text) =>
+    target.evaluate(
+      async ([sel, txt]) => {
+        const el = [...document.querySelectorAll(sel)].find((e) => e.textContent.includes(txt))
+        // A person selects text they can see. Let the scroll settle first: the app hides the
+        // highlight toolbar while scrolling.
+        el.scrollIntoView({ block: 'center', behavior: 'instant' })
+        await new Promise((r) => setTimeout(r, 400))
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const i = n.data.indexOf(txt)
+          if (i < 0) continue
+          const range = document.createRange()
+          range.setStart(n, i)
+          range.setEnd(n, i + txt.length)
+          const selection = getSelection()
+          selection.removeAllRanges()
+          selection.addRange(range)
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }))
+          return true
+        }
+        return false
+      },
+      [selector, text]
+    )
+  await selectText(page, '.markdown p', 'Mảng phụ thuộc')
+  await page.waitForSelector('.hl-toolbar')
+  await page.screenshot({ path: shot('11-highlight-toolbar') })
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight vàng"]')
+  await page.waitForSelector('.markdown mark[data-sd-ann]')
+  check((await page.textContent('.markdown mark[data-sd-ann]')) === 'Mảng phụ thuộc', 'Markdown: selected text is highlighted')
+  await selectText(page, '.markdown blockquote p', 'cleanup')
+  await page.click('.hl-toolbar .hl-note-btn')
+  await page.waitForSelector('.note-popover textarea')
+  await page.fill('.note-popover textarea', 'Nhớ: effect trả về hàm dọn dẹp.')
+  await page.keyboard.press('Control+Enter')
+  await page.waitForSelector('.note-popover', { state: 'detached' })
+  const mdNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs[REACT]?.items ?? []
+  check(mdNotes.length === 2 && mdNotes.some((a) => a.note.startsWith('Nhớ:')), 'Markdown: highlight + note saved in .docs-notes.json')
+  check(read(REACT) === reactBefore, 'Markdown: the document file is not changed by highlighting')
+  await page.click('.panel-tabs >> text=Ghi chú')
+  await page.waitForSelector('.note-card-text >> text=Nhớ: effect trả về hàm dọn dẹp.')
+  check(true, 'notes panel lists the note')
+  await page.screenshot({ path: shot('12-notes-panel') })
+
+  // 18b. A highlight is found again after the document is edited elsewhere.
+  step('18b. Highlight survives an edit')
+  writeFileSync(file(REACT), read(REACT).replace('# React useEffect', '# React useEffect\n\nĐoạn mới thêm vào đầu bài.'))
+  await page.waitForFunction(() => document.querySelector('.markdown')?.textContent.includes('Đoạn mới thêm'), null, { timeout: 5000 })
+  await page.waitForTimeout(500)
+  check((await page.locator('.markdown mark[data-sd-ann]').count()) >= 2, 'highlights are found again after the file changed')
+
+  // 18c. Highlights in an HTML page (inside the sandboxed iframe).
+  step('18c. Highlights in HTML')
+  await openDoc('Event Sourcing — Bài học để chép vào vở')
+  await page.frameLocator('iframe.html-frame').locator('h1').waitFor()
+  await page.waitForTimeout(500)
+  const htmlFrame = () => page.frames().find((fr) => fr.url().startsWith('doc://') && fr.url().includes('Event%20Sourcing.html'))
+  await selectText(htmlFrame(), 'p', 'append-only')
+  await page.waitForSelector('.hl-toolbar')
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight xanh dương"]')
+  await page.waitForTimeout(500)
+  check((await htmlFrame().evaluate(() => document.querySelector('mark[data-sd-ann]')?.textContent)) === 'append-only', 'HTML: selected text is highlighted inside the page')
+  await openDoc('Lộ trình Backend')
+  await openDoc('Event Sourcing — Bài học để chép vào vở')
+  await page.waitForTimeout(1500)
+  check((await htmlFrame().evaluate(() => document.querySelectorAll('mark[data-sd-ann]').length)) === 1, 'HTML: highlight is drawn again when the page is reopened')
+
+  // 18d. Export with highlights and notes.
+  step('18d. Export PDF with notes')
+  const notesPdf = file('frontend/React useEffect (ghi chú).pdf')
+  await app.evaluate(({ dialog }, p) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: p })
+  }, notesPdf)
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.click('.more > .btn')
+  await page.click('.popover.menu >> text=Xuất PDF kèm highlight và ghi chú…')
+  await page.waitForSelector('.toast.info >> text=React useEffect (ghi chú).pdf', { timeout: 30000 })
+  const notesBytes = readFileSync(notesPdf)
+  check(notesBytes.subarray(0, 5).toString() === '%PDF-', `PDF with notes exported (${Math.round(notesBytes.length / 1024)} KB)`)
+  await page.waitForFunction(() => document.querySelectorAll('.doc-list .row.doc .kind-pdf').length === 3, null, { timeout: 5000 })
+  await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=React useEffect (ghi chú)')
+  await page.waitForTimeout(2500)
+  await page.screenshot({ path: shot('13-pdf-with-notes') })
+
+  // 18e. EPUB books: chapters in the outline, search inside the book, highlights.
+  step('18e. EPUB')
+  await page.fill('.search input', 'pull truoc khi push')
+  await page.waitForSelector('.hit')
+  check((await page.textContent('.hit .hit-title')).includes('Git cơ bản'), 'search finds text inside an EPUB book')
+  await page.click('.hit')
+  await page.fill('.search input', '')
+  await page.click('.panel-tabs >> text=Mục lục') // the panel remembers the last tab (Ghi chú, from 18a)
+  await page.waitForFunction(() => document.querySelectorAll('.outline-item').length === 3, null, { timeout: 10000 })
+  check(true, 'EPUB chapters are listed in the outline')
+  const bookFrame = () => page.frames().find((fr) => fr.url() === 'about:srcdoc')
+  await page.waitForTimeout(800)
+  check((await bookFrame().evaluate(() => document.body.textContent)).includes('Git là gì?'), 'EPUB: first chapter is shown')
+  await page.click('.outline-item >> text=Chương 3')
+  await page.waitForTimeout(1200)
+  check((await bookFrame().evaluate(() => document.body.textContent)).includes('pull trước khi push'), 'EPUB: outline jumps to a chapter')
+  await bookFrame().evaluate(() => {
+    const p = [...document.querySelectorAll('p')].find((e) => e.textContent.includes('Quy tắc vàng'))
+    const range = document.createRange()
+    range.selectNodeContents(p.querySelector('strong'))
+    getSelection().removeAllRanges()
+    getSelection().addRange(range)
+  })
+  await page.waitForSelector('.hl-toolbar', { timeout: 5000 })
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight xanh lá"]')
+  await page.waitForTimeout(800)
+  const bookNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['sach/Git cơ bản.epub']?.items ?? []
+  check(bookNotes.length === 1 && bookNotes[0].cfi?.startsWith('epubcfi(') && bookNotes[0].quote === 'pull trước khi push', 'EPUB: highlight saved with its position in the book')
+  await page.screenshot({ path: shot('14-epub') })
+
   // 18. Removing a folder from the workspace keeps its files.
   step("18. Remove folder")
   dialogAnswer = 'accept'

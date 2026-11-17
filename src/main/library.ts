@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import JSZip from 'jszip'
 import type { DocEntry, DocKind } from '../shared/types'
 
 /** A document as found inside one folder: `path` is relative to that folder. */
@@ -26,11 +27,16 @@ const EXTENSIONS: Record<string, DocKind> = {
   '.markdown': 'md',
   '.html': 'html',
   '.htm': 'html',
-  '.pdf': 'pdf'
+  '.pdf': 'pdf',
+  '.epub': 'epub'
 }
 
 /** Files bigger than this are listed but not indexed for search. */
 const MAX_INDEX_BYTES = 5 * 1024 * 1024
+/** EPUB books are zipped, so they can be bigger and still be indexed. */
+const MAX_BOOK_BYTES = 100 * 1024 * 1024
+/** At most this much text of a book is kept for search. */
+const MAX_BOOK_TEXT = 2 * 1024 * 1024
 
 function shouldSkipDir(name: string): boolean {
   return name.startsWith('.') || name === 'node_modules'
@@ -90,16 +96,17 @@ async function readEntry(root: string, abs: string, kind: DocKind, previous: Map
     let title = fallbackTitle
     let text = ''
     let hash: string | undefined
-    if (stat.size <= MAX_INDEX_BYTES) {
+    if (stat.size <= (kind === 'epub' ? MAX_BOOK_BYTES : MAX_INDEX_BYTES)) {
       const buffer = await fs.readFile(abs)
       hash = createHash('sha1').update(buffer).digest('hex')
       // PDFs are found by file name only; their text is not indexed.
-      if (kind !== 'pdf') {
-        const source = buffer.toString('utf8')
-        const extracted = kind === 'html' ? extractHtml(source) : extractMarkdown(source)
-        title = extracted.title || fallbackTitle
-        text = extracted.text
-      }
+      const extracted =
+        kind === 'html' ? extractHtml(buffer.toString('utf8'))
+        : kind === 'md' ? extractMarkdown(buffer.toString('utf8'))
+        : kind === 'epub' ? await extractEpub(buffer).catch(() => ({ title: '', text: '' }))
+        : { title: '', text: '' }
+      title = extracted.title || fallbackTitle
+      text = extracted.text
     }
     return { path: rel, name, kind, title, text, size: stat.size, mtime: stat.mtimeMs, hash }
   } catch {
@@ -141,6 +148,39 @@ export function extractHtml(source: string): { title: string; text: string } {
     .replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' ')
   return { title, text: collapse(stripTags(body)) }
+}
+
+/**
+ * Title and text of an EPUB book: META-INF/container.xml points to the package file (.opf),
+ * which has the title and the reading order (spine) of the chapters.
+ */
+export async function extractEpub(data: Buffer | Uint8Array): Promise<{ title: string; text: string }> {
+  const zip = await JSZip.loadAsync(data)
+  const container = await zip.file('META-INF/container.xml')?.async('string')
+  const opfPath = container?.match(/full-path="([^"]+)"/)?.[1]
+  const opf = opfPath ? await zip.file(opfPath)?.async('string') : undefined
+  if (!opfPath || !opf) return { title: '', text: '' }
+
+  const attr = (tag: string, name: string): string | undefined => tag.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1]
+  const title = collapse(stripTags(opf.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i)?.[1] ?? ''))
+  const base = path.posix.dirname(opfPath)
+  const hrefs = new Map<string, string>()
+  for (const [tag] of opf.matchAll(/<item\b[^>]*>/gi)) {
+    const id = attr(tag, 'id')
+    const href = attr(tag, 'href')
+    if (id && href) hrefs.set(id, href)
+  }
+
+  let text = ''
+  for (const [tag] of opf.matchAll(/<itemref\b[^>]*>/gi)) {
+    const href = hrefs.get(attr(tag, 'idref') ?? '')
+    if (!href) continue
+    const file = zip.file(path.posix.normalize(path.posix.join(base, decodeURIComponent(href))))
+    if (!file) continue
+    text += ' ' + extractHtml(await file.async('string')).text
+    if (text.length > MAX_BOOK_TEXT) break
+  }
+  return { title, text: collapse(text).slice(0, MAX_BOOK_TEXT) }
 }
 
 export function extractMarkdown(source: string): { title: string; text: string } {

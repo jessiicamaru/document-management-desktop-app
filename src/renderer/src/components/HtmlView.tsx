@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { DocEntry, HtmlBlockEdit } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
-import type { ReaderCallbacks, ReaderHandle } from './reader'
+import type { ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -32,6 +32,13 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
   cb.current = props
 
   const post = (msg: object): void => frameRef.current?.contentWindow?.postMessage({ source: 'studydocs-app', ...msg }, '*')
+  /** Rectangles from inside the page are relative to the iframe; convert to window coordinates. */
+  const toScreen = (r: ScreenRect): ScreenRect => {
+    const f = frameRef.current!.getBoundingClientRect()
+    return { left: r.left + f.left, right: r.right + f.left, top: r.top + f.top, bottom: r.bottom + f.top }
+  }
+  // Highlights to draw once the page is ready (the page may load after they are set).
+  const annotations = useRef<object[]>([])
 
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
@@ -46,7 +53,17 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
           p.onReading(msg.y, msg.active)
           break
         case 'ready':
+          post({ type: 'annotations', items: annotations.current })
           p.onReady()
+          break
+        case 'selection':
+          p.onSelection(msg.info ? { ...msg.info, rect: toScreen(msg.info.rect) } : null)
+          break
+        case 'annotation-click':
+          p.onAnnotationClick(msg.id, toScreen(msg.rect))
+          break
+        case 'anchored':
+          p.onAnchored(msg.missing)
           break
         case 'key':
           p.onShortcut(msg.key)
@@ -78,6 +95,12 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
   useImperativeHandle(ref, () => ({
     gotoHeading: (index) => post({ type: 'goto', index }),
     restoreScroll: (y) => post({ type: 'restore', y }),
+    setAnnotations: (items) => {
+      annotations.current = items
+      post({ type: 'annotations', items })
+    },
+    gotoAnnotation: (id) => post({ type: 'goto-annotation', id }),
+    clearSelection: () => post({ type: 'clear-selection' }),
     collectChanges: () =>
       new Promise((resolve, reject) => {
         const win = frameRef.current?.contentWindow

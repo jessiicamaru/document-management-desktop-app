@@ -1,19 +1,32 @@
-// A small script appended to HTML documents in normal (reading) mode.
+// Small scripts appended to HTML documents by the doc:// protocol.
 //
 // The document runs in a sandboxed, cross-origin iframe, so the app can't look inside it.
-// This script runs inside the page and talks to the app with postMessage:
-//  - sends the outline (h1-h3) and which heading you're reading, for the outline panel
-//  - sends the scroll position (to remember where you stopped reading) and restores it
+// viewModeInjection runs inside the page while you read, and talks to the app with postMessage:
+//  - outline (h1-h3), the heading you're reading, and the scroll position
+//  - highlights: reports what you select, draws highlights, reports clicks on them
 //  - forwards app shortcuts (Alt+←/→, Ctrl+K/P/E/,) typed while the page has focus
-// It never changes the document. In edit mode the editor script is used instead.
+// printNotesInjection is used only when exporting to PDF with notes.
+// Neither ever changes the file; highlights exist only in the page shown/printed.
+
+import { createAnchoring } from '../shared/anchor'
+import type { Annotation } from '../shared/types'
+
+/** Source of createAnchoring, run inside the page. It is self-contained by design. */
+const anchoringSource = (): string => `(${createAnchoring.toString()})()`
+
+/** JSON that is safe to put inside a <script> element. */
+const scriptJson = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c')
 
 export function viewModeInjection(): string {
   return `
 <script data-studydocs>
 (() => {
+  const anchoring = ${anchoringSource()}
   const send = (msg) => parent.postMessage({ source: 'studydocs', ...msg }, '*')
   let headings = []
+  let annotations = []
 
+  // ---------- outline + reading position ----------
   const collect = () => {
     headings = [...document.querySelectorAll('h1, h2, h3')].filter((h) => h.textContent.trim() && h.getClientRects().length)
     send({
@@ -38,12 +51,47 @@ export function viewModeInjection(): string {
   }
   addEventListener('scroll', report, { passive: true })
 
+  // ---------- highlights ----------
+  const drawHighlights = () => {
+    const missing = anchoring.apply(document.body, annotations)
+    send({ type: 'anchored', missing })
+  }
+  const reportSelection = () => {
+    setTimeout(() => send({ type: 'selection', info: anchoring.selectionInfo(document.body, getSelection()) }), 0)
+  }
+  document.addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return
+    const mark = e.target.closest && e.target.closest('mark[data-sd-ann]')
+    const sel = getSelection()
+    if (mark && (!sel || sel.isCollapsed)) {
+      const r = mark.getBoundingClientRect()
+      send({ type: 'annotation-click', id: mark.getAttribute('data-sd-ann'), rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } })
+      return
+    }
+    reportSelection()
+  })
+  document.addEventListener('keyup', (e) => { if (e.shiftKey) reportSelection() })
+
   addEventListener('message', (e) => {
     if (e.source !== parent || !e.data || e.data.source !== 'studydocs-app') return
-    if (e.data.type === 'goto') headings[e.data.index]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    if (e.data.type === 'restore') scrollTo({ top: e.data.y, behavior: 'instant' })
+    const msg = e.data
+    if (msg.type === 'goto') headings[msg.index]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (msg.type === 'restore') scrollTo({ top: msg.y, behavior: 'instant' })
+    if (msg.type === 'annotations') {
+      annotations = msg.items
+      drawHighlights()
+    }
+    if (msg.type === 'goto-annotation') {
+      const mark = document.querySelector('mark[data-sd-ann="' + CSS.escape(msg.id) + '"]')
+      if (mark) {
+        mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        mark.animate([{ outline: '3px solid rgba(180,83,31,.9)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+      }
+    }
+    if (msg.type === 'clear-selection') getSelection()?.removeAllRanges()
   })
 
+  // ---------- shortcuts ----------
   addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase()
     if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -52,6 +100,8 @@ export function viewModeInjection(): string {
     } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ','].includes(key)) {
       e.preventDefault()
       send({ type: 'key', key: 'ctrl+' + key })
+    } else if (e.key === 'Escape') {
+      send({ type: 'selection', info: null })
     }
   }, true)
 
@@ -63,6 +113,17 @@ export function viewModeInjection(): string {
   }
   if (document.readyState === 'complete') ready()
   else addEventListener('load', ready)
+})()
+</script>`
+}
+
+/** Export to PDF with notes: draws the highlights, numbers the notes and lists them at the end. */
+export function printNotesInjection(annotations: Annotation[]): string {
+  return `
+<script data-studydocs>
+(() => {
+  const anchoring = ${anchoringSource()}
+  anchoring.printNotes(document.body, ${scriptJson(annotations)}, 'Ghi chú')
 })()
 </script>`
 }

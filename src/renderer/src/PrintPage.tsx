@@ -5,9 +5,12 @@
 import { useEffect, useRef } from 'react'
 import { docUrl } from './lib/docs'
 import { applyUiSettings } from './lib/ui'
+import { loadMermaid } from './lib/mermaid'
 import { renderMarkdown } from './components/MarkdownView'
+import { createAnchoring } from '../../shared/anchor'
 
-export default function PrintPage({ id }: { id: string }) {
+/** withNotes: also print the highlights, numbered note marks and a "Ghi chú" list at the end. */
+export default function PrintPage({ id, withNotes }: { id: string; withNotes: boolean }) {
   const ref = useRef<HTMLElement>(null)
 
   useEffect(() => {
@@ -25,15 +28,16 @@ export default function PrintPage({ id }: { id: string }) {
         })
         const diagrams = el.querySelectorAll<HTMLElement>('pre.mermaid')
         if (diagrams.length) {
-          const { default: mermaid } = await import('mermaid')
+          const mermaid = await loadMermaid()
           mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
           await mermaid.run({ nodes: diagrams }).catch((e: unknown) => console.error('Mermaid error', e))
         }
+        if (withNotes) createAnchoring().printNotes(el, lib.notes[id] ?? [], 'Ghi chú')
       } finally {
         window.__studydocsPrintDone?.() // see main.tsx
       }
     })()
-  }, [id])
+  }, [id, withNotes])
 
   return <article ref={ref} className="markdown print" />
 }

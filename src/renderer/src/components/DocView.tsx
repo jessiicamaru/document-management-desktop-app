@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DocEntry, DocMeta } from '../../../shared/types'
+import type { Annotation, DocEntry, DocMeta, HighlightColor } from '../../../shared/types'
 import { docUrl, loadLocal, saveLocal, STATUSES } from '../lib/docs'
 import type { ScrollTarget } from '../App'
 import HtmlView from './HtmlView'
 import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
-import type { OutlineItem, ReaderHandle } from './reader'
+import EpubView from './EpubView'
+import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
+import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
 type Mode = 'view' | 'edit' | 'raw'
@@ -27,6 +29,9 @@ interface Props {
   onHistory: (direction: 'back' | 'forward') => void
   /** Name of the workspace folder this doc is in; null when the workspace has only one folder. */
   rootName: string | null
+  /** Highlights and notes of this document. */
+  annotations: Annotation[]
+  onAnnotationsChange: (items: Annotation[]) => void
 }
 
 const positionKey = (path: string): string => `pos:${path}`
@@ -44,7 +49,14 @@ export default function DocView(props: Props) {
   const [outlineOpen, setOutlineOpen] = useState(() => loadLocal('outline-open', true))
   const [exporting, setExporting] = useState(false)
   const readerRef = useRef<ReaderHandle>(null)
+  const [selection, setSelection] = useState<TextSelection | null>(null)
+  const [noteEditor, setNoteEditor] = useState<{ id: string; rect: ScreenRect } | null>(null)
+  const [missing, setMissing] = useState<string[]>([])
+  const [panelTab, setPanelTab] = useState<'outline' | 'notes'>(() => loadLocal('panel-tab', 'outline'))
+  const { annotations, onAnnotationsChange } = props
   const isPdf = doc.kind === 'pdf'
+  /** md and html can be edited and exported; pdf and epub are read-only. */
+  const canEdit = doc.kind === 'md' || doc.kind === 'html'
 
   const updateDirty = useCallback(
     (value: boolean) => {
@@ -127,13 +139,69 @@ export default function DocView(props: Props) {
     saveLocal('outline-open', !outlineOpen)
   }
 
+  // ---------- highlights + notes ----------
+
+  // Draw the highlights whenever they change, and again after text editing ends.
+  useEffect(() => {
+    if (mode !== 'edit') readerRef.current?.setAnnotations(annotations)
+  }, [annotations, mode])
+
+  const saveAnnotation = useCallback(
+    async (a: Annotation): Promise<boolean> => {
+      try {
+        onAnnotationsChange(await window.api.saveAnnotation(doc.path, a))
+        return true
+      } catch (err) {
+        onError(err)
+        return false
+      }
+    },
+    [doc.path, onAnnotationsChange, onError]
+  )
+
+  /** Turns the current selection into a highlight; optionally opens its note right away. */
+  const createHighlight = async (color: HighlightColor, openNote: boolean): Promise<void> => {
+    if (!selection) return
+    const now = Date.now()
+    const a: Annotation = {
+      id: newAnnotationId(),
+      color,
+      note: '',
+      quote: selection.quote,
+      prefix: selection.prefix,
+      suffix: selection.suffix,
+      ...(selection.cfi ? { cfi: selection.cfi } : {}),
+      created: now,
+      updated: now
+    }
+    const rect = selection.rect
+    setSelection(null)
+    readerRef.current?.clearSelection()
+    if ((await saveAnnotation(a)) && openNote) setNoteEditor({ id: a.id, rect })
+  }
+
+  const deleteAnnotation = async (id: string): Promise<void> => {
+    setNoteEditor(null)
+    try {
+      onAnnotationsChange(await window.api.deleteAnnotation(doc.path, id))
+    } catch (err) {
+      onError(err)
+    }
+  }
+
+  const showPanelTab = (tab: 'outline' | 'notes'): void => {
+    setPanelTab(tab)
+    saveLocal('panel-tab', tab)
+  }
+  const editedAnnotation = noteEditor ? annotations.find((a) => a.id === noteEditor.id) : undefined
+
   // ---------- export ----------
 
-  const exportPdf = async (): Promise<void> => {
+  const exportPdf = async (withNotes: boolean): Promise<void> => {
     if (dirty) return onError(new Error('Hãy lưu thay đổi trước khi xuất PDF.'))
     setExporting(true)
     try {
-      const file = await window.api.exportPdf(doc.path)
+      const file = await window.api.exportPdf(doc.path, withNotes)
       if (file) onInfo(`Đã xuất PDF: ${file}`)
     } catch (err) {
       onError(err)
@@ -144,12 +212,28 @@ export default function DocView(props: Props) {
 
   // ---------- layout ----------
 
-  const readerProps = { ref: readerRef, onOutline: setOutline, onReading, onReady }
+  const readerProps = {
+    ref: readerRef,
+    onOutline: setOutline,
+    onReading: (y: number, active: number) => {
+      setSelection(null) // the toolbar would float away from the text while scrolling
+      onReading(y, active)
+    },
+    onReady,
+    onSelection: setSelection,
+    onAnnotationClick: (id: string, rect: ScreenRect) => {
+      setSelection(null)
+      setNoteEditor({ id, rect })
+    },
+    onAnchored: setMissing
+  }
   const preview =
     doc.kind === 'pdf' ? (
       // The built-in Chromium PDF viewer (zoom, search, print...). PDFs can't run page scripts
       // like HTML can, so this frame needs no sandbox (the viewer refuses to run in one).
       <iframe className="html-frame pdf" src={`${docUrl(doc.path)}?v=${doc.mtime}`} title={doc.title} />
+    ) : doc.kind === 'epub' ? (
+      <EpubView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'html' ? (
       <HtmlView
         {...readerProps}
@@ -232,10 +316,12 @@ export default function DocView(props: Props) {
             <TagEditor tags={meta.tags} onChange={(tags) => onUpdateMeta({ tags })} />
             <div className="spacer" />
             {!isPdf && (
+              <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục và ghi chú">
+                Mục lục{annotations.length > 0 && ` · ${annotations.length} ghi chú`}
+              </button>
+            )}
+            {canEdit && (
               <>
-                <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục">
-                  Mục lục
-                </button>
                 <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title="Sửa chữ ngay trên bài">
                   Sửa chữ
                 </button>
@@ -248,7 +334,7 @@ export default function DocView(props: Props) {
                 </button>
               </>
             )}
-            <MoreMenu doc={doc} onError={onError} onExport={isPdf ? null : exportPdf} exporting={exporting} />
+            <MoreMenu doc={doc} onError={onError} onExport={canEdit ? exportPdf : null} hasNotes={annotations.length > 0} exporting={exporting} />
           </div>
         )}
       </header>
@@ -264,10 +350,25 @@ export default function DocView(props: Props) {
         <div className={`doc-body ${showOutline ? 'with-outline' : ''}`}>
           <div className="pane">{preview}</div>
           {showOutline && (
-            <nav className="outline" aria-label="Mục lục">
-              <div className="group-title">Mục lục</div>
-              {outline.length === 0 && <div className="empty">Bài này không có tiêu đề nào.</div>}
-              {outline.map((item, i) => (
+            <nav className="outline" aria-label="Mục lục và ghi chú">
+              <div className="panel-tabs" role="tablist">
+                <button role="tab" aria-selected={panelTab === 'outline'} className={panelTab === 'outline' ? 'active' : ''} onClick={() => showPanelTab('outline')}>
+                  Mục lục
+                </button>
+                <button role="tab" aria-selected={panelTab === 'notes'} className={panelTab === 'notes' ? 'active' : ''} onClick={() => showPanelTab('notes')}>
+                  Ghi chú{annotations.length > 0 && ` (${annotations.length})`}
+                </button>
+              </div>
+              {panelTab === 'notes' && (
+                <NotesPanel
+                  annotations={annotations}
+                  missing={missing}
+                  onGoto={(a) => readerRef.current?.gotoAnnotation(a.id)}
+                  onEdit={(a, rect) => setNoteEditor({ id: a.id, rect })}
+                />
+              )}
+              {panelTab === 'outline' && outline.length === 0 && <div className="empty">Bài này không có tiêu đề nào.</div>}
+              {panelTab === 'outline' && outline.map((item, i) => (
                 <button
                   key={i}
                   className={`outline-item level-${item.level} ${i === activeHeading ? 'active' : ''}`}
@@ -281,6 +382,21 @@ export default function DocView(props: Props) {
           )}
         </div>
       )}
+
+      {selection && mode === 'view' && (
+        <HighlightToolbar rect={selection.rect} onPick={(c) => void createHighlight(c, false)} onNote={() => void createHighlight('yellow', true)} />
+      )}
+      {editedAnnotation && noteEditor && (
+        <NotePopover
+          key={editedAnnotation.id}
+          annotation={editedAnnotation}
+          rect={noteEditor.rect}
+          missing={missing.includes(editedAnnotation.id)}
+          onSave={(patch) => void saveAnnotation({ ...editedAnnotation, ...patch })}
+          onDelete={() => void deleteAnnotation(editedAnnotation.id)}
+          onClose={() => setNoteEditor(null)}
+        />
+      )}
     </div>
   )
 }
@@ -288,12 +404,13 @@ export default function DocView(props: Props) {
 interface MoreMenuProps {
   doc: DocEntry
   onError: (err: unknown) => void
-  /** null for PDFs, which are already PDFs. */
-  onExport: (() => Promise<void>) | null
+  /** null when the document can't be exported (PDF, EPUB). */
+  onExport: ((withNotes: boolean) => Promise<void>) | null
+  hasNotes: boolean
   exporting: boolean
 }
 
-function MoreMenu({ doc, onError, onExport, exporting }: MoreMenuProps) {
+function MoreMenu({ doc, onError, onExport, hasNotes, exporting }: MoreMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -312,8 +429,13 @@ function MoreMenu({ doc, onError, onExport, exporting }: MoreMenuProps) {
       {open && (
         <div className="popover menu">
           {onExport && (
-            <button disabled={exporting} onClick={() => (setOpen(false), void onExport())}>
+            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(false))}>
               Xuất PDF…
+            </button>
+          )}
+          {onExport && hasNotes && (
+            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(true))}>
+              Xuất PDF kèm highlight và ghi chú…
             </button>
           )}
           <button onClick={() => (setOpen(false), window.api.openPath(doc.path).catch(onError))}>Mở bằng app mặc định</button>

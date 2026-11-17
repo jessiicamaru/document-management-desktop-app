@@ -5,11 +5,12 @@ import { randomBytes } from 'node:crypto'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
+import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
-import { viewModeInjection } from './view-helper'
+import { printNotesInjection, viewModeInjection } from './view-helper'
 import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { META_FILE, MetaStore } from './meta-store'
+import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
 import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
@@ -43,6 +44,7 @@ interface Root {
   docs: ScannedDoc[]
   /** Null when the folder could not be opened. */
   meta: MetaStore | null
+  notes: NotesStore | null
   watcher: FSWatcher | null
   warning: string | null
 }
@@ -51,7 +53,7 @@ let roots: Root[] = []
 
 // ---------- workspace ----------
 
-const newRoot = (p: string): Root => ({ key: rootKeyOf(p), path: p, name: '', docs: [], meta: null, watcher: null, warning: null })
+const newRoot = (p: string): Root => ({ key: rootKeyOf(p), path: p, name: '', docs: [], meta: null, notes: null, watcher: null, warning: null })
 
 /** Finds a document id ("<root key>/<path>") in the workspace; null if it isn't in any folder. */
 function locate(id: string): { root: Root; rel: string; abs: string } | null {
@@ -95,17 +97,20 @@ function recentByDoc(byFile: Record<string, number>): Record<string, number> {
 async function snapshot(): Promise<LibrarySnapshot> {
   const docs: DocEntry[] = []
   const meta: Record<string, DocMeta> = {}
+  const notes: Record<string, Annotation[]> = {}
   const warnings: string[] = []
   for (const r of roots) {
     for (const d of r.docs) docs.push({ ...d, path: `${r.key}/${d.path}`, root: r.key, rel: d.path })
     for (const [rel, m] of Object.entries(r.meta?.all() ?? {})) meta[`${r.key}/${rel}`] = m
-    for (const w of [r.meta?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
+    for (const [rel, items] of Object.entries(r.notes?.byDoc() ?? {})) notes[`${r.key}/${rel}`] = items
+    for (const w of [r.meta?.warning, r.notes?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
   }
   return {
     roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta })),
     docs,
     meta,
     recent: recentByDoc(await loadRecent()),
+    notes,
     warnings
   }
 }
@@ -123,13 +128,19 @@ async function openRoot(root: Root): Promise<void> {
   try {
     if (!(await fs.stat(root.path)).isDirectory()) throw new Error('not a folder')
     root.meta = await MetaStore.open(root.path)
+    root.notes = await NotesStore.open(root.path)
   } catch {
     root.warning = 'Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.'
     return
   }
   root.docs = await scanLibrary(root.path)
-  await root.meta.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
+  await reconcileStores(root)
   watchRoot(root)
+}
+
+/** Lets tags and notes follow renamed/moved documents. */
+async function reconcileStores(root: Root): Promise<void> {
+  for (const store of [root.meta, root.notes]) await store?.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
 }
 
 function closeRoot(root: Root): void {
@@ -183,23 +194,24 @@ function watchRoot(root: Root): void {
   const rescan = async (): Promise<void> => {
     if (!stillOpen()) return
     root.docs = await scanLibrary(root.path, root.docs)
-    await root.meta?.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
+    await reconcileStores(root)
     await pushSnapshot()
   }
-  const reloadMeta = async (): Promise<void> => {
-    if (!stillOpen() || !root.meta) return
-    const changed = await root.meta.reloadFromDisk().catch(() => false)
-    if (changed || root.meta.warning) await pushSnapshot()
+  const reloadStores = async (): Promise<void> => {
+    if (!stillOpen()) return
+    let changed = false
+    for (const store of [root.meta, root.notes]) if (store) changed = (await store.reloadFromDisk().catch(() => false)) || changed
+    if (changed || root.meta?.warning || root.notes?.warning) await pushSnapshot()
   }
 
   try {
     // Windows supports recursive watching natively, no extra dependency needed.
     root.watcher = watch(root.path, { recursive: true }, (_event, filename) => {
       const name = String(filename ?? '')
-      if (name === META_FILE) {
+      if (name === META_FILE || name === NOTES_FILE) {
         // Changed by a sync tool or another PC (our own writes are recognised and skipped).
         clearTimeout(metaTimer)
-        metaTimer = setTimeout(() => void reloadMeta(), 400)
+        metaTimer = setTimeout(() => void reloadStores(), 400)
         return
       }
       // Other hidden files (backups, temp files) and node_modules are not documents.
@@ -262,7 +274,7 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
  * helper script), Markdown through the app's own renderer (#print=<id>, see PrintPage.tsx).
  * Always in light colours, whatever theme the app uses.
  */
-async function printToPdf(id: string, kind: 'md' | 'html'): Promise<Buffer> {
+async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): Promise<Buffer> {
   const printWin = new BrowserWindow({
     show: false,
     width: 900,
@@ -283,12 +295,13 @@ async function printToPdf(id: string, kind: 'md' | 'html'): Promise<Buffer> {
   wc.on('will-navigate', (e) => e.preventDefault())
   try {
     debug('load')
+    const printHash = `print=${encodeURIComponent(id)}${withNotes ? '&notes=1' : ''}`
     if (kind === 'html') {
-      await printWin.loadURL(`doc://library/${id.split('/').map(encodeURIComponent).join('/')}?raw=1`)
+      await printWin.loadURL(`doc://library/${id.split('/').map(encodeURIComponent).join('/')}?print=1${withNotes ? '&notes=1' : ''}`)
     } else if (process.env.ELECTRON_RENDERER_URL) {
-      await printWin.loadURL(`${process.env.ELECTRON_RENDERER_URL}#print=${encodeURIComponent(id)}`)
+      await printWin.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${printHash}`)
     } else {
-      await printWin.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: `print=${encodeURIComponent(id)}` })
+      await printWin.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: printHash })
     }
     // HTML pages that have a dark mode: print them light. Done after loading and given at
     // most 3 s, so a debugger hiccup can never block the export (the page then prints as is).
@@ -396,7 +409,34 @@ function registerIpc(): void {
 
   ipcMain.handle('doc:openPath', (_e, rel: string) => openLibraryFile(rel))
 
-  ipcMain.handle('doc:exportPdf', async (_e, id: string) => {
+  ipcMain.handle('doc:readBinary', async (_e, id: string) => {
+    const abs = inLibrary(id)
+    if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+    return new Uint8Array(await fs.readFile(abs))
+  })
+
+  ipcMain.handle('notes:save', async (_e, id: string, input: Partial<Annotation>) => {
+    const loc = locate(id)
+    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    const annotation = sanitizeAnnotation(input)
+    try {
+      return await loc.root.notes.save(loc.rel, annotation, loc.root.docs.find((d) => d.path === loc.rel))
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+  })
+
+  ipcMain.handle('notes:delete', async (_e, id: string, annotationId: string) => {
+    const loc = locate(id)
+    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    try {
+      return await loc.root.notes.remove(loc.rel, String(annotationId))
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+  })
+
+  ipcMain.handle('doc:exportPdf', async (_e, id: string, withNotes: boolean) => {
     const loc = locate(id)
     const doc = loc?.root.docs.find((d) => d.path === loc.rel)
     if (!loc || !doc || (doc.kind !== 'md' && doc.kind !== 'html')) throw new Error('Chỉ xuất PDF được bài .md hoặc .html.')
@@ -407,7 +447,7 @@ function registerIpc(): void {
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     })
     if (canceled || !filePath) return null
-    const pdf = await printToPdf(id, doc.kind)
+    const pdf = await printToPdf(id, doc.kind, withNotes === true)
     try {
       await fs.writeFile(filePath, pdf)
     } catch (err) {
@@ -569,11 +609,19 @@ if (!app.requestSingleInstanceLock()) {
           }
         })
       }
-      // Reading mode: add the helper for outline, reading position and shortcuts.
-      // ?raw=1 serves the file untouched (used when exporting to PDF).
-      if (kindOf(abs) === 'html' && new URL(request.url).searchParams.get('raw') !== '1') {
+      if (kindOf(abs) === 'html') {
+        const params = new URL(request.url).searchParams
+        const html = (extra: string): Response =>
+          new Response(extra, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
         const source = await fs.readFile(abs, 'utf8')
-        return new Response(source + viewModeInjection(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+        // Export to PDF: the page as it is, plus (if asked) its highlights and notes.
+        if (params.get('print') === '1') {
+          const loc = locate(target!.path)
+          const notes = params.get('notes') === '1' ? (loc?.root.notes?.byDoc()[loc.rel] ?? []) : []
+          return html(notes.length ? source + printNotesInjection(notes) : source)
+        }
+        // Reading mode: add the helper for outline, highlights, reading position and shortcuts.
+        return html(source + viewModeInjection())
       }
       return net.fetch(pathToFileURL(abs).toString())
     })

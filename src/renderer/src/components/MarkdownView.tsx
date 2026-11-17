@@ -3,9 +3,14 @@ import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import type { DocEntry } from '../../../shared/types'
 import { docUrl, parseDocUrl } from '../lib/docs'
+import { loadMermaid } from '../lib/mermaid'
 import { applyMarkdownEdits, lineStartsOf, MdEditError, sourceRangesPlugin } from '../lib/md-edit'
 import type { ScrollTarget } from '../App'
 import type { ReaderCallbacks, ReaderHandle } from './reader'
+import type { Annotation } from '../../../shared/types'
+import { createAnchoring } from '../../../shared/anchor'
+
+const anchoring = createAnchoring()
 
 // html: true lets you mix raw HTML/SVG into Markdown. Everything is passed through
 // DOMPurify afterwards, which removes <script> and on*="" handlers.
@@ -125,12 +130,13 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
       cb.current.onOutline(headings.current.map((h) => ({ level: Number(h.tagName[1]), text: (h.textContent ?? '').trim() })))
       cb.current.onReady()
       reportScroll()
+      drawAnnotations()
     }
 
     const diagrams = el.querySelectorAll<HTMLElement>('pre.mermaid')
     if (!diagrams.length) finish()
     else {
-      void import('mermaid').then(async ({ default: mermaid }) => {
+      void loadMermaid().then(async (mermaid) => {
         const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
         mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
         // The live raw preview can re-render while Mermaid is still drawing: skip stale nodes.
@@ -148,6 +154,40 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
       cancelled = true
     }
   }, [html, doc.path, renderKey])
+
+  // ---------- highlights ----------
+
+  const annotations = useRef<Annotation[]>([])
+  /** Draws the highlights over the rendered article (not while editing text). */
+  function drawAnnotations(): void {
+    const el = ref_.current
+    if (!el || cb.current.editing) return
+    cb.current.onAnchored(anchoring.apply(el, annotations.current))
+  }
+  // Selecting text shows the highlight toolbar; clicking a highlight opens its note.
+  useEffect(() => {
+    const el = ref_.current
+    if (!el || editing) return
+    const onMouseUp = (e: MouseEvent): void => {
+      if (e.button !== 0) return
+      const mark = (e.target as HTMLElement).closest('mark[data-sd-ann]')
+      const sel = getSelection()
+      if (mark && (!sel || sel.isCollapsed)) {
+        cb.current.onAnnotationClick(mark.getAttribute('data-sd-ann')!, mark.getBoundingClientRect())
+        return
+      }
+      setTimeout(() => cb.current.onSelection(anchoring.selectionInfo(el, getSelection())), 0)
+    }
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.shiftKey) cb.current.onSelection(anchoring.selectionInfo(el, getSelection()))
+    }
+    el.addEventListener('mouseup', onMouseUp)
+    el.addEventListener('keyup', onKeyUp)
+    return () => {
+      el.removeEventListener('mouseup', onMouseUp)
+      el.removeEventListener('keyup', onKeyUp)
+    }
+  }, [editing, renderKey])
 
   /** Tells DocView where you are: scroll position and the heading at the top of the view. */
   function reportScroll(): void {
@@ -177,6 +217,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
   useEffect(() => {
     const el = ref_.current
     if (!editing || !el) return
+    anchoring.clear(el) // highlights come back when editing ends and the article is redrawn
     blocks.current = [...el.querySelectorAll<HTMLElement>('[data-src]')].map((block) => {
       const [start, end] = block.dataset.src!.split(':').map(Number)
       block.contentEditable = 'plaintext-only'
@@ -234,7 +275,18 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     restoreScroll: (y) => {
       if (scrollRef.current) scrollRef.current.scrollTop = y
     },
-    collectChanges: async () => ({ kind: 'md', source: collectSource() })
+    collectChanges: async () => ({ kind: 'md', source: collectSource() }),
+    setAnnotations: (items) => {
+      annotations.current = items
+      drawAnnotations()
+    },
+    gotoAnnotation: (id) => {
+      const mark = ref_.current?.querySelector<HTMLElement>(`mark[data-sd-ann="${CSS.escape(id)}"]`)
+      if (!mark) return
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      mark.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+    },
+    clearSelection: () => getSelection()?.removeAllRanges()
   }))
 
   const scrollTo = (id: string, smooth: boolean): void => {

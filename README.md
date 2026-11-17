@@ -13,6 +13,7 @@ npm run smoke      # build rồi tự bấm thử app trên bản sao của samp
 npm run dist       # đóng gói ra release/Study Docs Setup x.y.z.exe (chỉ trên máy, không phát hành)
 npm run release    # đóng gói + phát hành lên GitHub Releases để các máy tự cập nhật
 npm run make-icon  # vẽ lại build/icon.png + icon.ico từ build/icon.svg
+node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ bản.epub
 ```
 
 ## Dùng app
@@ -24,7 +25,10 @@ npm run make-icon  # vẽ lại build/icon.png + icon.ico từ build/icon.svg
 | `Ctrl+E` hoặc icon đồng hồ | Danh sách bài mở gần đây |
 | `Alt+←` / `Alt+→`, nút ‹ ›, nút lùi/tiến trên chuột | Quay lại / tiến tới giữa các bài đã mở |
 | **Mục lục** | Danh sách tiêu đề bên phải; bấm để nhảy tới, mục đang đọc được tô sáng. App nhớ vị trí đang đọc của từng bài. |
+| **Bôi đen chữ** | Hiện thanh highlight: 4 màu hoặc **✎ Ghi chú**. Bấm vào chỗ đã highlight để sửa ghi chú, đổi màu, xoá. Tab **Ghi chú** ở bảng bên phải liệt kê mọi highlight của bài. Dùng được cho Markdown, HTML và EPUB. |
 | **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
+| **⋯ → Xuất PDF kèm highlight và ghi chú…** | Như trên, nhưng in cả highlight theo màu, số chú thích ¹ ² ³ sau đoạn có ghi chú, và mục **Ghi chú** ở cuối file |
+| File `.epub` | Đọc sách EPUB: mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
 | File `.pdf` | Mở ngay trong app bằng trình xem PDF có sẵn (phóng to, tìm chữ, in). PDF được tìm theo tên file, chưa tìm theo nội dung. |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown |
 | **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
@@ -64,6 +68,9 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/main/view-helper.ts` | Script nhỏ chèn vào bài HTML khi đọc: mục lục, vị trí đọc, phím tắt |
 | `src/main/updater.ts` | Tự cập nhật từ GitHub Releases |
 | `src/main/workspace.ts` | Workspace nhiều thư mục: id của thư mục, chống thêm trùng/lồng nhau, tên hiển thị |
+| `src/shared/anchor.ts` | Tìm lại và vẽ highlight (dùng chung cho Markdown, trang HTML và lúc xuất PDF) |
+| `src/main/doc-store.ts` | File JSON theo từng bài trong thư mục: hàng đợi ghi, sao lưu file hỏng, đi theo file khi đổi tên |
+| `src/main/notes-store.ts` | `.docs-notes.json`: highlight và ghi chú |
 | `src/main/meta-store.ts` | `.docs-meta.json`: hàng đợi ghi, sao lưu file hỏng, giữ tag khi đổi tên file |
 | `src/main/storage.ts` | Settings và danh sách "mở gần đây" trong `%APPDATA%\Study Docs` |
 | `src/preload/index.ts` | Cầu nối duy nhất UI ↔ Node, lộ ra `window.api` |
@@ -72,6 +79,8 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/renderer/src/components/DocView.tsx` | Thanh tiêu đề (trạng thái, tag), chế độ xem / sửa chữ / raw |
 | `src/renderer/src/components/MarkdownView.tsx` | Render Markdown + Mermaid, xử lý link, sửa chữ trên bài |
 | `src/renderer/src/components/HtmlView.tsx` | iframe cho bài HTML, nói chuyện với script sửa chữ |
+| `src/renderer/src/components/Annotations.tsx` | Thanh highlight, ô ghi chú, danh sách ghi chú |
+| `src/renderer/src/components/EpubView.tsx` | Đọc sách EPUB (epub.js) |
 | `src/renderer/src/components/RawEditor.tsx` | Trình sửa mã nguồn (CodeMirror) |
 | `src/renderer/src/components/reader.ts` | Giao diện chung của HtmlView/MarkdownView (mục lục, vị trí đọc, sửa chữ) |
 | `src/renderer/src/PrintPage.tsx` | Trang dùng khi xuất Markdown ra PDF |
@@ -86,6 +95,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 - **Tag và trạng thái học** nằm trong `.docs-meta.json` của từng thư mục trong workspace, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
   - Nếu file này bị hỏng (ví dụ do xung đột khi đồng bộ), app sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` và hiện cảnh báo, chứ không lặng lẽ xoá dữ liệu.
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
+- **Highlight và ghi chú** nằm trong `.docs-notes.json` của từng thư mục, **không ghi vào file bài**. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.
 
 ## Bảo mật

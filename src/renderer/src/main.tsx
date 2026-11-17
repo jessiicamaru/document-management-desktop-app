@@ -4,8 +4,9 @@ import App from './App'
 import PrintPage from './PrintPage'
 import './styles.css'
 
-// #print=<doc id>: hidden window used to export a Markdown document to PDF.
-const printId = location.hash.startsWith('#print=') ? decodeURIComponent(location.hash.slice('#print='.length)) : null
+// #print=<doc id>[&notes=1]: hidden window used to export a Markdown document to PDF.
+const hash = new URLSearchParams(location.hash.slice(1))
+const printId = hash.get('print')
 
 if (printId) {
   // Created before React renders, so the main process always finds it and waits for the
@@ -13,4 +14,6 @@ if (printId) {
   window.__studydocsPrintReady = new Promise<void>((resolve) => (window.__studydocsPrintDone = resolve))
 }
 
-createRoot(document.getElementById('root')!).render(<StrictMode>{printId ? <PrintPage id={printId} /> : <App />}</StrictMode>)
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>{printId ? <PrintPage id={printId} withNotes={hash.get('notes') === '1'} /> : <App />}</StrictMode>
+)

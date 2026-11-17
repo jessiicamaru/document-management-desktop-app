@@ -1,7 +1,10 @@
 // Types shared by the main process, the preload bridge and the React UI.
 
-/** md and html can be read, edited and exported; pdf is shown with the built-in PDF viewer. */
-export type DocKind = 'md' | 'html' | 'pdf'
+/**
+ * md and html can be read, edited, annotated and exported; pdf is shown with the built-in
+ * PDF viewer; epub books are read (and annotated) with epub.js.
+ */
+export type DocKind = 'md' | 'html' | 'pdf' | 'epub'
 
 /** How far along you are with a document. */
 export type StudyStatus = 'new' | 'learning' | 'review' | 'done'
@@ -54,8 +57,33 @@ export interface LibrarySnapshot {
   meta: Record<string, DocMeta>
   /** Document id -> when you last opened it. Kept in the app's own data folder, not the library. */
   recent: Record<string, number>
+  /** Document id -> its highlights/notes (documents without any are left out). */
+  notes: Record<string, Annotation[]>
   /** Problems the user should know about (corrupt meta file, folder missing...). */
   warnings: string[]
+}
+
+export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
+
+/** Where a highlight is: the selected text with a little context, so it can be found again after edits. */
+export interface TextQuote {
+  quote: string
+  /** Up to 32 characters before the quote. */
+  prefix: string
+  /** Up to 32 characters after the quote. */
+  suffix: string
+}
+
+/** A highlight, optionally with a note. Stored in <folder>/.docs-notes.json, never in the document. */
+export interface Annotation extends TextQuote {
+  id: string
+  color: HighlightColor
+  /** Plain text; empty for a highlight without a note. */
+  note: string
+  /** EPUB only: exact position in the book (an EPUB CFI range). */
+  cfi?: string
+  created: number
+  updated: number
 }
 
 /** Appearance settings, stored in %APPDATA%\Study Docs\settings.json. */
@@ -124,8 +152,16 @@ export interface DocsApi {
   onNavigate(cb: (path: string, hash: string) => void): () => void
   /** Mouse back/forward buttons. */
   onHistory(cb: (direction: 'back' | 'forward') => void): () => void
-  /** Asks where to save, then prints the document (md or html) to PDF. Resolves with the file path, or null if cancelled. */
-  exportPdf(path: string): Promise<string | null>
+  /**
+   * Asks where to save, then prints the document (md or html) to PDF, optionally with its
+   * highlights and notes. Resolves with the file path, or null if cancelled.
+   */
+  exportPdf(path: string, withNotes: boolean): Promise<string | null>
+  /** Adds or updates a highlight/note. Resolves with all annotations of that document. */
+  saveAnnotation(path: string, annotation: Annotation): Promise<Annotation[]>
+  deleteAnnotation(path: string, id: string): Promise<Annotation[]>
+  /** Raw bytes of a document (used for EPUB books). */
+  readBinary(path: string): Promise<Uint8Array>
   getAppInfo(): Promise<AppInfo>
   onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
   /** Restarts the app into the downloaded update. */
