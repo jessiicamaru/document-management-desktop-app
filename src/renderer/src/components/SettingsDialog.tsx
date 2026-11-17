@@ -23,6 +23,15 @@ interface Props {
   lib: LibrarySnapshot | null
 }
 
+type Tab = 'appearance' | 'reading' | 'library' | 'data' | 'about'
+const TABS: [Tab, string][] = [
+  ['appearance', 'Giao diện'],
+  ['reading', 'Đọc'],
+  ['library', 'Thư viện'],
+  ['data', 'Dữ liệu'],
+  ['about', 'Cập nhật']
+]
+
 export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFolders, onRemoveFolder, appInfo, lib }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [updateMsg, setUpdateMsg] = useState<string | null>(null)
@@ -35,6 +44,8 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
     setMessage({ text, error: false })
   }
   const set = <K extends keyof UiSettings>(key: K, value: UiSettings[K]): void => onChange({ ...ui, [key]: value })
+  // A broken data file to recover opens the "Dữ liệu" tab right away.
+  const [tab, setTab] = useState<Tab>(() => ((lib?.recovery.length ?? 0) > 0 ? 'data' : 'appearance'))
 
   useEffect(() => {
     dialogRef.current?.showModal()
@@ -64,200 +75,225 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
           ×
         </button>
       </header>
-      {/* Only this part scrolls; the title and the buttons stay in place. */}
-      <div className="settings-body">
+      <div className="settings-main">
+      <nav className="settings-tabs" role="tablist" aria-label="Nhóm cài đặt">
+        {TABS.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
+            {label}
+            {id === 'data' && (lib?.recovery.length ?? 0) > 0 && <span className="tab-dot" aria-label="cần xử lý" />}
+          </button>
+        ))}
+      </nav>
+      {/* Only this part scrolls; the title, the tabs and the buttons stay in place. */}
+      <div className="settings-body" role="tabpanel">
       {message && (
         <div className={`dialog-msg ${message.error ? 'error' : ''}`} role={message.error ? 'alert' : 'status'}>
           {message.text}
         </div>
       )}
 
-      {lib && lib.recovery.length > 0 && <RecoverySection items={lib.recovery} onError={reportError} onInfo={reportInfo} />}
+      {tab === 'appearance' && (
+        <>
+        <section>
+          <h3>Giao diện</h3>
+          <Row label="Chế độ màu">
+            <Segmented
+              value={ui.theme}
+              options={[
+                ['system', 'Theo Windows'],
+                ['light', 'Sáng'],
+                ['dark', 'Tối']
+              ]}
+              onChange={(v) => set('theme', v)}
+            />
+          </Row>
+          <Row label="Màu nhấn">
+            <div className="swatches">
+              {ACCENTS.map((a) => (
+                <button
+                  key={a.value}
+                  className={`swatch ${ui.accent.toLowerCase() === a.value ? 'active' : ''}`}
+                  style={{ background: a.value }}
+                  title={a.name}
+                  aria-label={a.name}
+                  onClick={() => set('accent', a.value)}
+                />
+              ))}
+              <label className="swatch custom" title="Chọn màu khác">
+                <input type="color" value={ui.accent} onChange={(e) => set('accent', e.target.value)} />
+              </label>
+            </div>
+          </Row>
+        </section>
+        </>
+      )}
+      {tab === 'reading' && (
+        <>
+        <section>
+          <h3>Đọc Markdown</h3>
+          <Row label={`Cỡ chữ: ${ui.readingSize}px`}>
+            <input
+              type="range"
+              min={13}
+              max={24}
+              value={ui.readingSize}
+              onChange={(e) => set('readingSize', Number(e.target.value))}
+            />
+          </Row>
+          <Row label="Kiểu chữ">
+            <Segmented
+              value={ui.readingFont}
+              options={[
+                ['sans', 'Không chân'],
+                ['serif', 'Có chân']
+              ]}
+              onChange={(v) => set('readingFont', v)}
+            />
+          </Row>
+          <Row label="Độ rộng trang">
+            <Segmented
+              value={ui.readingWidth}
+              options={[
+                ['narrow', 'Hẹp'],
+                ['normal', 'Vừa'],
+                ['wide', 'Rộng']
+              ]}
+              onChange={(v) => set('readingWidth', v)}
+            />
+          </Row>
+          <p className="hint">Bài HTML giữ nguyên giao diện riêng của nó; chỉ đổi theo chế độ Sáng/Tối nếu bài có hỗ trợ.</p>
+        </section>
 
-      <section>
-        <h3>Giao diện</h3>
-        <Row label="Chế độ màu">
-          <Segmented
-            value={ui.theme}
-            options={[
-              ['system', 'Theo Windows'],
-              ['light', 'Sáng'],
-              ['dark', 'Tối']
-            ]}
-            onChange={(v) => set('theme', v)}
-          />
-        </Row>
-        <Row label="Màu nhấn">
-          <div className="swatches">
-            {ACCENTS.map((a) => (
-              <button
-                key={a.value}
-                className={`swatch ${ui.accent.toLowerCase() === a.value ? 'active' : ''}`}
-                style={{ background: a.value }}
-                title={a.name}
-                aria-label={a.name}
-                onClick={() => set('accent', a.value)}
-              />
-            ))}
-            <label className="swatch custom" title="Chọn màu khác">
-              <input type="color" value={ui.accent} onChange={(e) => set('accent', e.target.value)} />
-            </label>
-          </div>
-        </Row>
-      </section>
-
-      <section>
-        <h3>Đọc Markdown</h3>
-        <Row label={`Cỡ chữ: ${ui.readingSize}px`}>
-          <input
-            type="range"
-            min={13}
-            max={24}
-            value={ui.readingSize}
-            onChange={(e) => set('readingSize', Number(e.target.value))}
-          />
-        </Row>
-        <Row label="Kiểu chữ">
-          <Segmented
-            value={ui.readingFont}
-            options={[
-              ['sans', 'Không chân'],
-              ['serif', 'Có chân']
-            ]}
-            onChange={(v) => set('readingFont', v)}
-          />
-        </Row>
-        <Row label="Độ rộng trang">
-          <Segmented
-            value={ui.readingWidth}
-            options={[
-              ['narrow', 'Hẹp'],
-              ['normal', 'Vừa'],
-              ['wide', 'Rộng']
-            ]}
-            onChange={(v) => set('readingWidth', v)}
-          />
-        </Row>
-        <p className="hint">Bài HTML giữ nguyên giao diện riêng của nó; chỉ đổi theo chế độ Sáng/Tối nếu bài có hỗ trợ.</p>
-      </section>
-
-      <section>
-        <h3>Đọc sách (EPUB, Kindle)</h3>
-        <Row label="Số trang trên màn hình">
-          <Segmented
-            value={ui.epubSpread}
-            options={[
-              ['single', 'Một trang'],
-              ['auto', 'Hai trang khi cửa sổ rộng']
-            ]}
-            onChange={(v) => set('epubSpread', v)}
-          />
-        </Row>
-        <p className="hint">Màu, kiểu chữ và cỡ chữ của sách theo phần "Đọc Markdown" ở trên.</p>
-      </section>
-
-      <section>
-        <h3>Thanh bên</h3>
-        <Row label="Sắp xếp bài trong thư mục">
-          <Segmented
-            value={ui.sidebarSort}
-            options={[
-              ['name', 'Theo tên'],
-              ['modified', 'Mới sửa trước']
-            ]}
-            onChange={(v) => set('sidebarSort', v)}
-          />
-        </Row>
-        <Row label="File ảnh (.png, .jpg, .svg...)">
-          <Segmented
-            value={ui.showImages ? 'show' : 'hide'}
-            options={[
-              ['show', 'Hiện'],
-              ['hide', 'Ẩn']
-            ]}
-            onChange={(v) => set('showImages', v === 'show')}
-          />
-        </Row>
-        <p className="hint">Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục. Ẩn ảnh nếu thư mục ghi chú có nhiều ảnh minh hoạ.</p>
-      </section>
-
-      {lib && <TagsSection lib={lib} onError={reportError} onInfo={reportInfo} />}
-
-      <section>
-        <h3>Thư mục trong workspace</h3>
-        {roots.length === 0 && <p className="hint">Chưa có thư mục nào.</p>}
-        {roots.map((r) => (
-          <Row
-            key={r.key}
-            label={
-              <span>
-                <b>{r.name}</b>
-                {!r.available && <span className="root-missing">không tìm thấy</span>}
-                <br />
-                <span className="path">{r.path}</span>
-              </span>
-            }
-          >
-            <button
-              className="btn small"
-              onClick={() => {
-                if (window.confirm(`Bỏ thư mục "${r.name}" khỏi workspace? File trên ổ đĩa không bị xoá.`)) onRemoveFolder(r.key)
-              }}
+        <section>
+          <h3>Đọc sách (EPUB, Kindle)</h3>
+          <Row label="Số trang trên màn hình">
+            <Segmented
+              value={ui.epubSpread}
+              options={[
+                ['single', 'Một trang'],
+                ['auto', 'Hai trang khi cửa sổ rộng']
+              ]}
+              onChange={(v) => set('epubSpread', v)}
+            />
+          </Row>
+          <p className="hint">Màu, kiểu chữ và cỡ chữ của sách theo phần "Đọc Markdown" ở trên.</p>
+        </section>
+        </>
+      )}
+      {tab === 'library' && (
+        <>
+        <section>
+          <h3>Thư mục trong workspace</h3>
+          {roots.length === 0 && <p className="hint">Chưa có thư mục nào.</p>}
+          {roots.map((r) => (
+            <Row
+              key={r.key}
+              label={
+                <span>
+                  <b>{r.name}</b>
+                  {!r.available && <span className="root-missing">không tìm thấy</span>}
+                  <br />
+                  <span className="path">{r.path}</span>
+                </span>
+              }
             >
-              Bỏ
+              <button
+                className="btn small"
+                onClick={() => {
+                  if (window.confirm(`Bỏ thư mục "${r.name}" khỏi workspace? File trên ổ đĩa không bị xoá.`)) onRemoveFolder(r.key)
+                }}
+              >
+                Bỏ
+              </button>
+            </Row>
+          ))}
+          <button className="btn" onClick={onAddFolders}>
+            + Thêm thư mục…
+          </button>
+          <p className="hint">Có thể thêm thư mục ở nhiều ổ đĩa khác nhau (C:, D:, USB...). Tag, trạng thái và ghi chú được lưu trong dữ liệu của app (%APPDATA%\Study Docs\data), không ghi gì vào thư mục tài liệu.</p>
+        </section>
+
+        <section>
+          <h3>Thanh bên</h3>
+          <Row label="Sắp xếp bài trong thư mục">
+            <Segmented
+              value={ui.sidebarSort}
+              options={[
+                ['name', 'Theo tên'],
+                ['modified', 'Mới sửa trước']
+              ]}
+              onChange={(v) => set('sidebarSort', v)}
+            />
+          </Row>
+          <Row label="File ảnh (.png, .jpg, .svg...)">
+            <Segmented
+              value={ui.showImages ? 'show' : 'hide'}
+              options={[
+                ['show', 'Hiện'],
+                ['hide', 'Ẩn']
+              ]}
+              onChange={(v) => set('showImages', v === 'show')}
+            />
+          </Row>
+          <p className="hint">Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục. Ẩn ảnh nếu thư mục ghi chú có nhiều ảnh minh hoạ.</p>
+        </section>
+        </>
+      )}
+      {tab === 'data' && (
+        <>
+          {lib && lib.recovery.length > 0 && <RecoverySection items={lib.recovery} onError={reportError} onInfo={reportInfo} />}
+        <section>
+          <h3>Sao lưu dữ liệu</h3>
+          <Row label="Tag, trạng thái, highlight và ghi chú của mọi thư mục và file lẻ">
+            <div className="recovery-actions">
+              <button
+                className="btn small"
+                onClick={async () => {
+                  try {
+                    const file = await window.api.exportData()
+                    if (file) reportInfo(`Đã sao lưu vào ${file}`)
+                  } catch (err) {
+                    reportError(err)
+                  }
+                }}
+              >
+                Sao lưu ra file…
+              </button>
+              <button
+                className="btn small"
+                onClick={async () => {
+                  try {
+                    const n = await window.api.importData()
+                    if (n !== null) reportInfo(`Đã khôi phục dữ liệu của ${n} bài (gộp với dữ liệu hiện có)`)
+                  } catch (err) {
+                    reportError(err)
+                  }
+                }}
+              >
+                Khôi phục từ file…
+              </button>
+            </div>
+          </Row>
+          <p className="hint">Dùng khi chuyển sang máy khác hoặc cài lại Windows. Khôi phục không xoá gì: dữ liệu trong file được gộp vào dữ liệu đang có.</p>
+        </section>
+
+          {lib && <TagsSection lib={lib} onError={reportError} onInfo={reportInfo} />}
+        </>
+      )}
+      {tab === 'about' && (
+        <>
+        <section>
+          <h3>Cập nhật</h3>
+          <Row label={`Phiên bản ${appInfo?.version ?? ''}`}>
+            <button className="btn" onClick={checkUpdates}>
+              Kiểm tra cập nhật
             </button>
           </Row>
-        ))}
-        <button className="btn" onClick={onAddFolders}>
-          + Thêm thư mục…
-        </button>
-        <p className="hint">Có thể thêm thư mục ở nhiều ổ đĩa khác nhau (C:, D:, USB...). Tag, trạng thái và ghi chú được lưu trong dữ liệu của app (%APPDATA%\Study Docs\data), không ghi gì vào thư mục tài liệu.</p>
-      </section>
-
-      <section>
-        <h3>Sao lưu dữ liệu</h3>
-        <Row label="Tag, trạng thái, highlight và ghi chú của mọi thư mục và file lẻ">
-          <div className="recovery-actions">
-            <button
-              className="btn small"
-              onClick={async () => {
-                try {
-                  const file = await window.api.exportData()
-                  if (file) reportInfo(`Đã sao lưu vào ${file}`)
-                } catch (err) {
-                  reportError(err)
-                }
-              }}
-            >
-              Sao lưu ra file…
-            </button>
-            <button
-              className="btn small"
-              onClick={async () => {
-                try {
-                  const n = await window.api.importData()
-                  if (n !== null) reportInfo(`Đã khôi phục dữ liệu của ${n} bài (gộp với dữ liệu hiện có)`)
-                } catch (err) {
-                  reportError(err)
-                }
-              }}
-            >
-              Khôi phục từ file…
-            </button>
-          </div>
-        </Row>
-        <p className="hint">Dùng khi chuyển sang máy khác hoặc cài lại Windows. Khôi phục không xoá gì: dữ liệu trong file được gộp vào dữ liệu đang có.</p>
-      </section>
-
-      <section>
-        <h3>Cập nhật</h3>
-        <Row label={`Phiên bản ${appInfo?.version ?? ''}`}>
-          <button className="btn" onClick={checkUpdates}>
-            Kiểm tra cập nhật
-          </button>
-        </Row>
-        {updateMsg && <p className="hint">{updateMsg}</p>}
-      </section>
+          {updateMsg && <p className="hint">{updateMsg}</p>}
+        </section>
+        </>
+      )}
+      </div>
       </div>
 
       <footer>

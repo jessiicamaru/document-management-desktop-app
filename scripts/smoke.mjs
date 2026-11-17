@@ -119,6 +119,8 @@ page.on('dialog', (d) => void (dialogAnswer === 'accept' ? d.accept() : d.dismis
 await page.setViewportSize({ width: 1320, height: 860 })
 await page.emulateMedia({ colorScheme: null }) // Playwright forces "light" by default; let the app decide
 
+/** Settings are in tabs (Giao diện, Đọc, Thư viện, Dữ liệu, Cập nhật). */
+const settingsTab = (name) => page.click(`dialog.settings .settings-tabs >> text=${name}`)
 const openDoc = (title) => page.click(`.doc-list .row.doc >> text=${title}`)
 const docPathIs = (p) => page.waitForSelector(`.doc-path:text-is("${p}")`, { timeout: 5000 })
 const editBarGone = () => page.waitForSelector('.edit-bar', { state: 'detached', timeout: 5000 })
@@ -224,8 +226,10 @@ try {
   step("8. Settings: dark mode, accent colour, reading size; saved to the settings file.")
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await page.waitForSelector('dialog.settings[open]')
+  await settingsTab('Giao diện') // opens on Dữ liệu while a backup waits to be merged
   await page.click('dialog.settings >> text=Tối')
   await page.click('dialog.settings .swatch[title="Xanh ngọc"]')
+  await settingsTab('Đọc')
   await page.fill('dialog.settings input[type=range]', '19')
   await page.waitForTimeout(600)
   check(await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors), 'dark mode set for the window')
@@ -637,6 +641,7 @@ try {
     })
   const wide = await pagesShown()
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Đọc')
   await page.click('dialog.settings >> text=Một trang')
   await page.click('dialog.settings >> text=Xong')
   await page.waitForTimeout(1500)
@@ -687,12 +692,13 @@ try {
 
   // Settings: hide pictures from the list; only the middle of the dialog scrolls.
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  const tabs = await page.locator('dialog.settings .settings-tabs [role=tab]').allTextContents()
   const dialogScroll = await page.evaluate(() => {
     const d = document.querySelector('dialog.settings')
-    const body = d.querySelector('.settings-body')
-    return { dialog: d.scrollHeight - d.clientHeight, body: body.scrollHeight > body.clientHeight }
+    return d.scrollHeight - d.clientHeight
   })
-  check(dialogScroll.dialog <= 1 && dialogScroll.body, 'settings: only the list of settings scrolls, title and buttons stay')
+  check(tabs.length === 5 && dialogScroll <= 1, `settings are split into tabs (${tabs.join(', ')}); the dialog itself never scrolls`)
+  await settingsTab('Thư viện')
   await page.click('dialog.settings .setting-row:has-text("File ảnh") >> text=Ẩn')
   await page.waitForFunction(() => ![...document.querySelectorAll('.doc-list .row.doc')].some((r) => r.textContent.includes('Sơ đồ CQRS')))
   check(true, 'pictures can be hidden from the list')
@@ -839,7 +845,7 @@ try {
   // The user fixed the backup by hand; it has a tag for Event Sourcing and data of a deleted file.
   writeFileSync(path.join(dataDir(library), backupName), JSON.stringify({ version: 1, docs: { [ES]: { tags: ['phục-hồi'], status: 'new' }, 'gone/old.md': { tags: ['cũ'], status: 'done' } } }))
   await page.click('.banner:has-text("Khôi phục…") button')
-  await page.waitForSelector('dialog.settings[open] section.recovery')
+  await page.waitForSelector('dialog.settings[open] section.recovery') // the Dữ liệu tab opens by itself
   await page.click('section.recovery button:has-text("Gộp lại")')
   await page.waitForSelector('section.recovery', { state: 'detached' })
   const merged = JSON.parse(readFileSync(metaFile, 'utf8')).docs
@@ -864,6 +870,7 @@ try {
   check(/: [1-9]\d* mục/.test(orphanLabel) && !JSON.parse(readFileSync(metaFile, 'utf8')).docs['gone/old.md'], `clean-up removes data of deleted files (${orphanLabel.trim()})`)
 
   step('23c. Sidebar order and arrow keys')
+  await settingsTab('Thư viện')
   await page.click('dialog.settings >> text=Mới sửa trước')
   await page.click('dialog.settings >> text=Xong')
   await page.waitForTimeout(300)
@@ -968,6 +975,7 @@ try {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
   }, backupFile)
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Dữ liệu')
   await page.click('dialog.settings >> text=Sao lưu ra file…')
   await page.waitForSelector('dialog.settings .dialog-msg >> text=Đã sao lưu')
   const backup = JSON.parse(readFileSync(backupFile, 'utf8'))

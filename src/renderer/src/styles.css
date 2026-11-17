@@ -305,6 +305,18 @@ dialog.settings::backdrop { background: rgba(0, 0, 0, .35); }
 dialog.settings[open] { display: flex; flex-direction: column; overflow: hidden; }
 dialog.settings header, dialog.settings footer { flex: none; }
 dialog.settings .settings-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* Tabs on the left, the settings of the chosen tab on the right. */
+dialog.settings { width: min(760px, calc(100vw - 32px)); height: min(640px, calc(100vh - 48px)); }
+dialog.settings .settings-main { flex: 1; min-height: 0; display: flex; }
+dialog.settings .settings-tabs { flex: none; width: 150px; display: flex; flex-direction: column; gap: 2px; padding: 12px 8px; border-right: 1px solid var(--line); background: var(--panel); }
+dialog.settings .settings-tabs button { position: relative; text-align: left; border: none; background: none; color: var(--ink-soft); font: inherit; font-size: 13.5px; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+dialog.settings .settings-tabs button:hover { background: var(--hover); color: var(--ink); }
+dialog.settings .settings-tabs button.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
+dialog.settings .tab-dot { position: absolute; right: 10px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: #d1242f; }
+@media (max-width: 560px) {
+  dialog.settings .settings-main { flex-direction: column; }
+  dialog.settings .settings-tabs { width: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); }
+}
 dialog.settings header, dialog.settings footer {
   display: flex; align-items: center; justify-content: space-between; padding: 14px 20px;
 }
