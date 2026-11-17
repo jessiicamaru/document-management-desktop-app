@@ -4,6 +4,7 @@ import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type Tree
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
 import { t } from '../../../shared/i18n'
+import { confirmDialog } from '../lib/ask'
 
 export interface SearchHit {
   doc: DocEntry
@@ -293,8 +294,9 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
                 className="icon-btn small root-remove"
                 title={t('Bỏ thư mục này khỏi workspace (không xoá file)')}
                 aria-label={t('Bỏ {0} khỏi workspace', { 0: root.name })}
-                onClick={() => {
-                  if (window.confirm(t('Bỏ thư mục "{0}" khỏi workspace?\n\n{1}\n\nFile trên ổ đĩa không bị xoá.', { 0: root.name, 1: root.path }))) onRemoveRoot(root.key)
+                onClick={async () => {
+                  const yes = await confirmDialog({ message: t('Bỏ thư mục "{0}" khỏi workspace?\n\n{1}\n\nFile trên ổ đĩa không bị xoá.', { 0: root.name, 1: root.path }), ok: t('Bỏ khỏi workspace'), cancel: t('Huỷ') })
+                  if (yes) onRemoveRoot(root.key)
                 }}
               >
                 ×

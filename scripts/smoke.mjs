@@ -117,6 +117,32 @@ const page = await app.firstWindow()
 page.on('console', (m) => m.type() === 'error' && !m.location().url.startsWith('doc://') && !/doc:\/\/library\//.test(m.text()) && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
 let dialogAnswer = 'dismiss'
+/**
+ * Questions are the app's own dialogs (dialog.ask). A small helper inside the page answers
+ * each one as soon as it opens: "accept" clicks the first button, "dismiss" the cancel one.
+ * It also counts them (window.__smokeAsked).
+ */
+const setAnswer = async (a) => {
+  // A question asked just before is answered with the previous answer first.
+  if (dialogAnswer !== 'hold') {
+    await page.waitForTimeout(150)
+    await page.waitForFunction(() => !document.querySelector('dialog.ask[open]'), null, { timeout: 5000 }).catch(() => {})
+  }
+  dialogAnswer = a
+  await page.evaluate((x) => (window.__smokeAnswer = x), a)
+}
+const installAnswerer = () =>
+  page.evaluate(() => {
+    window.__smokeAnswer ??= 'dismiss'
+    window.__smokeAsked ??= 0
+    setInterval(() => {
+      const d = document.querySelector('dialog.ask[open]')
+      if (!d || d.dataset.smoke || window.__smokeAnswer === 'hold') return
+      d.dataset.smoke = '1'
+      window.__smokeAsked++
+      d.querySelector(`[data-answer="${window.__smokeAnswer === 'accept' ? 'ok' : 'cancel'}"]`).click()
+    }, 50)
+  })
 // A dialog may already be gone when Playwright answers it; that must not crash the test.
 page.on('dialog', (d) => void (dialogAnswer === 'accept' ? d.accept() : d.dismiss()).catch(() => {}))
 await page.setViewportSize({ width: 1320, height: 860 })
@@ -130,6 +156,7 @@ const editBarGone = () => page.waitForSelector('.edit-bar', { state: 'detached',
 
 try {
   await page.waitForSelector('.sidebar')
+  await installAnswerer()
 
   // 1. Corrupt meta file: backed up and reported, not silently dropped.
   step("1. Corrupt meta file: backed up and reported, not silently dropped.")
@@ -262,7 +289,7 @@ try {
   await page.keyboard.type(' (dở)')
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await settingsTab('Giao diện')
-  dialogAnswer = 'dismiss'
+  await setAnswer('dismiss')
   await page.click('dialog.settings >> text=English')
   await page.waitForTimeout(500)
   check(
@@ -270,10 +297,10 @@ try {
     'switching language while editing asks first ("no" keeps the language and the edit)'
   )
   await page.click('dialog.settings >> text=Xong')
-  dialogAnswer = 'accept'
+  await setAnswer('accept')
   await page.click('.edit-bar >> text=Huỷ (Esc)')
   await editBarGone()
-  dialogAnswer = 'dismiss'
+  await setAnswer('dismiss')
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await settingsTab('Giao diện')
   await page.click('dialog.settings >> text=English')
@@ -357,10 +384,10 @@ try {
   await page.frameLocator('iframe.html-frame.editing').locator('h1[data-sd-block]').click()
   await page.keyboard.type('XYZ')
   await page.waitForTimeout(200)
-  dialogAnswer = 'dismiss'
+  await setAnswer('dismiss')
   await openDoc('Lộ trình Backend')
   check((await page.textContent('.doc-path')) === ES, 'switching docs with unsaved edits asks and stays')
-  dialogAnswer = 'accept'
+  await setAnswer('accept')
   await page.click('.edit-bar >> text=Huỷ (Esc)')
   await editBarGone()
   check(read(ES) === svgAfter, 'cancelled edit does not touch the file')
@@ -750,15 +777,14 @@ try {
   // 19. Issue #1: a page can't open programs, and asks before opening other files.
   step('19. Safety: opening files from a page')
   await app.evaluate(({ shell, dialog }) => {
-    // Keep the real functions: window.confirm() in the UI also goes through showMessageBox.
-    globalThis.__real = { openPath: shell.openPath, showItemInFolder: shell.showItemInFolder, showMessageBox: dialog.showMessageBox }
+    globalThis.__real = { openPath: shell.openPath, showItemInFolder: shell.showItemInFolder }
     globalThis.__opened = []
     globalThis.__revealed = []
-    globalThis.__asked = 0
     shell.openPath = async (p) => (globalThis.__opened.push(p), '')
     shell.showItemInFolder = (p) => globalThis.__revealed.push(p)
-    dialog.showMessageBox = async () => (globalThis.__asked++, { response: 1 }) // answer "Không"
   })
+  await setAnswer('dismiss') // the app asks in its own dialog; answer "Không"
+  const askedBefore = await page.evaluate(() => window.__smokeAsked)
   const attackId = await page.evaluate(async (rel) => (await window.api.getLibrary()).docs.find((d) => d.rel === rel).path, ATTACK)
   await page.evaluate((id) => window.api.markOpened(id), attackId)
   await openDoc('Tài liệu lạ')
@@ -773,11 +799,10 @@ try {
   await page.waitForTimeout(800)
   await runInPage('#run-txt')
   await page.waitForTimeout(800)
-  const afterTxt = await app.evaluate(() => ({ opened: globalThis.__opened.length, asked: globalThis.__asked }))
+  const afterTxt = { opened: await app.evaluate(() => globalThis.__opened.length), asked: (await page.evaluate(() => window.__smokeAsked)) - askedBefore }
   check(afterTxt.asked === 1 && afterTxt.opened === 0, 'a page opening a .csv file asks first (answered "Không": nothing opened)')
   await app.evaluate(({ shell, dialog }) => {
     Object.assign(shell, { openPath: globalThis.__real.openPath, showItemInFolder: globalThis.__real.showItemInFolder })
-    dialog.showMessageBox = globalThis.__real.showMessageBox
   })
 
   // 20. Issue #2: when exporting to PDF the page can't read other files; hidden files are never served.
@@ -901,14 +926,14 @@ try {
   await page.press('.tag-row input', 'Enter')
   await page.waitForSelector('.tag-row:has-text("#server")')
   check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[ES]?.tags?.includes('server'), 'renaming a tag changes it in the data file')
-  dialogAnswer = 'accept'
+  await setAnswer('accept')
   await page.click('.tag-row:has-text("#phục-hồi") >> text=Xoá')
   await page.waitForSelector('.tag-row:has-text("#phục-hồi")', { state: 'detached' })
   check(!JSON.stringify(JSON.parse(readFileSync(metaFile, 'utf8')).docs).includes('phục-hồi'), 'deleting a tag removes it from every document')
   const orphanLabel = await page.textContent('.tags-section .setting-row')
   await page.click('.tags-section >> text=Dọn dẹp')
   await page.waitForFunction(() => document.querySelector('.tags-section .setting-row')?.textContent?.includes(': 0 mục'))
-  dialogAnswer = 'dismiss'
+  await setAnswer('dismiss')
   check(/: [1-9]\d* mục/.test(orphanLabel) && !JSON.parse(readFileSync(metaFile, 'utf8')).docs['gone/old.md'], `clean-up removes data of deleted files (${orphanLabel.trim()})`)
 
   step('23c. Sidebar order and arrow keys')
@@ -957,7 +982,7 @@ try {
 
   // 18. Removing a folder from the workspace keeps its files.
   step("18. Remove folder")
-  dialogAnswer = 'accept'
+  await setAnswer('accept')
   await page.hover('.root-row:has-text("notes")')
   await page.click('.root-row:has-text("notes") .root-remove')
   await page.waitForFunction(() => document.querySelectorAll('.root-row').length === 0)
@@ -1060,6 +1085,21 @@ try {
     dialog.showOpenDialog = globalThis.__realOpen
     dialog.showSaveDialog = globalThis.__realSave
   })
+
+  // Every question so far was the app's own dialog (window.confirm is no longer used).
+  step('27. Question dialogs')
+  const asked = await page.evaluate(() => window.__smokeAsked)
+  await setAnswer('hold')
+  await page.hover('.root-row:has-text("extra")')
+  await page.click('.root-row:has-text("extra") .root-remove')
+  await page.waitForSelector('dialog.ask[open]')
+  const buttons = await page.locator('dialog.ask[open] .ask-buttons button').allTextContents()
+  await page.waitForTimeout(400) // let the opening animation finish
+  await page.screenshot({ path: shot('17-ask-dialog') })
+  await page.click('dialog.ask[open] [data-answer="cancel"]')
+  await page.waitForSelector('dialog.ask[open]', { state: 'detached' }).catch(() => {})
+  check(asked >= 8 && buttons.join('|') === 'Bỏ khỏi workspace|Huỷ' && (await page.locator('.root-row').count()) === 2, `questions use the app's own dialog (${asked} so far; buttons: ${buttons.join(', ')})`)
+  await setAnswer('dismiss')
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

@@ -120,6 +120,13 @@ export const EN: Record<string, string> = {
   'Thoát bây giờ sẽ mất các thay đổi đó.': 'Quitting now loses them.',
   'Thoát, bỏ thay đổi': 'Quit, discard changes',
   'Ở lại': 'Stay',
+  'Vẫn đổi': 'Change anyway',
+  'Bỏ thay đổi': 'Discard changes',
+  'Vẫn bỏ': 'Remove anyway',
+  'Tiếp tục sửa': 'Keep editing',
+  'Bỏ khỏi workspace': 'Remove from workspace',
+  'Bỏ tag': 'Remove tag',
+  'Bỏ vào Thùng rác': 'Move to Recycle Bin',
   'thay đổi bên ngoài': 'changed outside the app',
 
   // ---------- highlights and notes ----------

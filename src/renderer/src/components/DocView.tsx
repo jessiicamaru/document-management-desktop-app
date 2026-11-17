@@ -13,6 +13,7 @@ import FindBar from './FindBar'
 import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
 import { t } from '../../../shared/i18n'
+import { confirmDialog } from '../lib/ask'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
 type Mode = 'view' | 'edit' | 'raw'
@@ -85,8 +86,8 @@ export default function DocView(props: Props) {
     updateDirty(false)
   }, [updateDirty])
 
-  const cancelEdit = useCallback((): void => {
-    if (dirty && !window.confirm(t('Bỏ các thay đổi chưa lưu?'))) return
+  const cancelEdit = useCallback(async (): Promise<void> => {
+    if (dirty && !(await confirmDialog({ message: t('Bỏ các thay đổi chưa lưu?'), ok: t('Bỏ thay đổi'), cancel: t('Tiếp tục sửa'), danger: true }))) return
     stopEdit()
   }, [dirty, stopEdit])
 

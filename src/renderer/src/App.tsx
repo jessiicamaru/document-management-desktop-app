@@ -7,6 +7,8 @@ import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
 import SettingsDialog, { type SettingsTab } from './components/SettingsDialog'
 import { setLanguage, t } from '../../shared/i18n'
+import { ask, confirmDialog } from './lib/ask'
+import AskHost from './components/AskHost'
 
 export type StatusFilter = StudyStatus | 'all'
 
@@ -132,14 +134,26 @@ export default function App() {
   languageRef.current = ui.language
   const changeUi = useCallback(
     (next: UiSettings) => {
+      const apply = (): void => {
+        setUi(next)
+        clearTimeout(saveUiTimer.current)
+        saveUiTimer.current = setTimeout(() => window.api.setUiSettings(next).catch(notify), 250)
+      }
       // A new language draws the whole window again, which drops text being edited: ask first.
       if (next.language !== languageRef.current && dirtyRef.current) {
-        if (!window.confirm(t('Đổi ngôn ngữ sẽ vẽ lại cửa sổ và bỏ các thay đổi chưa lưu của bài đang sửa. Vẫn đổi?'))) return
-        setDirty(false)
+        void confirmDialog({
+          message: t('Đổi ngôn ngữ sẽ vẽ lại cửa sổ và bỏ các thay đổi chưa lưu của bài đang sửa. Vẫn đổi?'),
+          ok: t('Vẫn đổi'),
+          cancel: t('Ở lại'),
+          danger: true
+        }).then((yes) => {
+          if (!yes) return
+          setDirty(false)
+          apply()
+        })
+        return
       }
-      setUi(next)
-      clearTimeout(saveUiTimer.current)
-      saveUiTimer.current = setTimeout(() => window.api.setUiSettings(next).catch(notify), 250)
+      apply()
     },
     [notify, setDirty]
   )
@@ -150,9 +164,15 @@ export default function App() {
 
   /** Opens a document; returns false if you chose to stay because of unsaved edits. */
   const openDoc = useCallback(
-    (path: string, hash = '', fromHistory = false): boolean => {
+    async (path: string, hash = '', fromHistory = false): Promise<boolean> => {
       if (dirtyRef.current && path !== selected) {
-        if (!window.confirm(t('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?'))) return false
+        const yes = await confirmDialog({
+          message: t('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?'),
+          ok: t('Bỏ thay đổi'),
+          cancel: t('Ở lại'),
+          danger: true
+        })
+        if (!yes) return false
         setDirty(false)
       }
       if (!fromHistory) {
@@ -182,16 +202,19 @@ export default function App() {
       const target = h.index + (direction === 'back' ? -1 : 1)
       const entry = h.entries[target]
       if (!entry) return
-      if (openDoc(entry.path, entry.hash, true)) {
+      void openDoc(entry.path, entry.hash, true).then((opened) => {
+        if (!opened) return
         h.index = target
         syncHistory()
-      }
+      })
     },
     [openDoc]
   )
 
   // A link clicked inside an HTML document points to another document.
   useEffect(() => window.api.onNavigate((path, hash) => openDoc(path, hash)), [openDoc])
+  // Questions from the main process, shown in the same dialog.
+  useEffect(() => window.api.onAsk((id, request) => void ask(request).then((index) => window.api.answerAsk(id, index))), [])
   // Mouse back/forward buttons.
   useEffect(() => window.api.onHistory(goHistory), [goHistory])
 
@@ -219,7 +242,10 @@ export default function App() {
       const paths = [...e.dataTransfer!.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
       window.api
         .addFiles(paths)
-        .then(([first]) => (first ? openDoc(first) : notify(new Error(t('Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.')))))
+        .then(([first]) => {
+          if (first) void openDoc(first)
+          else notify(new Error(t('Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.')))
+        })
         .catch(notify)
     }
     window.addEventListener('dragover', onDragOver)
@@ -276,7 +302,13 @@ export default function App() {
   const removeFolder = useCallback(
     async (key: string) => {
       if (dirtyRef.current && selected?.startsWith(`${key}/`)) {
-        if (!window.confirm(t('Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?'))) return
+        const yes = await confirmDialog({
+          message: t('Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?'),
+          ok: t('Vẫn bỏ'),
+          cancel: t('Huỷ'),
+          danger: true
+        })
+        if (!yes) return
         setDirty(false)
       }
       try {
@@ -438,6 +470,7 @@ export default function App() {
           lib={lib}
         />
       )}
+      <AskHost />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`}>

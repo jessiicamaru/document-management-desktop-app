@@ -237,6 +237,29 @@ async function openFromExplorer(abs: string): Promise<void> {
   openPendingFile()
 }
 
+// ---------- questions shown in the app's own dialog ----------
+
+/** Questions waiting for an answer from the window (see AskHost in the renderer). */
+const pendingAsks = new Map<number, (index: number) => void>()
+let nextAskId = 1
+
+/**
+ * Asks in the app's own dialog (same look as the app, in its language) instead of a Windows
+ * message box. Falls back to the Windows box before the window is ready.
+ * Resolves with the index of the button clicked.
+ */
+async function askInWindow(o: { message: string; detail?: string; buttons: string[]; cancelId: number; dangerId?: number }): Promise<number> {
+  if (!win || win.isDestroyed() || !uiReady) {
+    const { response } = await dialog.showMessageBox(win!, { type: 'question', message: o.message, detail: o.detail, buttons: o.buttons, cancelId: o.cancelId, defaultId: o.cancelId })
+    return response
+  }
+  const id = nextAskId++
+  return new Promise((resolve) => {
+    pendingAsks.set(id, resolve)
+    win!.webContents.send('dialog:ask', id, o)
+  })
+}
+
 /** Shows the pending file once its folder is scanned and the UI is listening. */
 function openPendingFile(): void {
   if (!pendingFile || !uiReady || !win) return
@@ -252,7 +275,7 @@ function openPendingFile(): void {
   } else if (!scanning) {
     const name = path.basename(pendingFile)
     pendingFile = null
-    void dialog.showMessageBox(win, { type: 'warning', message: t('Không mở được "{0}"', { 0: name }), detail: t('File nằm trong thư mục ẩn (tên bắt đầu bằng dấu chấm) hoặc không còn tồn tại.') })
+    void askInWindow({ message: t('Không mở được "{0}"', { 0: name }), detail: t('File nằm trong thư mục ẩn (tên bắt đầu bằng dấu chấm) hoặc không còn tồn tại.'), buttons: [t('Đóng')], cancelId: 0 })
   }
 }
 
@@ -614,12 +637,9 @@ async function openLibraryFile(rel: string, fromPage = false): Promise<void> {
     return
   }
   if (fromPage && win) {
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'question',
-      title: t('Mở file'),
+    const response = await askInWindow({
       message: t('Bài đang đọc muốn mở "{0}" bằng ứng dụng mặc định của Windows.', { 0: path.basename(abs) }),
       buttons: [t('Mở'), t('Không')],
-      defaultId: 1,
       cancelId: 1
     })
     if (response !== 0) return
@@ -748,6 +768,12 @@ function friendlyWriteError(err: unknown): Error {
 // ---------- IPC handlers (called through window.api in the UI) ----------
 
 function registerIpc(): void {
+  ipcMain.handle('dialog:answer', (_e, id: number, index: number) => {
+    const resolve = pendingAsks.get(Number(id))
+    pendingAsks.delete(Number(id))
+    resolve?.(Number(index))
+  })
+
   ipcMain.handle('library:get', async () => {
     const snap = await snapshot()
     uiReady = true

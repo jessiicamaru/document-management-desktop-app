@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DEFAULT_UI, type AppInfo, type LibrarySnapshot, type RecoveryItem, type RootInfo, type UiSettings } from '../../../shared/types'
 import { errorMessage } from '../lib/docs'
 import { t } from '../../../shared/i18n'
+import { confirmDialog } from '../lib/ask'
 
 const ACCENTS = [
   { name: 'Cam đất', value: '#b4531f' },
@@ -221,8 +222,9 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
             >
               <button
                 className="btn small"
-                onClick={() => {
-                  if (window.confirm(t('Bỏ thư mục "{0}" khỏi workspace? File trên ổ đĩa không bị xoá.', { 0: r.name }))) onRemoveFolder(r.key)
+                onClick={async () => {
+                  const yes = await confirmDialog({ message: t('Bỏ thư mục "{0}" khỏi workspace? File trên ổ đĩa không bị xoá.', { 0: r.name }), ok: t('Bỏ khỏi workspace'), cancel: t('Huỷ') })
+                  if (yes) onRemoveFolder(r.key)
                 }}
               >{t('Bỏ')}</button>
             </Row>
@@ -408,8 +410,9 @@ function TagsSection({ lib, onError, onInfo }: { lib: LibrarySnapshot; onError: 
             <button
               className="btn small danger"
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(t('Bỏ tag "{0}" khỏi {1} bài? Bài không bị xoá.', { 0: tag, 1: n }))) void run(async () => t('Đã bỏ tag ở {0} bài', { 0: await window.api.deleteTag(tag) }))
+              onClick={async () => {
+                const yes = await confirmDialog({ message: t('Bỏ tag "{0}" khỏi {1} bài? Bài không bị xoá.', { 0: tag, 1: n }), ok: t('Bỏ tag'), cancel: t('Huỷ'), danger: true })
+                if (yes) void run(async () => t('Đã bỏ tag ở {0} bài', { 0: await window.api.deleteTag(tag) }))
               }}
             >{t('Xoá')}</button>
           </div>
@@ -419,10 +422,14 @@ function TagsSection({ lib, onError, onInfo }: { lib: LibrarySnapshot; onError: 
         <button
           className="btn small"
           disabled={busy || lib.scanning || !lib.orphans}
-          onClick={() => {
-            if (window.confirm(t('Xoá tag, trạng thái và ghi chú của {0} mục thuộc file không còn trong thư mục? Không hoàn tác được.', { 0: lib.orphans }))) {
-              void run(async () => t('Đã dọn {0} mục', { 0: await window.api.cleanOrphans() }))
-            }
+          onClick={async () => {
+            const yes = await confirmDialog({
+              message: t('Xoá tag, trạng thái và ghi chú của {0} mục thuộc file không còn trong thư mục? Không hoàn tác được.', { 0: lib.orphans }),
+              ok: t('Dọn dẹp'),
+              cancel: t('Huỷ'),
+              danger: true
+            })
+            if (yes) void run(async () => t('Đã dọn {0} mục', { 0: await window.api.cleanOrphans() }))
           }}
         >{t('Dọn dẹp')}</button>
       </Row>
@@ -465,8 +472,9 @@ function RecoverySection({ items, onError, onInfo }: { items: RecoveryItem[]; on
             <button
               className="btn small danger"
               disabled={busy}
-              onClick={() => {
-                if (window.confirm(t('Bỏ bản sao lưu này vào Thùng rác?'))) void act(() => window.api.discardBackup(it.root, it.file))
+              onClick={async () => {
+                const yes = await confirmDialog({ message: t('Bỏ bản sao lưu này vào Thùng rác?'), ok: t('Bỏ vào Thùng rác'), cancel: t('Huỷ'), danger: true })
+                if (yes) void act(() => window.api.discardBackup(it.root, it.file))
               }}
             >{t('Bỏ')}</button>
           </div>

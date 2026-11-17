@@ -8,6 +8,7 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import type { DocEntry } from '../../../shared/types'
 import { detectEol, fromLf, toLf, type Eol } from '../lib/eol'
 import { t } from '../../../shared/i18n'
+import { confirmDialog } from '../lib/ask'
 
 interface Props {
   doc: DocEntry
@@ -135,8 +136,8 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
         </button>
         <button
           className="btn small"
-          onClick={() => {
-            if (dirty && !window.confirm(t('Đóng raw và bỏ các thay đổi chưa lưu?'))) return
+          onClick={async () => {
+            if (dirty && !(await confirmDialog({ message: t('Đóng raw và bỏ các thay đổi chưa lưu?'), ok: t('Bỏ thay đổi'), cancel: t('Tiếp tục sửa'), danger: true }))) return
             onClose()
           }}
         >{t('Đóng raw')}</button>

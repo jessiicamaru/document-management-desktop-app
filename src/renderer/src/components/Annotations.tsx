@@ -8,6 +8,7 @@ import type { Annotation, HighlightColor } from '../../../shared/types'
 import type { ScreenRect } from './reader'
 import { renderNote } from '../lib/note-md'
 import { t } from '../../../shared/i18n'
+import { confirmDialog } from '../lib/ask'
 
 /** A note shown as Markdown. */
 function NoteText({ text, className }: { text: string; className: string }) {
@@ -126,8 +127,8 @@ export function NotePopover({
         <div className="spacer" />
         <button
           className="btn small danger"
-          onClick={() => {
-            if (!annotation.note.trim() || window.confirm(t('Xoá highlight và ghi chú này?'))) onDelete()
+          onClick={async () => {
+            if (!annotation.note.trim() || (await confirmDialog({ message: t('Xoá highlight và ghi chú này?'), ok: t('Xoá'), cancel: t('Huỷ'), danger: true }))) onDelete()
           }}
         >{t('Xoá')}</button>
         <button

@@ -89,6 +89,15 @@ export interface LibrarySnapshot {
   orphans: number
 }
 
+/** A question from the main process, shown in the app's own dialog. */
+export interface AskRequest {
+  message: string
+  detail?: string
+  buttons: string[]
+  cancelId: number
+  dangerId?: number
+}
+
 /** A backup of a broken data file, offered in the recovery dialog. */
 export interface RecoveryItem {
   root: string
@@ -223,6 +232,9 @@ export interface DocsApi {
   discardBackup(root: string, file: string): Promise<void>
   /** Shows a backup file in Explorer (to fix it by hand). */
   revealBackup(root: string, file: string): Promise<void>
+  /** The main process asks a question; the app shows it in its own dialog and answers with answerAsk. */
+  onAsk(cb: (id: number, request: AskRequest) => void): () => void
+  answerAsk(id: number, index: number): Promise<void>
   /** Shows a file picker and opens the chosen documents ("File lẻ" if outside the workspace). Resolves with their ids. */
   openFiles(): Promise<string[]>
   /** Opens documents by path (drag and drop). Resolves with their ids. */

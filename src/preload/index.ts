@@ -2,7 +2,7 @@
 // and nothing else, so a document can never reach the file system on its own.
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { DocsApi, LibrarySnapshot, SearchStatus, UpdateStatus } from '../shared/types'
+import type { AskRequest, DocsApi, LibrarySnapshot, SearchStatus, UpdateStatus } from '../shared/types'
 
 /** Subscribes to a main-process event and returns an unsubscribe function. */
 function listen<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -33,6 +33,8 @@ const api: DocsApi = {
   restoreBackup: (root, file) => ipcRenderer.invoke('recovery:restore', root, file),
   discardBackup: (root, file) => ipcRenderer.invoke('recovery:discard', root, file),
   revealBackup: (root, file) => ipcRenderer.invoke('recovery:reveal', root, file),
+  onAsk: (cb) => listen<[number, AskRequest]>('dialog:ask', cb),
+  answerAsk: (id, index) => ipcRenderer.invoke('dialog:answer', id, index),
   openFiles: () => ipcRenderer.invoke('files:open'),
   addFiles: (paths) => ipcRenderer.invoke('files:add', paths),
   removeLooseFile: (path) => ipcRenderer.invoke('files:remove', path),
