@@ -10,6 +10,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import ePub from 'epubjs'
 import type { Annotation, DocEntry } from '../../../shared/types'
 import { loadLocal, saveLocal } from '../lib/docs'
+import { generateLocations } from '../lib/epub-locations'
 import { HIGHLIGHT_COLORS } from './Annotations'
 import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
 
@@ -301,8 +302,10 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       const saved = loadLocal<string | null>(locationsKey(doc), null)
       if (saved) book.locations.load(saved)
       else {
-        await book.locations.generate(1600)
-        if (cancelled) return
+        // Computed in small slices so turning pages stays smooth meanwhile (issue #13).
+        const locations = await generateLocations(book as unknown as Parameters<typeof generateLocations>[0], 1600, () => cancelled)
+        if (!locations || cancelled) return
+        book.locations.load(locations as unknown as string)
         saveLocal(locationsKey(doc), book.locations.save())
       }
       const loc = r.currentLocation() as unknown as { start?: { cfi: string } }

@@ -308,7 +308,7 @@ export default function DocView(props: Props) {
         {mode === 'edit' ? (
           <div className="doc-controls edit-bar">
             <span className="edit-hint">
-              <b>Đang sửa chữ.</b> Bấm vào đoạn văn để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.
+              <b>Đang sửa chữ.</b> Bấm vào đoạn văn (hoặc chữ trong sơ đồ) để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.
             </span>
             <div className="spacer" />
             {dirty && <span className="dirty-dot" title="Chưa lưu" />}

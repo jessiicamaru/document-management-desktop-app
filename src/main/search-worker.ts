@@ -5,8 +5,9 @@
 //  - a small MiniSearch index of titles / file names / paths  -> instant title matches
 //  - each document's text with accents removed (same length as the original), in memory
 //    -> accent-insensitive full-text search by plain substring matching
-// The original text is cached on disk as UTF-16, so a snippet around a match is read
-// straight from the right byte offset instead of keeping every book twice in memory.
+// The original text is cached on disk (UTF-8 with checkpoints, see text-cache.ts), so a
+// snippet around a match is read from the right place instead of keeping every book twice
+// in memory. Folded texts are mostly 1 byte per character in memory (see PUNCT in text.ts).
 
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
@@ -16,6 +17,7 @@ import MiniSearch from 'minisearch'
 import type { DocKind, SearchResult } from '../shared/types'
 import { findInText, foldAccents, normalize } from '../shared/text'
 import { extractText } from './library'
+import { decodeTextCache, encodeTextCache, readTextCacheSlice } from './text-cache'
 
 /** What the main process tells us about each document. */
 export interface WorkerDoc {
@@ -49,7 +51,7 @@ const titles = new MiniSearch<{ id: string; title: string; name: string; rel: st
 const send = (msg: FromWorker): void => parentPort!.postMessage(msg)
 const hasText = (d: WorkerDoc): boolean => d.kind !== 'pdf'
 const cacheFile = (d: WorkerDoc): string =>
-  path.join(textCacheDir, createHash('sha1').update(`${d.abs.toLowerCase()}|${d.size}|${d.mtime}`).digest('hex') + '.txt')
+  path.join(textCacheDir, createHash('sha1').update(`${d.abs.toLowerCase()}|${d.size}|${d.mtime}`).digest('hex') + '.u8')
 
 // ---------- keeping up with the document list ----------
 
@@ -108,39 +110,31 @@ async function work(): Promise<void> {
 async function pruneCache(): Promise<void> {
   const keep = new Set([...docs.values()].filter(hasText).map((d) => path.basename(cacheFile(d))))
   for (const name of await fs.readdir(textCacheDir).catch(() => [] as string[])) {
-    if (name.endsWith('.txt') && !keep.has(name)) await fs.rm(path.join(textCacheDir, name), { force: true })
+    // .txt: the old UTF-16 format, replaced by .u8 (issue #12).
+    if ((name.endsWith('.u8') || name.endsWith('.txt')) && !keep.has(name)) await fs.rm(path.join(textCacheDir, name), { force: true })
   }
 }
 
 /** Text of a document, from the disk cache if it was extracted before. */
 async function textOf(d: WorkerDoc): Promise<string> {
   const file = cacheFile(d)
-  try {
-    return (await fs.readFile(file)).toString('utf16le')
-  } catch {
-    const text = await extractText(d.abs, d.kind)
-    await fs.writeFile(file, Buffer.from(text, 'utf16le')).catch(() => {})
-    return text
-  }
+  const cached = await fs.readFile(file).then(decodeTextCache, () => null)
+  if (cached !== null) return cached
+  const text = await extractText(d.abs, d.kind)
+  await fs.writeFile(file, encodeTextCache(text)).catch(() => {})
+  return text
 }
 
-/** Original text around [start, end), read from the UTF-16 cache file (2 bytes per character). */
+/** Original text around [start, end), read from the cache file. */
 async function snippetFromCache(d: WorkerDoc, start: number, end: number): Promise<SearchResult['snippet']> {
   try {
-    const handle = await fs.open(cacheFile(d), 'r')
-    try {
-      const from = Math.max(0, start - RADIUS)
-      const length = end + RADIUS - from
-      const buf = Buffer.alloc(length * 2)
-      const { bytesRead } = await handle.read(buf, 0, buf.length, from * 2)
-      const piece = buf.subarray(0, bytesRead - (bytesRead % 2)).toString('utf16le')
-      return {
-        before: (from > 0 ? '…' : '') + piece.slice(0, start - from),
-        match: piece.slice(start - from, end - from),
-        after: piece.slice(end - from) + (from + piece.length < (folded.get(d.id)?.length ?? 0) ? '…' : '')
-      }
-    } finally {
-      await handle.close()
+    const from = Math.max(0, start - RADIUS)
+    const piece = await readTextCacheSlice(cacheFile(d), from, end + RADIUS - from)
+    if (piece === null) return null
+    return {
+      before: (from > 0 ? '…' : '') + piece.slice(0, start - from),
+      match: piece.slice(start - from, end - from),
+      after: piece.slice(end - from) + (from + piece.length < (folded.get(d.id)?.length ?? 0) ? '…' : '')
     }
   } catch {
     return null

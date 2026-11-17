@@ -70,6 +70,11 @@ export function editModeInjection(nonce: string): string {
   [data-sd-block]:hover { outline-color: rgba(180, 83, 31, .45); }
   [data-sd-block]:focus { outline: 2px solid rgba(180, 83, 31, .8); background: rgba(180, 83, 31, .05); }
   [data-sd-block][data-sd-dirty] { box-shadow: inset 3px 0 0 rgba(47, 93, 138, .7); }
+  [data-sd-svg] { cursor: text; }
+  [data-sd-svg]:hover { text-decoration: underline dotted rgba(180, 83, 31, .8); }
+  [data-sd-svg][data-sd-dirty] { text-decoration: underline solid rgba(47, 93, 138, .9); }
+  input[data-studydocs] { position: fixed; z-index: 2147483647; font: 14px system-ui, sans-serif; padding: 2px 6px;
+    border: 2px solid rgba(180, 83, 31, .9); border-radius: 4px; background: #fff; color: #111; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
 </style>
 <script nonce="${nonce}" data-studydocs>
 (() => {
@@ -102,8 +107,57 @@ export function editModeInjection(nonce: string): string {
   }
   walk(document.body)
 
+  // Text in SVG diagrams (issue #26): <text>/<tspan> that hold only text. SVG can't be
+  // contenteditable, so clicking one opens a small text box over it. Only the text between
+  // its tags is written back; spaces/newlines around it in the file are kept.
+  const SVG_NS = 'http://www.w3.org/2000/svg'
+  const svgTexts = [...document.querySelectorAll('svg text, svg tspan')]
+    .filter((el) => el.namespaceURI === SVG_NS && el.children.length === 0 && el.textContent.trim() && !el.closest('[data-studydocs]'))
+    .map((el) => {
+      const [, lead, , trail] = /^(\\s*)([\\s\\S]*?)(\\s*)$/.exec(el.textContent)
+      return { el, path: pathOf(el), tag: el.tagName, original: el.textContent, lead, trail }
+    })
+  const escapeText = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
   const send = (msg) => parent.postMessage({ source: 'studydocs', ...msg }, '*')
-  const dirtyCount = () => blocks.filter((b) => b.el.innerHTML !== b.original).length
+  const dirtyCount = () => blocks.filter((b) => b.el.innerHTML !== b.original).length + svgTexts.filter((t) => t.el.textContent !== t.original).length
+
+  let box = null
+  const openBox = (t) => {
+    if (box) box.blur()
+    const r = t.el.getBoundingClientRect()
+    const input = document.createElement('input')
+    input.setAttribute('data-studydocs', '')
+    input.value = t.el.textContent.trim()
+    input.style.left = Math.max(4, r.left - 6) + 'px'
+    input.style.top = Math.max(4, r.top + r.height / 2 - 15) + 'px'
+    input.style.width = Math.max(140, r.width + 40) + 'px'
+    let done = false
+    const finish = (keep) => {
+      if (done) return
+      done = true
+      if (keep && input.value.trim() !== t.el.textContent.trim()) {
+        t.el.textContent = t.lead + input.value.trim() + t.trail
+        t.el.toggleAttribute('data-sd-dirty', t.el.textContent !== t.original)
+        send({ type: 'dirty', count: dirtyCount() })
+      }
+      input.remove()
+      if (box === input) box = null
+    }
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true) }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false) }
+    })
+    input.addEventListener('blur', () => finish(true))
+    document.body.appendChild(input)
+    box = input
+    input.focus()
+    input.select()
+  }
+  for (const t of svgTexts) {
+    t.el.setAttribute('data-sd-svg', '')
+    t.el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openBox(t) })
+  }
 
   for (const b of blocks) {
     b.el.setAttribute('data-sd-block', '')
@@ -130,11 +184,15 @@ export function editModeInjection(nonce: string): string {
   window.addEventListener('message', (e) => {
     if (e.source !== parent || !e.data || e.data.source !== 'studydocs-app') return
     if (e.data.type === 'collect') {
+      if (box) box.blur() // a text box still open counts too
       const edits = blocks.filter((b) => b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: b.el.innerHTML }))
+      for (const t of svgTexts) {
+        if (t.el.textContent !== t.original) edits.push({ path: t.path, tag: t.tag, html: escapeText(t.el.textContent) })
+      }
       send({ type: 'edits', id: e.data.id, edits })
     }
   })
-  send({ type: 'ready', blocks: blocks.length })
+  send({ type: 'ready', blocks: blocks.length + svgTexts.length })
 })()
 </script>`
 }

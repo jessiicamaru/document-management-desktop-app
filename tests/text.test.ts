@@ -5,7 +5,7 @@ describe('foldAccents', () => {
   it('removes accents and lowercases, keeping the same length', () => {
     const s = 'Sự Kiện — Đường đi của Event Sourcing'
     const f = foldAccents(s)
-    expect(f).toBe('su kien — duong di cua event sourcing')
+    expect(f).toBe('su kien - duong di cua event sourcing') // typographic dash folded too
     expect(f.length).toBe(s.length)
   })
   it('agrees with normalize() on Vietnamese text', () => {

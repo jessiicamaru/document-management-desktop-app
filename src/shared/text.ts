@@ -1,5 +1,21 @@
 // Accent-insensitive text helpers used by search (Vietnamese: "su kien" finds "sự kiện").
 
+/**
+ * Typographic punctuation folded to plain ASCII ("—" finds "-", "“" finds '"'). Besides
+ * being friendlier to search, it keeps the folded text of most books (Vietnamese, English)
+ * free of characters above U+00FF, so V8 stores it with 1 byte per character instead of 2
+ * (issue #12: the search worker keeps every folded text in memory).
+ */
+const PUNCT: Record<string, string> = {
+  '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'",
+  '“': '"', '”': '"', '„': '"', '‟': '"', '″': '"',
+  '‐': '-', '‑': '-', '‒': '-', '–': '-', '—': '-', '―': '-', '−': '-',
+  '…': '.', '•': '*', '‧': '.',
+  '​': ' ', '‌': ' ', '‍': ' ', '⁠': ' ', '﻿': ' ',
+  ' ': ' ', ' ': ' ', ' ': ' ', ' ': ' ', ' ': '\n', ' ': '\n'
+}
+const PUNCT_RE = new RegExp(`[${Object.keys(PUNCT).join('')}]`, 'g')
+
 /** Lowercase and drop Vietnamese accents. */
 export function normalize(s: string): string {
   return s
@@ -7,6 +23,7 @@ export function normalize(s: string): string {
     .replace(/[̀-ͯ]/g, '')
     .replace(/đ/g, 'd')
     .replace(/Đ/g, 'D')
+    .replace(PUNCT_RE, (c) => PUNCT[c])
     .toLowerCase()
 }
 

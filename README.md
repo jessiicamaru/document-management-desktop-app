@@ -34,7 +34,7 @@ node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ b�
 | File `.pdf` | Mở ngay trong app bằng trình xem PDF có sẵn (phóng to, tìm chữ, in). PDF được tìm theo tên file, chưa tìm theo nội dung. |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown, đổi tên / xoá tag trên mọi bài, dọn dữ liệu của file đã xoá |
 | Markdown | Code block được tô màu theo ngôn ngữ (` ```js `, ` ```python `...), công thức `$...$` và `$$...$$` hiển thị bằng KaTeX, sơ đồ ` ```mermaid `. |
-| **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
+| **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown), kể cả chữ trong sơ đồ SVG của bài HTML (bấm vào chữ để hiện ô sửa). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
 | **Raw** | Mở mã nguồn bên cạnh bài để sửa bố cục, sơ đồ, thẻ HTML... Markdown được xem trước trực tiếp khi gõ; HTML cập nhật sau khi lưu (`Ctrl+S`). |
 
 Khi sửa chữ, app chỉ thay đúng phần chữ bạn đổi trong file, phần còn lại giữ nguyên từng ký tự. Nếu không đảm bảo được điều đó (ví dụ thẻ HTML không có thẻ đóng, hoặc chữ bạn gõ sẽ bị Markdown hiểu thành định dạng) thì app không lưu và báo bạn dùng Raw. Nếu file bị sửa ở app khác trong lúc bạn đang sửa, app cũng không ghi đè.
@@ -105,7 +105,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
 - **Highlight và ghi chú** nằm trong `.docs-notes.json` của từng thư mục, **không ghi vào file bài**. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.
-- **Bộ nhớ đệm cho tốc độ** cũng ở đó: `scan-cache.json` (tên các tài liệu) và thư mục `text-cache` (chữ đã đọc ra để tìm kiếm, khoảng 2 lần dung lượng chữ của mỗi cuốn sách). Xoá đi cũng không mất gì, app sẽ đọc lại. Chữ của file đã bị bỏ khỏi workspace được tự dọn.
+- **Bộ nhớ đệm cho tốc độ** cũng ở đó: `scan-cache.json` (tên các tài liệu) và thư mục `text-cache` (chữ đã đọc ra để tìm kiếm, lưu UTF-8 nên chỉ cỡ dung lượng chữ của mỗi cuốn sách). Xoá đi cũng không mất gì, app sẽ đọc lại. Chữ của file đã bị bỏ khỏi workspace được tự dọn.
 
 ## Bảo mật
 

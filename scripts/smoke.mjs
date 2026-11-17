@@ -272,6 +272,19 @@ try {
   await page.frameLocator('iframe.html-frame').locator('h1 >> text=Event Sourcing cơ bản').waitFor()
   check(true, 'HTML view reloads with the saved text')
 
+  // Issue #26: text inside an SVG diagram can be edited too (through a small text box).
+  const svgBefore = read(ES)
+  await page.click('.doc-controls >> text=Sửa chữ')
+  await editFrame.locator('text[data-sd-svg] >> text=(ghi đè mỗi lần đổi)').click()
+  await editFrame.locator('input[data-studydocs]').fill('(ghi đè & mất lịch sử)')
+  await editFrame.locator('input[data-studydocs]').press('Enter')
+  await page.screenshot({ path: shot('6b-svg-text-edit') })
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await editBarGone()
+  await page.waitForTimeout(500)
+  check(read(ES) === svgBefore.replace('>(ghi đè mỗi lần đổi)</text>', '>(ghi đè &amp; mất lịch sử)</text>'), 'SVG text edit changes only that text in the file (escaped)')
+  const svgAfter = read(ES)
+
   // 11. Unsaved changes: switching docs asks first (dismissed = stay), Esc + confirm cancels.
   step("11. Unsaved changes: switching docs asks first (dismissed = stay), Esc + confirm cancels.")
   await page.click('.doc-controls >> text=Sửa chữ')
@@ -284,7 +297,7 @@ try {
   dialogAnswer = 'accept'
   await page.click('.edit-bar >> text=Huỷ (Esc)')
   await editBarGone()
-  check(read(ES) === htmlAfter, 'cancelled edit does not touch the file')
+  check(read(ES) === svgAfter, 'cancelled edit does not touch the file')
 
   // 12. Edit refused if the file changed on disk meanwhile.
   step("12. Edit refused if the file changed on disk meanwhile.")
