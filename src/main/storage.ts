@@ -89,7 +89,8 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
     readingFont: pick(ui.readingFont, ['sans', 'serif'] as const, DEFAULT_UI.readingFont),
     readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth),
     sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort),
-    epubSpread: pick(ui.epubSpread, ['single', 'auto'] as const, DEFAULT_UI.epubSpread)
+    epubSpread: pick(ui.epubSpread, ['single', 'auto'] as const, DEFAULT_UI.epubSpread),
+    showImages: typeof ui.showImages === 'boolean' ? ui.showImages : DEFAULT_UI.showImages
   }
 }
 

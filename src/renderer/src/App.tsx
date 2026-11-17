@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type SearchStatus, type StudyStatus, type UiSettings } from '../../shared/types'
-import { errorMessage, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
+import { errorMessage, kindLabel, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
 import { pruneReadingPositions } from './lib/positions'
 import Sidebar, { type SearchHit } from './components/Sidebar'
@@ -133,7 +133,8 @@ export default function App() {
       : null
   }, [])
 
-  const docs = lib?.docs ?? []
+  // Settings > Thanh bên can hide pictures (folders of notes often have many).
+  const docs = useMemo(() => (lib?.docs ?? []).filter((d) => ui.showImages || d.kind !== 'image'), [lib?.docs, ui.showImages])
   const meta = lib?.meta ?? {}
 
   /** Opens a document; returns false if you chose to stay because of unsaved edits. */
@@ -207,7 +208,7 @@ export default function App() {
       const paths = [...e.dataTransfer!.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
       window.api
         .addFiles(paths)
-        .then(([first]) => (first ? openDoc(first) : notify(new Error('Chỉ mở được file .md, .html, .pdf, .epub, .mobi, .azw3.'))))
+        .then(([first]) => (first ? openDoc(first) : notify(new Error('Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.'))))
         .catch(notify)
     }
     window.addEventListener('dragover', onDragOver)
@@ -473,7 +474,7 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpenFiles, onOpen }: We
           <div className="group-title">Mở gần đây</div>
           {recentDocs.map((d) => (
             <button key={d.path} className="row doc" onClick={() => onOpen(d.path)} title={d.rel}>
-              <span className={`kind kind-${d.kind}`}>{d.kind.toUpperCase()}</span>
+              <span className={`kind kind-${d.kind}`}>{kindLabel(d.kind)}</span>
               <span className="row-title">{d.title}</span>
               <span className="row-time">{timeAgo(recent[d.path])}</span>
             </button>

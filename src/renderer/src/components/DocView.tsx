@@ -7,6 +7,8 @@ import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
 import EpubView from './EpubView'
 import PdfView from './PdfView'
+import ArticleView from './ArticleView'
+import ImageView from './ImageView'
 import FindBar from './FindBar'
 import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
@@ -250,6 +252,10 @@ export default function DocView(props: Props) {
   const preview =
     doc.kind === 'pdf' ? (
       <PdfView {...readerProps} doc={doc} onError={onError} />
+    ) : doc.kind === 'docx' || doc.kind === 'txt' ? (
+      <ArticleView {...readerProps} doc={doc} onError={onError} />
+    ) : doc.kind === 'image' ? (
+      <ImageView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'epub' || doc.kind === 'mobi' ? (
       <EpubView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'html' ? (

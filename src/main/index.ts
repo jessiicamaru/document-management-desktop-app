@@ -207,7 +207,7 @@ async function pushSnapshot(): Promise<void> {
 // ---------- opening a file from Explorer (issue #24) ----------
 
 /** File types the installer associates with the app. */
-const OPENABLE = /\.(md|markdown|html?|pdf|epub|mobi|azw3?)$/i
+const OPENABLE = /\.(md|markdown|html?|pdf|docx|txt|epub|mobi|azw3?|png|jpe?g|gif|webp|svg|bmp|avif)$/i
 /** A file to show once the UI is ready and its folder has been scanned. */
 let pendingFile: string | null = null
 /** True once the UI asked for the library, so it is listening for doc:navigate. */
@@ -774,7 +774,10 @@ function registerIpc(): void {
     const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
       title: 'Mở tài liệu',
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Tài liệu', extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'epub', 'mobi', 'azw3', 'azw'] }]
+      filters: [
+        { name: 'Tài liệu', extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'docx', 'txt', 'epub', 'mobi', 'azw3', 'azw'] },
+        { name: 'Ảnh', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }
+      ]
     })
     return canceled ? [] : addFiles(filePaths)
   })

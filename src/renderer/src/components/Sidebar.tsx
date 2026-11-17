@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo, SearchResult, SearchStatus } from '../../../shared/types'
-import { buildTree, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
+import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
 
@@ -364,7 +364,7 @@ function DocRow({ doc, depth, selected, onOpen, title }: { doc: DocEntry; depth:
       title={title ?? doc.rel}
       data-depth={depth}
     >
-      <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
+      <span className={`kind kind-${doc.kind}`}>{kindLabel(doc.kind)}</span>
       <span className="row-title">{doc.title}</span>
     </button>
   )
@@ -390,7 +390,7 @@ function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResul
         return (
           <button key={doc.path} className={`hit ${selected === doc.path ? 'selected' : ''}`} onClick={() => onOpen(doc.path)}>
             <div className="hit-title">
-              <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
+              <span className={`kind kind-${doc.kind}`}>{kindLabel(doc.kind)}</span>
               {doc.title}
             </div>
             {folder && <div className="hit-path">{folder}</div>}
@@ -447,7 +447,7 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
             onClose()
           }}
         >
-          <span className={`kind kind-${d.kind}`}>{d.kind.toUpperCase()}</span>
+          <span className={`kind kind-${d.kind}`}>{kindLabel(d.kind)}</span>
           <span className="row-title">{d.title}</span>
           <span className="row-time">{timeAgo(times[d.path])}</span>
         </button>

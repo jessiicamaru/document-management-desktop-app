@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="260" viewBox="0 0 640 260" font-family="Segoe UI, sans-serif">
+  <rect width="640" height="260" fill="#fffdf9"/>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#5a6067"/></marker></defs>
+  <g stroke="#b4531f" stroke-width="2" fill="#f7e6da">
+    <rect x="30" y="100" width="130" height="56" rx="10"/>
+    <rect x="250" y="40" width="140" height="56" rx="10"/>
+    <rect x="250" y="160" width="140" height="56" rx="10"/>
+    <rect x="480" y="100" width="130" height="56" rx="10"/>
+  </g>
+  <g fill="#1f2328" font-size="15" text-anchor="middle">
+    <text x="95" y="133">Người dùng</text>
+    <text x="320" y="73">Command (ghi)</text>
+    <text x="320" y="193">Query (đọc)</text>
+    <text x="545" y="133">Event store</text>
+  </g>
+  <g stroke="#5a6067" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M160 120L248 76"/>
+    <path d="M390 68L478 118"/>
+    <path d="M478 140L392 184"/>
+    <path d="M248 188L162 140"/>
+  </g>
+</svg>

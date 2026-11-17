@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { DocEntry, DocKind } from '../shared/types'
 import { openZip, type ZipReader } from './zip'
+import { decodeText } from '../shared/text'
 
 /** A document as found inside one folder: `path` is relative to that folder. */
 export type ScannedDoc = Omit<DocEntry, 'root' | 'rel'>
@@ -54,7 +55,17 @@ const EXTENSIONS: Record<string, DocKind> = {
   '.epub': 'epub',
   '.mobi': 'mobi',
   '.azw3': 'mobi',
-  '.azw': 'mobi'
+  '.azw': 'mobi',
+  '.docx': 'docx',
+  '.txt': 'txt',
+  '.png': 'image',
+  '.jpg': 'image',
+  '.jpeg': 'image',
+  '.gif': 'image',
+  '.webp': 'image',
+  '.svg': 'image',
+  '.bmp': 'image',
+  '.avif': 'image'
 }
 
 function shouldSkipDir(name: string): boolean {
@@ -144,6 +155,7 @@ async function readEntry(
     }
     if (kind === 'epub') title = await epubTitle(abs).catch(() => '')
     if (kind === 'mobi') title = await mobiTitle(abs).catch(() => '')
+    if (kind === 'docx') title = await docxTitle(abs).catch(() => '')
     const info = { title: title || fallbackTitle, hash }
     cache?.set(abs, stat.size, stat.mtimeMs, info)
     return { ...base, ...info }
@@ -156,11 +168,52 @@ async function readEntry(
 export async function extractText(abs: string, kind: DocKind): Promise<string> {
   if (kind === 'epub') return epubText(abs)
   if (kind === 'mobi') return (await import('./mobi-text')).mobiText(abs, MAX_BOOK_TEXT)
+  if (kind === 'docx') return docxText(abs)
+  if (kind === 'image') return ''
+  if (kind === 'txt') {
+    const file = await fs.open(abs, 'r')
+    try {
+      // Big text files (logs...) are searched in their first part only.
+      const buf = Buffer.alloc(Math.min((await file.stat()).size, MAX_BOOK_TEXT * 2))
+      const { bytesRead } = await file.read(buf, 0, buf.length, 0)
+      return decodeText(buf.subarray(0, bytesRead)).slice(0, MAX_BOOK_TEXT)
+    } finally {
+      await file.close()
+    }
+  }
   if (kind === 'pdf') return (await import('./pdf-text')).pdfText(abs, MAX_BOOK_TEXT)
   const stat = await fs.stat(abs)
   if (stat.size > MAX_HASH_BYTES) return ''
   const source = await fs.readFile(abs, 'utf8')
   return kind === 'html' ? extractHtml(source).text : extractMarkdown(source).text
+}
+
+// ---------- Word (.docx) ----------
+
+/** Title from the document properties (File > Info in Word), if it has one. */
+export async function docxTitle(abs: string): Promise<string> {
+  const zip = await openZip(abs)
+  try {
+    const core = (await zip.read('docProps/core.xml'))?.toString('utf8') ?? ''
+    return collapse(decodeEntities(core.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/)?.[1] ?? ''))
+  } finally {
+    await zip.close()
+  }
+}
+
+/** Plain text of a Word document, paragraph by paragraph (straight from its XML, no layout). */
+export async function docxText(abs: string): Promise<string> {
+  const zip = await openZip(abs)
+  try {
+    const xml = (await zip.read('word/document.xml'))?.toString('utf8') ?? ''
+    const text = xml
+      .replace(/<w:tab\/>/g, ' ')
+      .replace(/<\/w:p>/g, '\n')
+      .replace(/<[^>]+>/g, '')
+    return decodeEntities(text).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_BOOK_TEXT)
+  } finally {
+    await zip.close()
+  }
 }
 
 // ---------- MOBI / AZW3 ----------

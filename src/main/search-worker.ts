@@ -116,6 +116,7 @@ async function pruneCache(): Promise<void> {
 
 /** Text of a document, from the disk cache if it was extracted before. */
 async function textOf(d: WorkerDoc): Promise<string> {
+  if (d.kind === 'image') return '' // found by name only; nothing to cache
   const file = cacheFile(d)
   const cached = await fs.readFile(file).then(decodeTextCache, () => null)
   if (cached !== null) return cached

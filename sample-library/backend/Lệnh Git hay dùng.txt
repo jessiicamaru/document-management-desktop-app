@@ -1,0 +1,11 @@
+Lệnh Git hay dùng
+=================
+
+git status            xem file nào đã đổi
+git add -p            chọn từng đoạn thay đổi để commit
+git commit -m "..."   lưu lại một bước
+git log --oneline     lịch sử gọn
+git switch -c ten     tạo nhánh mới và chuyển sang
+git rebase -i HEAD~3  sửa lại 3 commit gần nhất
+
+Mẹo: kéo code mới về trước rồi mới đẩy lên.

@@ -60,6 +60,21 @@ export function foldAccents(s: string): string {
   return parts.join('')
 }
 
+/**
+ * Text of a .txt file whatever its encoding: a BOM says UTF-8 / UTF-16; otherwise UTF-8 if
+ * it is valid, else Windows-1258 (old Vietnamese Windows files).
+ */
+export function decodeText(bytes: Uint8Array): string {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder('utf-8').decode(bytes.subarray(3))
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2))
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2))
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return new TextDecoder('windows-1258').decode(bytes)
+  }
+}
+
 export interface Snippet {
   before: string
   match: string

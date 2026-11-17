@@ -5,7 +5,7 @@
  * PDF viewer; epub books are read (and annotated) with epub.js.
  */
 /** mobi = Kindle books (.mobi, .azw3, .azw), read like EPUB. */
-export type DocKind = 'md' | 'html' | 'pdf' | 'epub' | 'mobi'
+export type DocKind = 'md' | 'html' | 'pdf' | 'epub' | 'mobi' | 'docx' | 'txt' | 'image'
 
 /** How far along you are with a document. */
 export type StudyStatus = 'new' | 'learning' | 'review' | 'done'
@@ -136,6 +136,8 @@ export interface UiSettings {
   sidebarSort: 'name' | 'modified'
   /** Books (EPUB, Kindle): always one page, or two side by side when the window is wide. */
   epubSpread: 'single' | 'auto'
+  /** List image files (.png, .jpg...) in the sidebar. Off for folders full of pictures used by notes. */
+  showImages: boolean
 }
 
 export const DEFAULT_UI: UiSettings = {
@@ -145,7 +147,8 @@ export const DEFAULT_UI: UiSettings = {
   readingFont: 'sans',
   readingWidth: 'normal',
   sidebarSort: 'name',
-  epubSpread: 'auto'
+  epubSpread: 'auto',
+  showImages: true
 }
 
 /** One edited block of an HTML document: which element (by position) and its new inner HTML. */

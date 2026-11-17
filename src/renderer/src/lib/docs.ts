@@ -102,3 +102,8 @@ export function saveLocal(key: string, value: unknown): void {
     /* ignore */
   }
 }
+
+/** Short badge text for a document type. */
+export function kindLabel(kind: DocEntry['kind']): string {
+  return kind === 'image' ? 'ẢNH' : kind.toUpperCase()
+}

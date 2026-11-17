@@ -64,6 +64,8 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
           ×
         </button>
       </header>
+      {/* Only this part scrolls; the title and the buttons stay in place. */}
+      <div className="settings-body">
       {message && (
         <div className={`dialog-msg ${message.error ? 'error' : ''}`} role={message.error ? 'alert' : 'status'}>
           {message.text}
@@ -166,7 +168,17 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
             onChange={(v) => set('sidebarSort', v)}
           />
         </Row>
-        <p className="hint">Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục.</p>
+        <Row label="File ảnh (.png, .jpg, .svg...)">
+          <Segmented
+            value={ui.showImages ? 'show' : 'hide'}
+            options={[
+              ['show', 'Hiện'],
+              ['hide', 'Ẩn']
+            ]}
+            onChange={(v) => set('showImages', v === 'show')}
+          />
+        </Row>
+        <p className="hint">Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục. Ẩn ảnh nếu thư mục ghi chú có nhiều ảnh minh hoạ.</p>
       </section>
 
       {lib && <TagsSection lib={lib} onError={reportError} onInfo={reportInfo} />}
@@ -246,6 +258,7 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
         </Row>
         {updateMsg && <p className="hint">{updateMsg}</p>}
       </section>
+      </div>
 
       <footer>
         <button className="btn" onClick={() => onChange(DEFAULT_UI)}>

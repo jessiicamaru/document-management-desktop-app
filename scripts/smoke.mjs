@@ -49,14 +49,14 @@ writeFileSync(
   // #1: open another file without anyone clicking
   const act = () => {
     if (location.hash === '#run-py') location = 'tool.py'
-    if (location.hash === '#run-txt') location = 'readme.txt'
+    if (location.hash === '#run-txt') location = 'bang.csv'
   }
   act()
   addEventListener('hashchange', act)
 </script></body></html>`
 )
 writeFileSync(path.join(library, 'backend', 'tool.py'), 'print("this must never run")\n')
-writeFileSync(path.join(library, 'backend', 'readme.txt'), 'plain text\n')
+writeFileSync(path.join(library, 'backend', 'bang.csv'), 'a,b\n1,2\n')
 // A book whose outline points at sections inside ONE file (common in real books): the
 // outline must follow the page you are on, not stay on the first section of that file.
 {
@@ -649,6 +649,56 @@ try {
   await page.setViewportSize({ width: 1320, height: 860 })
   await page.waitForTimeout(500)
 
+  // Word, plain text and pictures.
+  step('18j. Word documents, text files, pictures')
+  await page.fill('.search input', 'align-items')
+  await page.waitForFunction(() => [...document.querySelectorAll('.hit')].some((h) => h.querySelector('.kind-docx') && h.querySelector('.hit-snippet')), null, { timeout: 30000 })
+  check(true, 'search finds text inside Word documents')
+  await page.fill('.search input', '')
+  await openDoc('CSS Flexbox — ghi chú')
+  await page.waitForSelector('.article-docx h1')
+  await page.click('.panel-tabs >> text=Mục lục')
+  await page.waitForFunction(() => document.querySelectorAll('.outline-item').length === 3, null, { timeout: 10000 })
+  check((await page.textContent('.article-docx strong')) === 'một trục', 'Word: headings (outline) and bold text are shown')
+  await selectText(page, '.article-docx p', 'CSS Grid')
+  await page.waitForSelector('.hl-toolbar')
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight vàng"]')
+  await page.waitForSelector('.article-docx mark[data-sd-ann]')
+  const docxNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['frontend/CSS Flexbox.docx']?.items ?? []
+  check(docxNotes.length === 1 && docxNotes[0].quote === 'CSS Grid', 'Word: highlights are saved (the file is not changed)')
+  await page.keyboard.press('Control+F')
+  await page.fill('.find-bar input', 'truc')
+  await page.waitForFunction(() => /^\d+\/\d+$/.test(document.querySelector('.find-count')?.textContent ?? ''), null, { timeout: 10000 })
+  check((await page.textContent('.find-count')) === '1/5', `Word: Ctrl+F (${await page.textContent('.find-count')})`)
+  await page.press('.find-bar input', 'Escape')
+  await page.screenshot({ path: shot('15-docx') })
+
+  await openDoc('Lệnh Git hay dùng')
+  await page.waitForSelector('.article-txt pre.plain-text')
+  check((await page.textContent('.article-txt')).includes('git add -p'), 'text file is shown as it is')
+
+  await openDoc('Sơ đồ CQRS')
+  await page.waitForFunction(() => (document.querySelector('.image-view img')?.naturalWidth ?? 0) > 0)
+  const fitZoom = await page.textContent('.pdf-zoom-value')
+  await page.click('.image-view .icon-btn[title^="Phóng to"]')
+  const zoomed = await page.textContent('.pdf-zoom-value')
+  check(fitZoom !== zoomed && (await page.textContent('.image-size')) === '640 × 260', `picture is shown and can be zoomed (${fitZoom} -> ${zoomed})`)
+  await page.screenshot({ path: shot('16-image') })
+
+  // Settings: hide pictures from the list; only the middle of the dialog scrolls.
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  const dialogScroll = await page.evaluate(() => {
+    const d = document.querySelector('dialog.settings')
+    const body = d.querySelector('.settings-body')
+    return { dialog: d.scrollHeight - d.clientHeight, body: body.scrollHeight > body.clientHeight }
+  })
+  check(dialogScroll.dialog <= 1 && dialogScroll.body, 'settings: only the list of settings scrolls, title and buttons stay')
+  await page.click('dialog.settings .setting-row:has-text("File ảnh") >> text=Ẩn')
+  await page.waitForFunction(() => ![...document.querySelectorAll('.doc-list .row.doc')].some((r) => r.textContent.includes('Sơ đồ CQRS')))
+  check(true, 'pictures can be hidden from the list')
+  await page.click('dialog.settings .setting-row:has-text("File ảnh") >> text=Hiện')
+  await page.click('dialog.settings >> text=Xong')
+
   // 19. Issue #1: a page can't open programs, and asks before opening other files.
   step('19. Safety: opening files from a page')
   await app.evaluate(({ shell, dialog }) => {
@@ -676,7 +726,7 @@ try {
   await runInPage('#run-txt')
   await page.waitForTimeout(800)
   const afterTxt = await app.evaluate(() => ({ opened: globalThis.__opened.length, asked: globalThis.__asked }))
-  check(afterTxt.asked === 1 && afterTxt.opened === 0, 'a page opening a .txt file asks first (answered "Không": nothing opened)')
+  check(afterTxt.asked === 1 && afterTxt.opened === 0, 'a page opening a .csv file asks first (answered "Không": nothing opened)')
   await app.evaluate(({ shell, dialog }) => {
     Object.assign(shell, { openPath: globalThis.__real.openPath, showItemInFolder: globalThis.__real.showItemInFolder })
     dialog.showMessageBox = globalThis.__real.showMessageBox
