@@ -208,6 +208,22 @@ mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 1
 .markdown code { font-family: var(--mono); font-size: .87em; background: var(--code-bg); padding: 2px 6px; border-radius: 5px; }
 .markdown pre { background: #2a2f36; color: #e8e6e1; padding: 14px 16px; border-radius: 10px; overflow-x: auto; line-height: 1.6; }
 .markdown pre code { background: none; padding: 0; font-size: 13.5px; color: inherit; }
+/* Code colours (highlight.js, issue #18). Code blocks are always dark, also in print. */
+.markdown pre .hljs-comment, .markdown pre .hljs-quote { color: #8b949e; font-style: italic; }
+.markdown pre .hljs-keyword, .markdown pre .hljs-selector-tag, .markdown pre .hljs-doctag, .markdown pre .hljs-meta .hljs-keyword { color: #ff7b72; }
+.markdown pre .hljs-string, .markdown pre .hljs-regexp, .markdown pre .hljs-addition, .markdown pre .hljs-meta .hljs-string { color: #a5d6ff; }
+.markdown pre .hljs-number, .markdown pre .hljs-literal, .markdown pre .hljs-variable, .markdown pre .hljs-template-variable, .markdown pre .hljs-attr, .markdown pre .hljs-attribute, .markdown pre .hljs-selector-attr { color: #79c0ff; }
+.markdown pre .hljs-title, .markdown pre .hljs-title.function_, .markdown pre .hljs-section { color: #d2a8ff; }
+.markdown pre .hljs-title.class_, .markdown pre .hljs-type, .markdown pre .hljs-built_in, .markdown pre .hljs-selector-class, .markdown pre .hljs-selector-id { color: #ffa657; }
+.markdown pre .hljs-name, .markdown pre .hljs-tag, .markdown pre .hljs-symbol, .markdown pre .hljs-bullet { color: #7ee787; }
+.markdown pre .hljs-meta { color: #79c0ff; }
+.markdown pre .hljs-deletion { color: #ffa198; }
+.markdown pre .hljs-emphasis { font-style: italic; }
+.markdown pre .hljs-strong { font-weight: 700; }
+/* Formulas (KaTeX). Wide ones scroll instead of overflowing the page. */
+.markdown .katex { font-size: 1.08em; }
+.markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.markdown .katex-error { color: #d1242f; }
 .markdown pre.mermaid { background: var(--paper); color: var(--ink); border: 1px solid var(--line); text-align: center; }
 .markdown blockquote { margin: 1em 0; padding: 4px 16px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
 .markdown table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .94em; }

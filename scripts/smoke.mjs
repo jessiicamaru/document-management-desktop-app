@@ -602,9 +602,25 @@ try {
   await typeFind('effect')
   const mdCount = await findCount()
   await page.press('.find-bar input', 'Enter')
-  check(/^1\/[2-9]/.test(mdCount) && (await findCount()) === '2/' + mdCount.split('/')[1], `Markdown: Ctrl+F finds and steps through matches (${mdCount})`)
+  check(/^1\/([2-9]|\d{2,})$/.test(mdCount) && (await findCount()) === '2/' + mdCount.split('/')[1], `Markdown: Ctrl+F finds and steps through matches (${mdCount})`)
   await page.press('.find-bar input', 'Escape')
   check((await page.locator('.find-bar').count()) === 0, 'Escape closes the find bar')
+
+  // Issue #18: coloured code and KaTeX formulas (with their fonts) in Markdown.
+  const mdLook = await page.evaluate(async () => {
+    await document.fonts.ready
+    const kw = document.querySelector('.markdown pre .hljs-keyword')
+    return {
+      keyword: kw ? getComputedStyle(kw).color : null,
+      inline: document.querySelectorAll('.markdown .katex').length,
+      display: document.querySelectorAll('.markdown .katex-display').length,
+      errors: document.querySelectorAll('.markdown .katex-error').length,
+      font: document.fonts.check('16px KaTeX_Main')
+    }
+  })
+  check(mdLook.keyword === 'rgb(255, 123, 114)', `Markdown: code blocks are coloured (${mdLook.keyword})`)
+  check(mdLook.inline >= 3 && mdLook.display === 1 && mdLook.errors === 0 && mdLook.font, `Markdown: formulas drawn with KaTeX (${JSON.stringify(mdLook)})`)
+  await page.screenshot({ path: shot('22-markdown-code-math') })
 
   await openDoc('Event Sourcing — Bài học để chép vào vở')
   await page.frameLocator('iframe.html-frame').locator('h1').waitFor()

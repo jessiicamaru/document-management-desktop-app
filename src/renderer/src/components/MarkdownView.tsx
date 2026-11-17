@@ -1,6 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
+import hljs from 'highlight.js/lib/common'
+import markdownItKatex from '@vscode/markdown-it-katex'
+import 'katex/dist/katex.min.css'
 import type { DocEntry } from '../../../shared/types'
 import { docUrl, parseDocUrl } from '../lib/docs'
 import { loadMermaid } from '../lib/mermaid'
@@ -14,7 +17,22 @@ const anchoring = createAnchoring()
 
 // html: true lets you mix raw HTML/SVG into Markdown. Everything is passed through
 // DOMPurify afterwards, which removes <script> and on*="" handlers.
-const md = new MarkdownIt({ html: true, linkify: true })
+const md = new MarkdownIt({
+  html: true,
+  linkify: true,
+  // Code blocks are coloured by language (issue #18). Unknown languages stay plain.
+  highlight: (code, lang) => {
+    const name = lang.trim().split(/\s+/)[0]
+    if (!name || !hljs.getLanguage(name)) return ''
+    try {
+      return hljs.highlight(code, { language: name, ignoreIllegals: true }).value
+    } catch {
+      return ''
+    }
+  }
+})
+// $...$ and $$...$$ are drawn with KaTeX. Bad formulas are shown in red instead of failing.
+md.use(markdownItKatex, { throwOnError: false })
 md.use(sourceRangesPlugin) // data-src="start:end" on editable blocks, for inline editing
 
 // ```mermaid blocks become <pre class="mermaid"> and are drawn after rendering.
@@ -49,8 +67,12 @@ md.core.ruler.push('heading_ids', (state) => {
 export function renderMarkdown(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
   const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length, source: body }
-  return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true } })
+  return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true } })
 }
+
+/** Blocks you can edit as text. Paragraphs with formulas are left alone: their text isn't the source. */
+const editableBlocks = (root: Element): HTMLElement[] =>
+  [...root.querySelectorAll<HTMLElement>('[data-src]')].filter((b) => !b.querySelector('.katex'))
 
 const plainText = (el: Element): string => (el.textContent ?? '').replace(/ /g, ' ')
 
@@ -235,7 +257,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     const el = ref_.current
     if (!editing || !el) return
     anchoring.clear(el) // highlights come back when editing ends and the article is redrawn
-    blocks.current = [...el.querySelectorAll<HTMLElement>('[data-src]')].map((block) => {
+    blocks.current = editableBlocks(el).map((block) => {
       const [start, end] = block.dataset.src!.split(':').map(Number)
       block.contentEditable = 'plaintext-only'
       block.spellcheck = false
@@ -279,7 +301,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     // Safety check: the new file must render to exactly the text you see now.
     const check = document.createElement('div')
     check.innerHTML = renderMarkdown(next)
-    const after = [...check.querySelectorAll('[data-src]')].map((e) => plainText(e).trim())
+    const after = editableBlocks(check).map((e) => plainText(e).trim())
     const expected = blocks.current.map((b) => plainText(b.el).trim())
     if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {
       throw new MdEditError('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.')
