@@ -45,7 +45,7 @@ describe('broken data files (issue #25)', () => {
     expect(store.all()['b.md']).toMatchObject({ tags: ['z'] })
     expect(store.warning).toMatch(/tự gộp/)
     const files = await readdir(dir)
-    expect(files.some((f) => f.startsWith('.docs-meta.merged-'))).toBe(true)
+    expect(files.some((f) => f.startsWith('meta.merged-'))).toBe(true)
     expect(await store.backups()).toEqual([]) // nothing left to recover by hand
     expect(JSON.parse(await readFile(path.join(dir, META_FILE), 'utf8')).docs['b.md'].tags).toEqual(['z'])
   })
@@ -62,7 +62,7 @@ describe('broken data files (issue #25)', () => {
     await writeFile(path.join(dir, NOTES_FILE), '{ broken')
     const store = await NotesStore.open(dir)
     const [backup] = await store.backups()
-    expect(backup).toMatch(/^\.docs-notes\.corrupt-/)
+    expect(backup).toMatch(/^notes\.corrupt-/)
     await expect(store.restoreBackup(backup)).rejects.toThrow(/sửa tay/)
 
     await store.save('a.md', ann('new1', 'mới', 5))
@@ -78,8 +78,8 @@ describe('broken data files (issue #25)', () => {
   it('only touches its own backup files', async () => {
     const store = await MetaStore.open(dir)
     expect(() => store.backupPath('../secret.json')).toThrow()
-    expect(() => store.backupPath('.docs-notes.corrupt-1.json')).toThrow()
-    expect(store.backupPath('.docs-meta.corrupt-1.json')).toBe(path.join(dir, '.docs-meta.corrupt-1.json'))
+    expect(() => store.backupPath('notes.corrupt-1.json')).toThrow()
+    expect(store.backupPath('meta.corrupt-1.json')).toBe(path.join(dir, 'meta.corrupt-1.json'))
   })
 })
 

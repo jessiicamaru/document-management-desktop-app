@@ -20,6 +20,7 @@ node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ b�
 
 | Phím / nút | Làm gì |
 |---|---|
+| Icon tờ giấy có dấu +, `Ctrl+O`, kéo thả file vào cửa sổ | Mở từng file ở bất kỳ đâu, giống mở file trong Word. File ngoài workspace hiện ở nhóm **File lẻ** dưới cây thư mục; di chuột vào rồi bấm × để bỏ khỏi danh sách. |
 | Icon thư mục có dấu + | Thêm một hoặc nhiều thư mục vào workspace, ở ổ nào cũng được (C:, D:, USB...). Mỗi thư mục là một nhánh trên cây; di chuột vào tên thư mục rồi bấm × để bỏ nó khỏi workspace (file không bị xoá). |
 | `Ctrl+K` | Tìm kiếm trong mọi thư mục (không cần gõ dấu) |
 | `Ctrl+F` | Tìm trong bài đang mở (Markdown, HTML, cả cuốn EPUB), không cần gõ dấu. `Enter` / `Shift+Enter` sang kết quả sau / trước, `Esc` để đóng. |
@@ -73,14 +74,14 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/main/updater.ts` | Tự cập nhật từ GitHub Releases |
 | `src/main/workspace.ts` | Workspace nhiều thư mục: id của thư mục, chống thêm trùng/lồng nhau, tên hiển thị |
 | `src/shared/anchor.ts` | Tìm lại và vẽ highlight (dùng chung cho Markdown, trang HTML và lúc xuất PDF) |
-| `src/main/doc-store.ts` | File JSON theo từng bài trong thư mục: hàng đợi ghi, sao lưu file hỏng, đi theo file khi đổi tên |
-| `src/main/notes-store.ts` | `.docs-notes.json`: highlight và ghi chú |
+| `src/main/doc-store.ts` | File JSON theo từng bài của một thư mục (trong `%APPDATA%\Study Docs\data`): hàng đợi ghi, sao lưu file hỏng, đi theo file khi đổi tên |
+| `src/main/notes-store.ts` | `notes.json`: highlight và ghi chú |
 | `src/main/zip.ts` | Đọc từng file trong file zip/EPUB mà không phải tải cả file |
 | `src/main/scan-cache.ts` | Nhớ tên + hash của file giữa các lần mở app, để thư mục lớn mở nhanh |
 | `src/main/search-worker.ts` | Tìm kiếm chạy ở luồng riêng: đọc chữ của tài liệu ở chế độ nền, tìm không dấu |
 | `src/main/search.ts` | Phía main process của luồng tìm kiếm |
 | `src/shared/text.ts` | Bỏ dấu tiếng Việt, cắt đoạn trích quanh chỗ tìm thấy |
-| `src/main/meta-store.ts` | `.docs-meta.json`: hàng đợi ghi, sao lưu file hỏng, giữ tag khi đổi tên file |
+| `src/main/meta-store.ts` | `meta.json`: tag và trạng thái, đổi tên/xoá tag trên mọi bài |
 | `src/main/storage.ts` | Settings và danh sách "mở gần đây" trong `%APPDATA%\Study Docs` |
 | `src/preload/index.ts` | Cầu nối duy nhất UI ↔ Node, lộ ra `window.api` |
 | `src/renderer/src/App.tsx` | State chính: thư viện, bài đang mở, bộ lọc, tìm kiếm, thông báo lỗi |
@@ -101,10 +102,19 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 ## Dữ liệu nằm ở đâu
 
 - **File bài chỉ bị sửa khi bạn bấm Sửa chữ hoặc lưu trong Raw.** Khi đó app chỉ thay đúng phần bạn đổi, giữ nguyên kiểu xuống dòng của file, không sửa file không phải UTF-8, và từ chối ghi đè nếu file vừa bị sửa ở nơi khác. Đọc, highlight, gắn tag, xuất PDF không bao giờ đụng vào file bài.
-- **Tag và trạng thái học** nằm trong `.docs-meta.json` của từng thư mục trong workspace, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
-  - Nếu file này bị hỏng, app luôn sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` trước. Xung đột Git (`<<<<<<<`) được tự gộp cả hai phía. Hỏng kiểu khác thì app hiện nút **Khôi phục…**: sửa bản sao lưu bằng tay rồi bấm **Gộp lại**, dữ liệu hiện tại không bị mất. (`.docs-notes.json` cũng vậy.)
-  - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
-- **Highlight và ghi chú** nằm trong `.docs-notes.json` của từng thư mục, **không ghi vào file bài**. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
+- **Tag, trạng thái học, highlight và ghi chú** nằm trong dữ liệu của app, **không ghi gì vào thư mục tài liệu**. Giống cách Claude Code lưu mỗi project một thư mục, mỗi thư mục trong workspace (và mỗi thư mục có file lẻ) có một thư mục con:
+  ```
+  %APPDATA%\Study Docs\data\<mã thư mục>\
+    info.json    đường dẫn thật của thư mục
+    meta.json    tag, trạng thái
+    notes.json   highlight, ghi chú
+  ```
+  - Mã là một chuỗi ngắn tính từ đường dẫn, nên bỏ thư mục khỏi workspace rồi thêm lại thì dữ liệu vẫn còn.
+  - **Cài đặt → Sao lưu ra file…** xuất toàn bộ ra một file `.json`; **Khôi phục từ file…** gộp lại (không xoá gì). Dùng khi đổi máy hoặc cài lại Windows.
+  - Nếu file dữ liệu bị hỏng, app sao lưu nó thành `meta.corrupt-<thời gian>.json` trước và hiện nút **Khôi phục…**: sửa bản sao lưu bằng tay rồi bấm **Gộp lại**, dữ liệu hiện tại không bị mất.
+  - Đổi tên hoặc di chuyển file trong một thư mục của workspace thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
+- **File lẻ** (mở bằng `Ctrl+O`, kéo thả vào cửa sổ, hoặc bấm đúp từ Explorer): app chỉ nhớ đường dẫn, không chép file. File bị chuyển chỗ hay xoá thì hiện "không tìm thấy"; bấm × để bỏ khỏi danh sách (file và ghi chú của nó không bị xoá).
+- **Highlight** không bao giờ ghi vào file bài. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.
 - **Bộ nhớ đệm cho tốc độ** cũng ở đó: `scan-cache.json` (tên các tài liệu) và thư mục `text-cache` (chữ đã đọc ra để tìm kiếm, lưu UTF-8 nên chỉ cỡ dung lượng chữ của mỗi cuốn sách). Xoá đi cũng không mất gì, app sẽ đọc lại. Chữ của file đã bị bỏ khỏi workspace được tự dọn.
 
@@ -112,4 +122,4 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 
 - HTML mở trong iframe `sandbox`: chạy được CSS/JS riêng của bài nhưng không chạm được vào app hay ổ đĩa.
 - Link trong bài: sang bài khác thì mở trong app; link web mở bằng trình duyệt. File khác chỉ được mở bằng app mặc định nếu thuộc danh sách an toàn (pdf, ảnh, txt, Office không macro, audio/video, xem `src/main/open-policy.ts`), và app hỏi trước khi mở nếu lệnh đến từ bên trong bài. Mọi loại khác (chương trình, script, `.py`, `.url`, file Office có macro...) chỉ hiện trong Explorer, không bao giờ tự chạy.
-- Khi xuất PDF, trang không đọc được file nào khác và không mở được kết nối (CSP). File dữ liệu ẩn của app (`.docs-meta.json`, `.docs-notes.json`) không bao giờ được trả cho trang nào.
+- Khi xuất PDF, trang không đọc được file nào khác và không mở được kết nối (CSP). File và thư mục ẩn (tên bắt đầu bằng dấu chấm) không bao giờ được trả cho trang nào; dữ liệu của app nằm ngoài thư mục tài liệu nên trang không với tới được.

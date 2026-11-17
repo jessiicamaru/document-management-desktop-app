@@ -31,16 +31,20 @@ interface Props {
   onAddFolders: () => void
   onRemoveFolder: (key: string) => void
   sort: 'name' | 'modified'
+  onOpenFiles: () => void
+  onRemoveLoose: (path: string) => void
 }
 
 export default function Sidebar(props: Props) {
   const { lib, docs, hits, query, onQuery, selected, onOpen } = props
   const allDocs = lib?.docs ?? []
   const meta = lib?.meta ?? {}
-  const roots = lib?.roots ?? []
+  // Workspace folders; the folders of loose files only show in the "File lẻ" group.
+  const roots = (lib?.roots ?? []).filter((r) => !r.loose)
   const workspaceName =
     roots.length === 0 ? 'Chưa có thư mục' : roots.length === 1 ? roots[0].name : `Workspace · ${roots.length} thư mục`
-  const rootNames = Object.fromEntries(roots.map((r) => [r.key, r.name]))
+  const rootNames = Object.fromEntries((lib?.roots ?? []).map((r) => [r.key, r.name]))
+  const looseFiles = lib?.looseFiles ?? []
   const listRef = useRef<HTMLDivElement>(null)
 
   const statusCounts = useMemo(() => {
@@ -64,6 +68,9 @@ export default function Sidebar(props: Props) {
         <div className="library-name" title={roots.map((r) => r.path).join('\n')}>
           {workspaceName}
         </div>
+        <button className="icon-btn" title="Mở file… (Ctrl+O)" onClick={props.onOpenFiles}>
+          <FilePlusIcon />
+        </button>
         <button className="icon-btn" title="Thêm thư mục vào workspace" onClick={props.onAddFolders}>
           <FolderPlusIcon />
         </button>
@@ -129,11 +136,14 @@ export default function Sidebar(props: Props) {
 
       <div className="doc-list" ref={listRef} onKeyDown={(e) => onListKey(e, props.searchRef)}>
         {hits ? (
-          <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 ? rootNames : null} />
+          <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 || looseFiles.length ? rootNames : null} />
         ) : (
           <div className="group">
             <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} />
             {docs.length === 0 && roots.length > 0 && <div className="empty">Không có tài liệu nào khớp.</div>}
+            {looseFiles.length > 0 && (
+              <LooseFiles files={looseFiles} docs={docs} selected={selected} onOpen={onOpen} onRemove={props.onRemoveLoose} />
+            )}
           </div>
         )}
       </div>
@@ -301,13 +311,57 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
   )
 }
 
-function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number; selected: boolean; onOpen: (p: string) => void }) {
+/** Files opened on their own, below the workspace folders. */
+function LooseFiles({
+  files,
+  docs,
+  selected,
+  onOpen,
+  onRemove
+}: {
+  files: LibrarySnapshot['looseFiles']
+  docs: DocEntry[]
+  selected: string | null
+  onOpen: (p: string) => void
+  onRemove: (path: string) => void
+}) {
+  const byId = new Map(docs.map((d) => [d.path, d]))
+  // Filters (status, tag) apply here too; missing files always show so they can be removed.
+  const rows = files.filter((f) => !f.id || byId.has(f.id))
+  if (!rows.length) return null
+  const name = (p: string): string => p.split(/[\\/]/).pop() ?? p
+  return (
+    <div className="loose-group">
+      <div className="group-title">File lẻ</div>
+      {rows.map((f) => {
+        const doc = f.id ? byId.get(f.id) : undefined
+        return (
+          <div key={f.path} className="loose-row">
+            {doc ? (
+              <DocRow doc={doc} depth={0} selected={selected === doc.path} onOpen={onOpen} title={f.path} />
+            ) : (
+              <div className="row doc missing" title={f.path}>
+                <span className="row-title">{name(f.path)}</span>
+                <span className="root-missing">không tìm thấy</span>
+              </div>
+            )}
+            <button className="icon-btn small root-remove" title="Bỏ khỏi danh sách (không xoá file)" aria-label={`Bỏ ${name(f.path)} khỏi danh sách`} onClick={() => onRemove(f.path)}>
+              ×
+            </button>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DocRow({ doc, depth, selected, onOpen, title }: { doc: DocEntry; depth: number; selected: boolean; onOpen: (p: string) => void; title?: string }) {
   return (
     <button
       className={`row doc ${selected ? 'selected' : ''}`}
       style={{ paddingLeft: 10 + depth * 14 + 14 }}
       onClick={() => onOpen(doc.path)}
-      title={doc.rel}
+      title={title ?? doc.rel}
       data-depth={depth}
     >
       <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
@@ -403,6 +457,15 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
 }
 
 const iconProps = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+
+function FilePlusIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M12 11v6M9 14h6" />
+    </svg>
+  )
+}
 
 function FolderPlusIcon() {
   return (

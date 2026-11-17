@@ -184,7 +184,42 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
         <button className="btn" onClick={onAddFolders}>
           + Thêm thư mục…
         </button>
-        <p className="hint">Có thể thêm thư mục ở nhiều ổ đĩa khác nhau (C:, D:, USB...). Tag và trạng thái học của mỗi thư mục nằm trong chính thư mục đó.</p>
+        <p className="hint">Có thể thêm thư mục ở nhiều ổ đĩa khác nhau (C:, D:, USB...). Tag, trạng thái và ghi chú được lưu trong dữ liệu của app (%APPDATA%\Study Docs\data), không ghi gì vào thư mục tài liệu.</p>
+      </section>
+
+      <section>
+        <h3>Sao lưu dữ liệu</h3>
+        <Row label="Tag, trạng thái, highlight và ghi chú của mọi thư mục và file lẻ">
+          <div className="recovery-actions">
+            <button
+              className="btn small"
+              onClick={async () => {
+                try {
+                  const file = await window.api.exportData()
+                  if (file) reportInfo(`Đã sao lưu vào ${file}`)
+                } catch (err) {
+                  reportError(err)
+                }
+              }}
+            >
+              Sao lưu ra file…
+            </button>
+            <button
+              className="btn small"
+              onClick={async () => {
+                try {
+                  const n = await window.api.importData()
+                  if (n !== null) reportInfo(`Đã khôi phục dữ liệu của ${n} bài (gộp với dữ liệu hiện có)`)
+                } catch (err) {
+                  reportError(err)
+                }
+              }}
+            >
+              Khôi phục từ file…
+            </button>
+          </div>
+        </Row>
+        <p className="hint">Dùng khi chuyển sang máy khác hoặc cài lại Windows. Khôi phục không xoá gì: dữ liệu trong file được gộp vào dữ liệu đang có.</p>
       </section>
 
       <section>
@@ -328,7 +363,7 @@ function TagsSection({ lib, onError, onInfo }: { lib: LibrarySnapshot; onError: 
   )
 }
 
-/** Backups of broken .docs-meta.json / .docs-notes.json files that can be merged back (issue #25). */
+/** Backups of broken meta.json / notes.json data files that can be merged back (issue #25). */
 function RecoverySection({ items, onError, onInfo }: { items: RecoveryItem[]; onError: (err: unknown) => void; onInfo: (text: string) => void }) {
   const [busy, setBusy] = useState(false)
   const act = async (job: () => Promise<void>): Promise<void> => {

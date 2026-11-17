@@ -50,7 +50,7 @@ describe('MetaStore', () => {
     await writeFile(path.join(dir, META_FILE), garbage)
     const store = await MetaStore.open(dir)
     expect(store.warning).toMatch(/bị hỏng/)
-    const backups = (await readdir(dir)).filter((f) => f.startsWith('.docs-meta.corrupt-'))
+    const backups = (await readdir(dir)).filter((f) => f.startsWith('meta.corrupt-'))
     expect(backups).toHaveLength(1)
     expect(await readFile(path.join(dir, backups[0]), 'utf8')).toBe(garbage)
   })

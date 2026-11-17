@@ -183,10 +183,45 @@ export default function App() {
   // Mouse back/forward buttons.
   useEffect(() => window.api.onHistory(goHistory), [goHistory])
 
+  /** Ctrl+O: pick documents anywhere on the PC (outside the workspace they go to "File lẻ"). */
+  const openFiles = useCallback(async () => {
+    try {
+      const [first] = await window.api.openFiles()
+      if (first) openDoc(first)
+    } catch (err) {
+      notify(err)
+    }
+  }, [notify, openDoc])
+
+  /** Files dropped on the window open the same way. */
+  useEffect(() => {
+    const hasFiles = (e: DragEvent): boolean => !!e.dataTransfer?.types.includes('Files')
+    const onDragOver = (e: DragEvent): void => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      e.dataTransfer!.dropEffect = 'copy'
+    }
+    const onDrop = (e: DragEvent): void => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      const paths = [...e.dataTransfer!.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
+      window.api
+        .addFiles(paths)
+        .then(([first]) => (first ? openDoc(first) : notify(new Error('Chỉ mở được file .md, .html, .pdf, .epub, .mobi, .azw3.'))))
+        .catch(notify)
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [notify, openDoc])
+
   /**
    * App shortcuts. Also called with keys forwarded from inside an HTML document,
    * which has the keyboard focus while you read it.
-   * Ctrl+K / Ctrl+P search (like VS Code), Ctrl+E recent, Ctrl+, settings, Alt+←/→ history.
+   * Ctrl+K / Ctrl+P search (like VS Code), Ctrl+E recent, Ctrl+O open file, Ctrl+, settings, Alt+←/→ history.
    */
   const runShortcut = useCallback(
     (key: string) => {
@@ -195,16 +230,17 @@ export default function App() {
         searchRef.current?.select()
       } else if (key === 'ctrl+e') setRecentOpen((o) => !o)
       else if (key === 'ctrl+,') setSettingsOpen(true)
+      else if (key === 'ctrl+o') void openFiles()
       // Ctrl+F: the open document shows its find bar (DocView listens for this event).
       else if (key === 'ctrl+f') window.dispatchEvent(new Event('studydocs:find'))
       else if (key === 'back' || key === 'forward') goHistory(key)
     },
-    [goHistory]
+    [goHistory, openFiles]
   )
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       let key: string | null = null
-      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f'].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
+      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f', 'o'].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
       if (e.altKey && e.key === 'ArrowLeft') key = 'back'
       if (e.altKey && e.key === 'ArrowRight') key = 'forward'
       if (!key) return
@@ -315,6 +351,8 @@ export default function App() {
         onAddFolders={addFolders}
         onRemoveFolder={removeFolder}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenFiles={openFiles}
+        onRemoveLoose={(p) => window.api.removeLooseFile(p).catch(notify)}
         sort={ui.sidebarSort}
       />
       <main className="content">
@@ -364,7 +402,7 @@ export default function App() {
             rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (
-          <Welcome hasLibrary={(lib?.roots.length ?? 0) > 0} docs={docs} recent={lib?.recent ?? {}} onChoose={addFolders} onOpen={openDoc} />
+          <Welcome hasLibrary={(lib?.roots.length ?? 0) > 0} docs={docs} recent={lib?.recent ?? {}} onChoose={addFolders} onOpenFiles={openFiles} onOpen={openDoc} />
         )}
       </main>
       {settingsOpen && (
@@ -395,10 +433,11 @@ interface WelcomeProps {
   docs: DocEntry[]
   recent: Record<string, number>
   onChoose: () => void
+  onOpenFiles: () => void
   onOpen: (path: string) => void
 }
 
-function Welcome({ hasLibrary, docs, recent, onChoose, onOpen }: WelcomeProps) {
+function Welcome({ hasLibrary, docs, recent, onChoose, onOpenFiles, onOpen }: WelcomeProps) {
   const recentDocs = docs
     .filter((d) => recent[d.path])
     .sort((a, b) => recent[b.path] - recent[a.path])
@@ -407,10 +446,18 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpen }: WelcomeProps) {
     return (
       <div className="welcome">
         <h1>Study Docs</h1>
-        <p>Thêm một hoặc nhiều thư mục chứa tài liệu học của bạn (.md, .html), ở bất kỳ ổ đĩa nào. App không sửa file nếu bạn không bấm Sửa chữ hoặc Raw.</p>
-        <button className="btn primary" onClick={onChoose}>
-          Thêm thư mục tài liệu
-        </button>
+        <p>
+          Thêm một hoặc nhiều thư mục chứa tài liệu học của bạn, ở bất kỳ ổ đĩa nào, hoặc mở từng file (Markdown, HTML, PDF, EPUB, Kindle). Có thể
+          kéo thả file vào cửa sổ. App không sửa file nếu bạn không bấm Sửa chữ hoặc Raw.
+        </p>
+        <div className="welcome-actions">
+          <button className="btn primary" onClick={onChoose}>
+            Thêm thư mục tài liệu
+          </button>
+          <button className="btn" onClick={onOpenFiles}>
+            Mở file… (Ctrl+O)
+          </button>
+        </div>
       </div>
     )
   }

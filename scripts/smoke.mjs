@@ -8,6 +8,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -59,7 +60,11 @@ const CRLF = 'frontend/Windows note.md'
 writeFileSync(path.join(library, 'frontend', 'Windows note.md'), '# Windows note\r\n\r\nDòng một.\r\nDòng hai.\r\n')
 const file = (rel) => path.join(library, rel)
 const read = (rel) => readFileSync(file(rel), 'utf8')
-const metaFile = file('.docs-meta.json')
+// Tags and notes live in the app's data folder, one sub-folder per workspace folder, named
+// by a short hash of the folder's path (same as rootKeyOf in src/main/workspace.ts).
+const keyOf = (dir) => createHash('sha1').update(path.resolve(dir).toLowerCase()).digest('hex').slice(0, 8)
+const dataDir = (dir) => path.join(userData, 'data', keyOf(dir))
+const metaFile = path.join(dataDir(library), 'meta.json')
 const shot = (name) => path.join(here, `${name}.png`)
 
 const ES = 'backend/Event Sourcing.html'
@@ -76,6 +81,7 @@ function check(ok, label) {
 }
 
 // Start from a corrupt meta file, like after a bad sync conflict.
+mkdirSync(dataDir(library), { recursive: true })
 writeFileSync(metaFile, '{ "version": 1, "docs": { <<<<<<< HEAD')
 
 const app = await electron.launch({
@@ -111,7 +117,7 @@ try {
   step("1. Corrupt meta file: backed up and reported, not silently dropped.")
   await page.waitForSelector('.banner:has-text("đã được sao lưu thành")')
   check(true, 'corrupt meta file shows a warning')
-  check(readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')), 'corrupt meta file was backed up')
+  check(readdirSync(dataDir(library)).some((f) => f.startsWith('meta.corrupt-')), 'corrupt meta file was backed up')
   check((await page.locator('.banner:has-text("Khôi phục…")').count()) === 1, 'a banner offers to recover the backup (issue #25)')
   await page.click('.banner:has-text("đã được sao lưu thành") button[aria-label="Ẩn cảnh báo"]')
 
@@ -130,8 +136,9 @@ try {
   await page.fill('.tag-editor input', 'devops')
   await page.press('.tag-editor input', 'Enter')
   await page.waitForTimeout(300)
-  const notesMeta = JSON.parse(readFileSync(path.join(notes, '.docs-meta.json'), 'utf8')).docs
-  check(notesMeta['devops/Docker cơ bản.md']?.tags?.[0] === 'devops', "tags are stored in that folder's own .docs-meta.json")
+  const notesMeta = JSON.parse(readFileSync(path.join(dataDir(notes), 'meta.json'), 'utf8')).docs
+  check(notesMeta['devops/Docker cơ bản.md']?.tags?.[0] === 'devops', "tags are stored in the app's data folder, per workspace folder")
+  check(JSON.parse(readFileSync(path.join(dataDir(notes), 'info.json'), 'utf8')).path === notes, 'the data folder says which folder it belongs to')
   await page.screenshot({ path: shot('0-two-folders') })
 
   // 2. HTML document renders in the sandboxed iframe.
@@ -408,7 +415,7 @@ try {
 
   // 18a. Highlights + notes in Markdown: stored next to the doc, the doc itself untouched.
   step('18a. Highlights in Markdown')
-  const notesFile = file('.docs-notes.json')
+  const notesFile = path.join(dataDir(library), 'notes.json')
   const reactBefore = read(REACT)
   await openDoc('React useEffect — khi nào chạy?')
   await page.waitForSelector('.markdown h2')
@@ -451,7 +458,7 @@ try {
   await page.keyboard.press('Control+Enter')
   await page.waitForSelector('.note-popover', { state: 'detached' })
   const mdNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs[REACT]?.items ?? []
-  check(mdNotes.length === 2 && mdNotes.some((a) => a.note.startsWith('Nhớ:')), 'Markdown: highlight + note saved in .docs-notes.json')
+  check(mdNotes.length === 2 && mdNotes.some((a) => a.note.startsWith('Nhớ:')), 'Markdown: highlight + note saved in the data folder')
   check(read(REACT) === reactBefore, 'Markdown: the document file is not changed by highlighting')
   await page.click('.panel-tabs >> text=Ghi chú')
   await page.waitForSelector('.note-card-text >> text=Nhớ: effect trả về hàm dọn dẹp.')
@@ -715,16 +722,16 @@ try {
 
   // 23. Issues #21, #22, #23, #25: document note, Markdown notes, tags, clean-up, recovery, sidebar.
   step('23a. Recover a broken data file')
-  const backupName = readdirSync(library).find((f) => f.startsWith('.docs-meta.corrupt-'))
+  const backupName = readdirSync(dataDir(library)).find((f) => f.startsWith('meta.corrupt-'))
   // The user fixed the backup by hand; it has a tag for Event Sourcing and data of a deleted file.
-  writeFileSync(file(backupName), JSON.stringify({ version: 1, docs: { [ES]: { tags: ['phục-hồi'], status: 'new' }, 'gone/old.md': { tags: ['cũ'], status: 'done' } } }))
+  writeFileSync(path.join(dataDir(library), backupName), JSON.stringify({ version: 1, docs: { [ES]: { tags: ['phục-hồi'], status: 'new' }, 'gone/old.md': { tags: ['cũ'], status: 'done' } } }))
   await page.click('.banner:has-text("Khôi phục…") button')
   await page.waitForSelector('dialog.settings[open] section.recovery')
   await page.click('section.recovery button:has-text("Gộp lại")')
   await page.waitForSelector('section.recovery', { state: 'detached' })
   const merged = JSON.parse(readFileSync(metaFile, 'utf8')).docs
   check(merged[ES]?.tags?.includes("phục-hồi") && merged[ES]?.tags?.includes("backend") && merged[ES]?.status === 'learning', 'backup merged into the current tags without losing them')
-  check(!readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')) && readdirSync(library).some((f) => f.startsWith('.docs-meta.merged-')), 'merged backup is kept as .merged-, not offered again')
+  check(!readdirSync(dataDir(library)).some((f) => f.startsWith('meta.corrupt-')) && readdirSync(dataDir(library)).some((f) => f.startsWith('meta.merged-')), 'merged backup is kept as .merged-, not offered again')
   check((await page.locator('.banner:has-text("Khôi phục…")').count()) === 0, 'recovery banner disappears')
 
   step('23b. Tags across the workspace')
@@ -732,7 +739,7 @@ try {
   await page.fill('.tag-row input', 'server')
   await page.press('.tag-row input', 'Enter')
   await page.waitForSelector('.tag-row:has-text("#server")')
-  check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[ES]?.tags?.includes('server'), 'renaming a tag changes it in .docs-meta.json')
+  check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[ES]?.tags?.includes('server'), 'renaming a tag changes it in the data file')
   dialogAnswer = 'accept'
   await page.click('.tag-row:has-text("#phục-hồi") >> text=Xoá')
   await page.waitForSelector('.tag-row:has-text("#phục-hồi")', { state: 'detached' })
@@ -812,16 +819,57 @@ try {
   const extra = path.join(workDir, 'extra')
   mkdirSync(extra)
   writeFileSync(path.join(extra, 'Ngoài workspace.md'), '# Ngoài workspace\n\nFile mở từ Explorer.')
-  await app.evaluate(({ dialog }) => {
-    globalThis.__realBox = dialog.showMessageBox
-    globalThis.__boxes = []
-    dialog.showMessageBox = async (_w, opts) => (globalThis.__boxes.push(opts.message), { response: 0 }) // "Thêm thư mục và mở"
-  })
   await openWithApp(path.join(extra, 'Ngoài workspace.md'))
   await docPathIs('Ngoài workspace.md')
-  const boxes = await app.evaluate(({ dialog }) => ((dialog.showMessageBox = globalThis.__realBox), globalThis.__boxes))
-  check(boxes.length === 1 && boxes[0].includes('không nằm trong workspace'), 'a file outside the workspace asks to add its folder, then opens')
-  check((await page.locator('.root-row').count()) === 2, 'its folder is added to the workspace')
+  await page.waitForSelector('.loose-group .row.doc >> text=Ngoài workspace')
+  check((await page.textContent('.library-name')) === 'library', 'a file outside the workspace opens as a loose file; no folder is added')
+
+  // Its tags go to the app's data folder too; nothing is written next to the file.
+  await page.fill('.tag-editor input', 'le')
+  await page.press('.tag-editor input', 'Enter')
+  await page.waitForTimeout(300)
+  check(JSON.parse(readFileSync(path.join(dataDir(extra), 'meta.json'), 'utf8')).docs['Ngoài workspace.md']?.tags?.[0] === 'le', 'tags of a loose file are saved')
+  check(readdirSync(extra).length === 1 && !readdirSync(library).some((f) => f.startsWith('.docs-')), 'nothing is written into the documents\' folders')
+
+  // Ctrl+O: pick files anywhere.
+  step('25. Open files (Ctrl+O), remove from the list, backup')
+  writeFileSync(path.join(extra, 'Thêm.md'), '# Thêm một file\n\nMở bằng Ctrl+O.')
+  await app.evaluate(({ dialog }, file) => {
+    globalThis.__realOpen = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
+  }, path.join(extra, 'Thêm.md'))
+  await page.click('.sidebar-head')
+  await page.keyboard.press('Control+O')
+  await docPathIs('Thêm.md')
+  check((await page.locator('.loose-group .row.doc').count()) === 2, 'Ctrl+O opens a file and lists it under "File lẻ"')
+  await page.hover('.loose-row:has-text("Thêm một file")')
+  await page.click('.loose-row:has-text("Thêm một file") .root-remove')
+  await page.waitForFunction(() => document.querySelectorAll('.loose-group .row.doc').length === 1)
+  check(existsSync(path.join(extra, 'Thêm.md')), 'removing a loose file from the list does not delete it')
+
+  // Backup and restore (Settings): a tag removed after the backup comes back.
+  const backupFile = path.join(workDir, 'backup.json')
+  await app.evaluate(({ dialog }, file) => {
+    globalThis.__realSave = dialog.showSaveDialog
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
+  }, backupFile)
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await page.click('dialog.settings >> text=Sao lưu ra file…')
+  await page.waitForSelector('dialog.settings .dialog-msg >> text=Đã sao lưu')
+  const backup = JSON.parse(readFileSync(backupFile, 'utf8'))
+  const libPart = backup.folders.find((x) => x.path === library)
+  check(backup.app === 'study-docs' && libPart?.meta?.[REACT]?.tags?.includes('react') && Object.keys(libPart?.notes ?? {}).length > 0, 'backup holds tags and notes of every folder')
+  const reactId = await page.evaluate(async (rel) => (await window.api.getLibrary()).docs.find((d) => d.rel === rel).path, REACT)
+  await page.evaluate((id) => window.api.updateMeta(id, { tags: [] }), reactId)
+  await page.click('dialog.settings >> text=Khôi phục từ file…')
+  await page.waitForSelector('dialog.settings .dialog-msg >> text=Đã khôi phục')
+  check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[REACT]?.tags?.includes('react'), 'restoring a backup brings the data back (merged)')
+  await page.click('dialog.settings >> text=Xong')
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = globalThis.__realOpen
+    dialog.showSaveDialog = globalThis.__realSave
+  })
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

@@ -1,10 +1,11 @@
-// Tags and study status of the documents in one workspace folder: <folder>/.docs-meta.json.
+// Tags and study status of the documents in one workspace folder: data\<folder key>\meta.json
+// in the app's data folder.
 // File safety (write queue, corrupt-file backup, following renames) lives in DocStore.
 
 import { DEFAULT_META, type DocEntry, type DocMeta } from '../shared/types'
 import { DocStore } from './doc-store'
 
-export const META_FILE = '.docs-meta.json'
+export const META_FILE = 'meta.json'
 
 export class MetaStore extends DocStore<DocMeta> {
   private constructor(root: string) {

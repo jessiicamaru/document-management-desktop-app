@@ -1,10 +1,12 @@
-// A JSON file inside a workspace folder holding one entry per document, keyed by the
-// document's path in that folder. Used for tags/status (.docs-meta.json) and for
-// highlights/notes (.docs-notes.json).
+// A JSON file holding one entry per document of one workspace folder, keyed by the
+// document's path in that folder. Used for tags/status (meta.json) and for highlights/notes
+// (notes.json). The files live in the app's own data folder, one sub-folder per workspace
+// folder: %APPDATA%\Study Docs\data\<folder key>\ (see dataDirOf in index.ts). Documents'
+// folders are never written to.
 //
-// Safety rules, because these files often live in a synced folder (Git, OneDrive):
+// Safety rules:
 //  - Writes go through a queue, one at a time, so two quick clicks never overwrite each other.
-//  - The current state is kept in memory; the file is only read on open or when it changes on disk.
+//  - The current state is kept in memory; the file is only read on open.
 //  - A file that cannot be parsed is copied to a backup before anything else is written.
 //  - Entries follow a document that is renamed or moved (same content, or same file name).
 //
@@ -38,19 +40,20 @@ export abstract class DocStore<V extends DocKeyed> {
   warning: string | null = null
 
   /**
-   * @param fileName e.g. ".docs-meta.json"
+   * @param fileName e.g. "meta.json"
    * @param contents what the file holds, for messages, e.g. "tag và trạng thái"
    */
   protected constructor(
-    readonly root: string,
+    readonly dir: string,
     private readonly fileName: string,
     private readonly contents: string
   ) {
-    this.file = path.join(root, fileName)
+    this.file = path.join(dir, fileName)
   }
 
   /** Reads the file; subclasses call this from their static open(). */
   protected async load(): Promise<void> {
+    await fs.mkdir(this.dir, { recursive: true })
     const result = await this.read()
     if (result.kind === 'ok') {
       this.docs = result.docs
@@ -113,7 +116,7 @@ export abstract class DocStore<V extends DocKeyed> {
   /** Backup files of this store in the folder (newest first), e.g. ".docs-meta.corrupt-2026-….json". */
   async backups(): Promise<string[]> {
     const prefix = `${this.fileName.replace(/\.json$/, '')}.corrupt-`
-    const names = await fs.readdir(this.root).catch(() => [] as string[])
+    const names = await fs.readdir(this.dir).catch(() => [] as string[])
     return names.filter((n) => n.startsWith(prefix) && n.endsWith('.json')).sort().reverse()
   }
 
@@ -123,7 +126,7 @@ export abstract class DocStore<V extends DocKeyed> {
     if (typeof name !== 'string' || !name.startsWith(prefix) || !name.endsWith('.json') || /[\\/]/.test(name)) {
       throw new Error('Không phải bản sao lưu của app')
     }
-    return path.join(this.root, name)
+    return path.join(this.dir, name)
   }
 
   /**
@@ -139,6 +142,15 @@ export abstract class DocStore<V extends DocKeyed> {
       await fs.rename(file, file.replace('.corrupt-', '.merged-'))
       this.warning = null
       return Object.keys(docs).length
+    })
+  }
+
+  /** Merges entries from a backup file made with "Sao lưu dữ liệu". Returns how many documents it had. */
+  importDocs(docs: Record<string, V>): Promise<number> {
+    return this.enqueue(async () => {
+      const n = Object.keys(docs).length
+      if (n) await this.write(this.mergeDocs(this.docs, docs))
+      return n
     })
   }
 
@@ -284,7 +296,7 @@ export abstract class DocStore<V extends DocKeyed> {
 
   private async backupCorrupt(raw: string): Promise<string> {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const backup = path.join(this.root, `${this.fileName.replace(/\.json$/, '')}.corrupt-${stamp}.json`)
+    const backup = path.join(this.dir, `${this.fileName.replace(/\.json$/, '')}.corrupt-${stamp}.json`)
     await fs.writeFile(backup, raw, 'utf8')
     this.warning =
       `File ${this.fileName} bị hỏng (có thể do xung đột khi đồng bộ). ` +

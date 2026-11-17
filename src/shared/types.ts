@@ -20,6 +20,8 @@ export interface RootInfo {
   name: string
   /** False when the folder can't be opened (deleted, renamed, USB unplugged...). */
   available: boolean
+  /** True for the folder of files opened on their own ("File lẻ"), not a workspace folder. */
+  loose: boolean
 }
 
 /** One file found in the workspace. */
@@ -39,7 +41,7 @@ export interface DocEntry {
   hash?: string
 }
 
-/** Your own notes about a document, stored in <library>/.docs-meta.json. */
+/** Your own notes about a document (tags, status), stored in the app's data folder. */
 export interface DocMeta {
   tags: string[]
   status: StudyStatus
@@ -69,7 +71,7 @@ export interface LibrarySnapshot {
   /** Folders in the workspace, in the order you added them. */
   roots: RootInfo[]
   docs: DocEntry[]
-  /** Keyed by document id. Each folder's part is stored in that folder's .docs-meta.json. */
+  /** Keyed by document id. Stored in %APPDATA%\Study Docs\data\<folder key>\meta.json. */
   meta: Record<string, DocMeta>
   /** Document id -> when you last opened it. Kept in the app's own data folder, not the library. */
   recent: Record<string, number>
@@ -77,9 +79,11 @@ export interface LibrarySnapshot {
   notes: Record<string, Annotation[]>
   /** Document id -> its note about the whole document (issue #21). */
   docNotes: Record<string, string>
+  /** Files opened on their own ("File lẻ"); id is null while the file can't be found. */
+  looseFiles: { path: string; id: string | null }[]
   /** Problems the user should know about (corrupt meta file, folder missing...). */
   warnings: string[]
-  /** Backups of broken .docs-meta.json / .docs-notes.json files that can be merged back (issue #25). */
+  /** Backups of broken meta.json / notes.json data files that can be merged back (issue #25). */
   recovery: RecoveryItem[]
   /** Tags/notes saved for files that no longer exist (0 while scanning). */
   orphans: number
@@ -90,7 +94,7 @@ export interface RecoveryItem {
   root: string
   rootName: string
   store: 'meta' | 'notes'
-  /** Backup file name, e.g. ".docs-meta.corrupt-2026-01-01T10-00-00-000Z.json". */
+  /** Backup file name, e.g. "meta.corrupt-2026-01-01T10-00-00-000Z.json". */
   file: string
 }
 
@@ -105,7 +109,7 @@ export interface TextQuote {
   suffix: string
 }
 
-/** A highlight, optionally with a note. Stored in <folder>/.docs-notes.json, never in the document. */
+/** A highlight, optionally with a note. Stored in the app's data folder, never in the document. */
 export interface Annotation extends TextQuote {
   id: string
   color: HighlightColor
@@ -210,6 +214,18 @@ export interface DocsApi {
   discardBackup(root: string, file: string): Promise<void>
   /** Shows a backup file in Explorer (to fix it by hand). */
   revealBackup(root: string, file: string): Promise<void>
+  /** Shows a file picker and opens the chosen documents ("File lẻ" if outside the workspace). Resolves with their ids. */
+  openFiles(): Promise<string[]>
+  /** Opens documents by path (drag and drop). Resolves with their ids. */
+  addFiles(paths: string[]): Promise<string[]>
+  /** Removes a file from "File lẻ" (the file and its notes stay). */
+  removeLooseFile(path: string): Promise<void>
+  /** Path of a file dropped on the window. */
+  pathForFile(file: File): string
+  /** Saves all tags and notes to a file of your choice. Resolves with its path, or null if cancelled. */
+  exportData(): Promise<string | null>
+  /** Merges a backup file into the current data. Resolves with how many documents it had, or null if cancelled. */
+  importData(): Promise<number | null>
   /** Raw bytes of a document (used for EPUB books). */
   readBinary(path: string): Promise<Uint8Array>
   /** Full-text search over all documents (accent-insensitive). */

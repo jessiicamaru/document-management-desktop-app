@@ -7,9 +7,9 @@ rem ==================================================================
 rem  Go Study Docs khoi may. Double-click file nay de chay.
 rem   1. Tat app neu dang mo
 rem   2. Tim trinh go cai dat trong registry va chay o che do im lang
-rem   3. Hoi truoc khi xoa settings/cache trong %APPDATA%\Study Docs
+rem   3. Hoi truoc khi xoa du lieu cua app (settings, tag, ghi chu) trong %APPDATA%\Study Docs
 rem  KHONG bao gio dung toi thu muc tai lieu cua ban
-rem  (file .md, .html va .docs-meta.json van giu nguyen).
+rem  (file .md, .html, .pdf... van giu nguyen).
 rem ==================================================================
 
 set "APP_NAME=Study Docs"
@@ -64,16 +64,17 @@ rem ---------- 3. Settings va cache ----------
 :appdata
 echo.
 if not exist "%DATA_DIR%" goto :done
-echo  Settings và cache của app đang nằm ở:
+echo  Dữ liệu của app (settings, tag, trạng thái học, highlight, ghi chú, cache) nằm ở:
 echo    %DATA_DIR%
-echo  Tài liệu, tag và trạng thái học trong thư mục tài liệu sẽ KHÔNG bị xoá.
-choice /c YN /m " Xoá luôn settings và cache"
+echo  Muốn giữ tag và ghi chú: mở app, Cài đặt, "Sao lưu ra file..." trước khi xoá.
+echo  File tài liệu của bạn (.md, .html, .pdf...) KHÔNG bao giờ bị xoá.
+choice /c YN /m " Xoá luôn dữ liệu của app"
 if errorlevel 2 goto :keepdata
 rmdir /s /q "%DATA_DIR%"
-echo  - Đã xoá settings và cache.
+echo  - Đã xoá dữ liệu của app.
 goto :done
 :keepdata
-echo  - Giữ lại settings và cache.
+echo  - Giữ lại dữ liệu của app (cài lại sẽ dùng tiếp).
 
 :done
 echo.

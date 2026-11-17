@@ -103,6 +103,18 @@ export async function scanLibrary(root: string, previous: ScannedDoc[] = [], cac
   return docs
 }
 
+/** Reads only the given files of a folder (files opened on their own, see "File lẻ"). */
+export async function readFiles(root: string, files: string[], previous: ScannedDoc[], cache?: InfoCache): Promise<ScannedDoc[]> {
+  const byPath = new Map(previous.map((d) => [d.path, d]))
+  const docs: ScannedDoc[] = []
+  for (const abs of files) {
+    const kind = kindOf(abs)
+    const doc = kind && (await readEntry(root, abs, kind, byPath, cache))
+    if (doc) docs.push(doc)
+  }
+  return docs
+}
+
 async function readEntry(
   root: string,
   abs: string,

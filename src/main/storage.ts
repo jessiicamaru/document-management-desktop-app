@@ -2,7 +2,7 @@
 //  - settings.json: the folders in the workspace, appearance
 //  - recent.json:   when you last opened each document, by absolute file path
 // "Recently opened" changes on every click, so it is kept here instead of in the
-// library's .docs-meta.json, which may be synced between computers.
+// per-folder data (tags, notes) in data<folder key>.
 
 import { app } from 'electron'
 import { promises as fs } from 'node:fs'
@@ -13,6 +13,8 @@ import { pathKey } from './workspace'
 interface Settings {
   /** Folders in the workspace. */
   libraryPaths?: string[]
+  /** Files opened on their own ("File lẻ"), by absolute path. */
+  looseFiles?: string[]
   /** Before v0.4 the workspace was a single folder; read once and migrated. */
   libraryPath?: string
   ui?: Partial<UiSettings>
@@ -59,6 +61,15 @@ export async function loadWorkspacePaths(): Promise<string[]> {
 
 export async function saveWorkspacePaths(paths: string[]): Promise<void> {
   await saveSettings({ libraryPaths: paths, libraryPath: undefined }) // undefined is dropped from the JSON
+}
+
+export async function loadLooseFiles(): Promise<string[]> {
+  const s = await loadSettings()
+  return Array.isArray(s.looseFiles) ? s.looseFiles.filter((p) => typeof p === 'string') : []
+}
+
+export async function saveLooseFiles(files: string[]): Promise<void> {
+  await saveSettings({ looseFiles: files })
 }
 
 const HEX = /^#[0-9a-f]{6}$/i

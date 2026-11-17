@@ -1,7 +1,7 @@
 // The only bridge between the UI and Node. The UI can call exactly these functions
 // and nothing else, so a document can never reach the file system on its own.
 
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { DocsApi, LibrarySnapshot, SearchStatus, UpdateStatus } from '../shared/types'
 
 /** Subscribes to a main-process event and returns an unsubscribe function. */
@@ -33,6 +33,12 @@ const api: DocsApi = {
   restoreBackup: (root, file) => ipcRenderer.invoke('recovery:restore', root, file),
   discardBackup: (root, file) => ipcRenderer.invoke('recovery:discard', root, file),
   revealBackup: (root, file) => ipcRenderer.invoke('recovery:reveal', root, file),
+  openFiles: () => ipcRenderer.invoke('files:open'),
+  addFiles: (paths) => ipcRenderer.invoke('files:add', paths),
+  removeLooseFile: (path) => ipcRenderer.invoke('files:remove', path),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  exportData: () => ipcRenderer.invoke('data:export'),
+  importData: () => ipcRenderer.invoke('data:import'),
   readBinary: (path) => ipcRenderer.invoke('doc:readBinary', path),
   search: (query) => ipcRenderer.invoke('search', query),
   onSearchStatus: (cb) => listen<[SearchStatus]>('search:status', cb),

@@ -1,11 +1,12 @@
-// Highlights and notes of the documents in one workspace folder: <folder>/.docs-notes.json.
+// Highlights and notes of the documents in one workspace folder: data\<folder key>\notes.json
+// in the app's data folder.
 // Documents themselves are never changed. File safety (write queue, corrupt-file backup,
 // following renames) lives in DocStore.
 
 import type { Annotation, DocEntry, HighlightColor } from '../shared/types'
 import { DocStore, type DocKeyed } from './doc-store'
 
-export const NOTES_FILE = '.docs-notes.json'
+export const NOTES_FILE = 'notes.json'
 
 interface DocNotes extends DocKeyed {
   items: Annotation[]

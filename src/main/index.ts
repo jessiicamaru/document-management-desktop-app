@@ -8,12 +8,12 @@ import { pathToFileURL } from 'node:url'
 import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, RecoveryItem, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
 import { printNotesInjection, viewModeInjection } from './view-helper'
-import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
-import { META_FILE, MetaStore } from './meta-store'
+import { kindOf, readFiles, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
+import { MetaStore } from './meta-store'
 import { ScanCache } from './scan-cache'
 import { SearchService } from './search'
-import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
-import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
+import { NotesStore, sanitizeAnnotation } from './notes-store'
+import { loadLooseFiles, loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveLooseFiles, saveSettings, saveWorkspacePaths } from './storage'
 import { isSameOrInside, labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { canOpenWithDefaultApp } from './open-policy'
 import { decodeUtf8Strict } from './text-file'
@@ -34,11 +34,19 @@ const PDF_VIEWER = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'
 
 let win: BrowserWindow | null = null
 
-/** One folder of the workspace, with its own scan cache, metadata file and watcher. */
+/**
+ * One folder of the workspace, with its tags/notes stores and a watcher.
+ * A "loose" root is the folder of files you opened on their own (Ctrl+O, drag and drop,
+ * double-click in Explorer): only those files are documents, the rest of the folder is not
+ * scanned (but its images/styles can still be loaded by those documents).
+ */
 interface Root {
   key: string
   path: string
   name: string
+  loose: boolean
+  /** Loose roots only: the files you opened, by absolute path. */
+  files: string[]
   /** Documents with paths relative to this folder. */
   docs: ScannedDoc[]
   /** Null when the folder could not be opened. */
@@ -58,7 +66,40 @@ let search: SearchService | undefined
 
 // ---------- workspace ----------
 
-const newRoot = (p: string): Root => ({ key: rootKeyOf(p), path: p, name: '', docs: [], meta: null, notes: null, watcher: null, warning: null })
+const newRoot = (p: string, loose = false): Root => ({
+  key: rootKeyOf(p),
+  path: p,
+  name: '',
+  loose,
+  files: [],
+  docs: [],
+  meta: null,
+  notes: null,
+  watcher: null,
+  warning: null
+})
+/** Workspace folders (not the folders of loose files). */
+const folderRoots = (): Root[] => roots.filter((r) => !r.loose)
+/** Path of a file inside a root, with "/" separators (the document id is "<root key>/<this>"). */
+const relOf = (root: Root, abs: string): string => path.relative(root.path, abs).split(path.sep).join('/')
+
+/**
+ * Where a folder's tags and notes are kept: %APPDATA%\Study Docs\data\<folder key>\
+ * (like Claude Code keeps one folder per project). The documents' own folders are never
+ * written to. info.json says which folder it is, for people looking at these files.
+ */
+const dataDirOf = (key: string): string => path.join(app.getPath('userData'), 'data', key)
+async function writeDataInfo(root: Pick<Root, 'key' | 'path' | 'loose'>): Promise<void> {
+  const file = path.join(dataDirOf(root.key), 'info.json')
+  await fs.writeFile(file, JSON.stringify({ path: root.path, loose: root.loose }, null, 2), 'utf8').catch(() => {})
+}
+
+/** The root a file belongs to: its workspace folder, else its loose root (if it was opened). */
+function rootOfFile(abs: string): Root | undefined {
+  return roots
+    .filter((r) => isSameOrInside(abs, r.path) && (!r.loose || r.files.some((f) => pathKey(f) === pathKey(abs))))
+    .sort((a, b) => Number(a.loose) - Number(b.loose) || b.path.length - a.path.length)[0]
+}
 
 /** Finds a document id ("<root key>/<path>") in the workspace; null if it isn't in any folder. */
 function locate(id: string): { root: Root; rel: string; abs: string } | null {
@@ -116,12 +157,20 @@ async function snapshot(): Promise<LibrarySnapshot> {
       for (const file of (await s?.backups()) ?? []) recovery.push({ root: r.key, rootName: r.name, store, file })
     }
     // Only count once the folder is fully scanned and reachable, or every file would look gone.
-    if (!scanning && !r.warning) orphans += storesOf(r).reduce((n, st) => n + st.orphans(r.docs.map((d) => d.path)).length, 0)
+    if (!scanning && !r.warning) orphans += storesOf(r).reduce((n, st) => n + st.orphans(knownPaths(r)).length, 0)
     for (const w of [r.meta?.warning, r.notes?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
   }
   return {
     scanning,
-    roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta })),
+    roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta, loose: r.loose })),
+    looseFiles: roots
+      .filter((r) => r.loose)
+      .flatMap((r) =>
+        r.files.map((file) => {
+          const rel = relOf(r, file)
+          return { path: file, id: r.docs.some((d) => d.path === rel) ? `${r.key}/${rel}` : null }
+        })
+      ),
     docs,
     meta,
     recent: recentByDoc(await loadRecent()),
@@ -134,6 +183,11 @@ async function snapshot(): Promise<LibrarySnapshot> {
 }
 
 const storesOf = (r: Root): (MetaStore | NotesStore)[] => [r.meta, r.notes].filter((x): x is MetaStore | NotesStore => !!x)
+/**
+ * Documents whose tags/notes are kept: everything found in a folder; for loose files, every
+ * file in the list even when it is missing right now (a USB drive that isn't plugged in).
+ */
+const knownPaths = (r: Root): string[] => (r.loose ? r.files.map((f) => relOf(r, f)) : r.docs.map((d) => d.path))
 
 /** The meta or notes store of a folder, for the recovery dialog. */
 function storeFor(rootKey: string, store: string): MetaStore | NotesStore {
@@ -143,7 +197,7 @@ function storeFor(rootKey: string, store: string): MetaStore | NotesStore {
   return s
 }
 /** Which store a backup file name belongs to. */
-const storeOfBackup = (file: string): 'meta' | 'notes' => (String(file).startsWith('.docs-notes.') ? 'notes' : 'meta')
+const storeOfBackup = (file: string): 'meta' | 'notes' => (String(file).startsWith('notes.') ? 'notes' : 'meta')
 
 async function pushSnapshot(): Promise<void> {
   win?.webContents.send('library:changed', await snapshot())
@@ -176,24 +230,8 @@ async function openFromExplorer(abs: string): Promise<void> {
   }
   if (win?.isMinimized()) win.restore()
   win?.focus()
-  if (!roots.some((r) => isSameOrInside(abs, r.path))) {
-    const folder = path.dirname(abs)
-    const { response } = await dialog.showMessageBox(win!, {
-      type: 'question',
-      buttons: ['Thêm thư mục và mở', 'Huỷ'],
-      defaultId: 0,
-      cancelId: 1,
-      title: 'Mở file',
-      message: `"${path.basename(abs)}" không nằm trong workspace.`,
-      detail: `Study Docs chỉ mở file trong các thư mục của workspace (để lưu tag, ghi chú cạnh file).\n\nThêm thư mục này vào workspace?\n${folder}`
-    })
-    if (response !== 0) return
-    const refused = await addRoots([folder])
-    if (refused.length) {
-      void dialog.showMessageBox(win!, { type: 'warning', message: 'Không thêm được thư mục', detail: refused.join('\n') })
-      return
-    }
-  }
+  // A file outside the workspace folders is added to "File lẻ", like opening a file in Word.
+  await addFiles([abs])
   pendingFile = abs
   openPendingFile()
 }
@@ -201,12 +239,12 @@ async function openFromExplorer(abs: string): Promise<void> {
 /** Shows the pending file once its folder is scanned and the UI is listening. */
 function openPendingFile(): void {
   if (!pendingFile || !uiReady || !win) return
-  const root = roots.find((r) => isSameOrInside(pendingFile!, r.path))
+  const root = rootOfFile(pendingFile)
   if (!root) {
     pendingFile = null
     return
   }
-  const rel = path.relative(root.path, pendingFile).split(path.sep).join('/')
+  const rel = relOf(root, pendingFile)
   if (root.docs.some((d) => d.path === rel)) {
     pendingFile = null
     win.webContents.send('doc:navigate', `${root.key}/${rel}`, '')
@@ -218,28 +256,39 @@ function openPendingFile(): void {
 }
 
 function relabel(): void {
-  const labels = labelRoots(roots.map((r) => r.path))
-  roots.forEach((r, i) => (r.name = labels[i]))
+  const folders = folderRoots()
+  const labels = labelRoots(folders.map((r) => r.path))
+  folders.forEach((r, i) => (r.name = labels[i]))
+  // Loose files: the folder they are in, shown next to search results.
+  for (const r of roots) if (r.loose) r.name = r.path
 }
 
 async function openRoot(root: Root): Promise<void> {
   try {
-    if (!(await fs.stat(root.path)).isDirectory()) throw new Error('not a folder')
-    root.meta = await MetaStore.open(root.path)
-    root.notes = await NotesStore.open(root.path)
+    // Loose files may be missing (then they show as "không tìm thấy"); a folder must exist.
+    if (!root.loose && !(await fs.stat(root.path)).isDirectory()) throw new Error('not a folder')
+    root.meta = await MetaStore.open(dataDirOf(root.key))
+    root.notes = await NotesStore.open(dataDirOf(root.key))
+    await writeDataInfo(root)
   } catch {
     root.warning = 'Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.'
     return
   }
-  root.docs = await scanLibrary(root.path, [], scanCache)
+  root.docs = await scanRoot(root, [])
   await reconcileStores(root)
   // The folder may have been removed from the workspace while it was being scanned:
   // then don't start watching it, nobody would ever stop the watcher (issue #9).
   if (roots.includes(root)) watchRoot(root)
 }
 
-/** Lets tags and notes follow renamed/moved documents. */
+/** The documents of a root: the whole folder, or only the files opened on their own. */
+function scanRoot(root: Root, previous = root.docs): Promise<ScannedDoc[]> {
+  return root.loose ? readFiles(root.path, root.files, previous, scanCache) : scanLibrary(root.path, previous, scanCache)
+}
+
+/** Lets tags and notes follow renamed/moved documents (inside a workspace folder). */
 async function reconcileStores(root: Root): Promise<void> {
+  if (root.loose) return // only the listed files are known; a missing one is not "moved"
   for (const store of [root.meta, root.notes]) await store?.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
 }
 
@@ -284,15 +333,103 @@ async function openRoots(list: Root[]): Promise<void> {
 }
 
 /** Replaces the whole workspace (at startup). Duplicate or nested folders are skipped. */
-async function openWorkspace(paths: string[]): Promise<void> {
+async function openWorkspace(paths: string[], looseFiles: string[]): Promise<void> {
   roots.forEach(closeRoot)
   roots = []
   for (const p of paths) {
     const norm = normalizeRoot(p)
     if (!rootConflict(roots.map((r) => r.path), norm)) roots.push(newRoot(norm))
   }
+  for (const file of looseFiles) addToLooseRoot(path.resolve(file))
   relabel()
   await openRoots(roots)
+}
+
+// ---------- files opened on their own ("File lẻ") ----------
+
+/** Puts a file in the loose root of its folder (made if needed); false if a workspace folder has it. */
+function addToLooseRoot(abs: string): Root | null {
+  if (folderRoots().some((r) => isSameOrInside(abs, r.path))) return null
+  const dir = normalizeRoot(path.dirname(abs))
+  let root = roots.find((r) => r.loose && pathKey(r.path) === pathKey(dir))
+  if (!root) {
+    root = newRoot(dir, true)
+    roots.push(root)
+  }
+  if (!root.files.some((f) => pathKey(f) === pathKey(abs))) root.files.push(abs)
+  return root
+}
+
+const saveLoose = (): Promise<void> => saveLooseFiles(roots.filter((r) => r.loose).flatMap((r) => r.files))
+
+/**
+ * Opens documents by path (Ctrl+O, drag and drop, Explorer). Files inside a workspace folder
+ * are simply found there; others are added to "File lẻ". Resolves with their document ids.
+ */
+async function addFiles(paths: string[]): Promise<string[]> {
+  const ids: string[] = []
+  const changed = new Set<Root>()
+  for (const p of paths) {
+    const abs = path.resolve(String(p))
+    if (!kindOf(abs)) continue
+    try {
+      if (!(await fs.stat(abs)).isFile()) continue
+    } catch {
+      continue
+    }
+    const folder = folderRoots().find((r) => isSameOrInside(abs, r.path))
+    if (folder) {
+      ids.push(`${folder.key}/${relOf(folder, abs)}`)
+      continue
+    }
+    const root = addToLooseRoot(abs)!
+    changed.add(root)
+    ids.push(`${root.key}/${relOf(root, abs)}`)
+  }
+  if (!changed.size) return ids
+  relabel()
+  await saveLoose()
+  for (const root of changed) {
+    if (!root.meta) await openRoot(root)
+    else root.docs = await scanRoot(root)
+  }
+  syncSearch()
+  await pushSnapshot()
+  return ids
+}
+
+/** Removes a file from "File lẻ" (the file itself is not touched; its notes are kept). */
+async function removeLooseFile(abs: string): Promise<void> {
+  const root = roots.find((r) => r.loose && r.files.some((f) => pathKey(f) === pathKey(abs)))
+  if (!root) return
+  root.files = root.files.filter((f) => pathKey(f) !== pathKey(abs))
+  if (root.files.length) {
+    root.docs = await scanRoot(root)
+  } else {
+    closeRoot(root)
+    roots = roots.filter((r) => r !== root)
+  }
+  await saveLoose()
+  syncSearch()
+  await pushSnapshot()
+}
+
+/**
+ * A workspace folder was added: loose files inside it now belong to it. Their tags and notes
+ * move along (their paths inside the folder get the sub-folder in front).
+ */
+async function absorbLooseRoots(folder: Root): Promise<void> {
+  for (const loose of roots.filter((r) => r.loose && isSameOrInside(r.path, folder.path))) {
+    closeRoot(loose)
+    roots = roots.filter((r) => r !== loose)
+    if (loose.key === folder.key) continue // same folder: same data folder already
+    const prefix = relOf(folder, loose.path)
+    const moved = <V>(docs: Record<string, V>): Record<string, V> =>
+      Object.fromEntries(Object.entries(docs).map(([rel, v]) => [prefix ? `${prefix}/${rel}` : rel, v]))
+    if (loose.meta) await folder.meta?.importDocs(moved(loose.meta.all()))
+    if (loose.notes) await folder.notes?.importDocs(moved(loose.notes.all()))
+  }
+  await saveLoose()
 }
 
 /** Adds folders; returns a message for each folder that was refused. */
@@ -301,57 +438,51 @@ async function addRoots(paths: string[]): Promise<string[]> {
   const added: Root[] = []
   for (const p of paths) {
     const norm = normalizeRoot(p)
-    const conflict = rootConflict(roots.map((r) => r.path), norm)
+    const conflict = rootConflict([...folderRoots(), ...added].map((r) => r.path), norm)
     if (conflict) refused.push(conflict)
     else added.push(newRoot(norm))
   }
   roots.push(...added)
   relabel()
-  await saveWorkspacePaths(roots.map((r) => r.path))
+  await saveWorkspacePaths(folderRoots().map((r) => r.path))
   await openRoots(added)
+  for (const folder of added) if (folder.meta) await absorbLooseRoots(folder)
+  if (added.length) {
+    syncSearch()
+    await pushSnapshot()
+  }
   return refused
 }
 
 async function removeRoot(key: string): Promise<void> {
-  const root = roots.find((r) => r.key === key)
+  const root = roots.find((r) => r.key === key && !r.loose)
   if (!root) return
   closeRoot(root)
   roots = roots.filter((r) => r !== root)
   relabel()
-  await saveWorkspacePaths(roots.map((r) => r.path))
+  await saveWorkspacePaths(folderRoots().map((r) => r.path))
   syncSearch()
 }
 
 function watchRoot(root: Root): void {
   let rescanTimer: NodeJS.Timeout | undefined
-  let metaTimer: NodeJS.Timeout | undefined
   const stillOpen = (): boolean => roots.includes(root)
 
   const rescan = async (): Promise<void> => {
     if (!stillOpen()) return
-    root.docs = await scanLibrary(root.path, root.docs, scanCache)
+    root.docs = await scanRoot(root)
     await reconcileStores(root)
     syncSearch()
     await pushSnapshot()
   }
-  const reloadStores = async (): Promise<void> => {
-    if (!stillOpen()) return
-    let changed = false
-    for (const store of [root.meta, root.notes]) if (store) changed = (await store.reloadFromDisk().catch(() => false)) || changed
-    if (changed || root.meta?.warning || root.notes?.warning) await pushSnapshot()
-  }
 
   try {
     // Windows supports recursive watching natively, no extra dependency needed.
-    root.watcher = watch(root.path, { recursive: true }, (_event, filename) => {
+    // Loose files: only their own folder level matters, and only the files in the list.
+    root.watcher = watch(root.path, { recursive: !root.loose }, (_event, filename) => {
       const name = String(filename ?? '')
-      if (name === META_FILE || name === NOTES_FILE) {
-        // Changed by a sync tool or another PC (our own writes are recognised and skipped).
-        clearTimeout(metaTimer)
-        metaTimer = setTimeout(() => void reloadStores(), 400)
-        return
-      }
-      // Other hidden files (backups, temp files) and node_modules are not documents.
+      if (root.loose && !root.files.some((f) => path.basename(f).toLowerCase() === name.toLowerCase())) return
+      // Hidden files (temp files, .git) and node_modules are not documents.
       if (name.split(/[\\/]/).some((p) => p.startsWith('.') || p === 'node_modules')) return
       clearTimeout(rescanTimer)
       rescanTimer = setTimeout(() => void rescan(), 400)
@@ -360,16 +491,115 @@ function watchRoot(root: Root): void {
     root.watcher.on('error', (err) => {
       console.error('watcher error', err)
       closeRoot(root)
-      root.warning = 'Mất kết nối với thư mục này (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file trong đó thay đổi.'
+      // Loose files simply show as "không tìm thấy"; a workspace folder gets a warning.
+      if (!root.loose) root.warning = 'Mất kết nối với thư mục này (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file trong đó thay đổi.'
       void pushSnapshot()
     })
   } catch (err) {
     console.error('Cannot watch folder', err)
-    root.warning = 'Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.'
+    if (!root.loose) root.warning = 'Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.'
   }
 }
 
-/** Opens a library file with its default app; programs/scripts are only shown in Explorer. */
+// ---------- backup ("Sao lưu dữ liệu") ----------
+
+/** A backup file: every folder's tags/status and highlights/notes, keyed by the folder's path. */
+interface BackupFile {
+  app: 'study-docs'
+  kind: 'backup'
+  version: 1
+  exported: string
+  folders: { path: string; loose: boolean; meta: Record<string, unknown>; notes: Record<string, unknown> }[]
+}
+
+/** Everything in the data folder, also of folders that are not in the workspace right now. */
+async function exportData(): Promise<BackupFile> {
+  const folders: BackupFile['folders'] = []
+  const base = path.join(app.getPath('userData'), 'data')
+  const readDocs = async (file: string): Promise<Record<string, unknown>> => {
+    try {
+      return (JSON.parse(await fs.readFile(file, 'utf8')) as { docs?: Record<string, unknown> }).docs ?? {}
+    } catch {
+      return {}
+    }
+  }
+  for (const key of await fs.readdir(base).catch(() => [] as string[])) {
+    const open = roots.find((r) => r.key === key)
+    let info: { path?: string; loose?: boolean } = {}
+    try {
+      info = JSON.parse(await fs.readFile(path.join(base, key, 'info.json'), 'utf8'))
+    } catch {
+      // unknown folder: skipped below
+    }
+    const folderPath = open?.path ?? info.path
+    if (typeof folderPath !== 'string') continue
+    const meta = open?.meta ? open.meta.all() : await readDocs(path.join(base, key, 'meta.json'))
+    const notes = open?.notes ? open.notes.all() : await readDocs(path.join(base, key, 'notes.json'))
+    if (Object.keys(meta).length || Object.keys(notes).length) folders.push({ path: folderPath, loose: open?.loose ?? !!info.loose, meta, notes })
+  }
+  return { app: 'study-docs', kind: 'backup', version: 1, exported: new Date().toISOString(), folders }
+}
+
+/** Merges a backup into the current data (nothing current is lost). Returns how many documents it had. */
+async function importData(raw: string): Promise<number> {
+  let backup: BackupFile
+  try {
+    backup = JSON.parse(raw)
+  } catch {
+    throw new Error('File này không phải bản sao lưu của Study Docs.')
+  }
+  if (backup?.app !== 'study-docs' || !Array.isArray(backup.folders)) throw new Error('File này không phải bản sao lưu của Study Docs.')
+  const STATUSES = ['new', 'learning', 'review', 'done']
+  let n = 0
+  for (const folder of backup.folders) {
+    if (typeof folder?.path !== 'string') continue
+    const key = rootKeyOf(folder.path)
+    const open = roots.find((r) => r.key === key)
+    if (!open) {
+      await fs.mkdir(dataDirOf(key), { recursive: true })
+      await writeDataInfo({ key, path: normalizeRoot(folder.path), loose: !!folder.loose })
+    }
+    const meta = open?.meta ?? (await MetaStore.open(dataDirOf(key)))
+    const notes = open?.notes ?? (await NotesStore.open(dataDirOf(key)))
+    const cleanMeta: Record<string, DocMeta> = {}
+    for (const [rel, m] of Object.entries(folder.meta ?? {})) {
+      const v = m as Partial<DocMeta>
+      if (!v || typeof v !== 'object') continue
+      cleanMeta[rel] = {
+        tags: Array.isArray(v.tags) ? v.tags.map(String).slice(0, 100) : [],
+        status: STATUSES.includes(v.status as string) ? (v.status as DocMeta['status']) : 'new',
+        ...(typeof v.hash === 'string' ? { hash: v.hash } : {}),
+        ...(typeof v.name === 'string' ? { name: v.name } : {})
+      }
+    }
+    const cleanNotes: Parameters<NotesStore['importDocs']>[0] = {}
+    for (const [rel, e] of Object.entries(folder.notes ?? {})) {
+      const v = e as { items?: Partial<Annotation>[]; docNote?: { text?: unknown; updated?: unknown }; hash?: unknown; name?: unknown }
+      if (!v || typeof v !== 'object') continue
+      const items: Annotation[] = []
+      for (const item of Array.isArray(v.items) ? v.items : []) {
+        try {
+          // Keep the original time, so the newer copy wins when the same note exists here too.
+          items.push({ ...sanitizeAnnotation(item), updated: typeof item.updated === 'number' ? item.updated : 0 })
+        } catch {
+          // skip broken entries
+        }
+      }
+      const text = typeof v.docNote?.text === 'string' ? v.docNote.text.slice(0, 50000) : ''
+      cleanNotes[rel] = {
+        items,
+        ...(text ? { docNote: { text, updated: typeof v.docNote?.updated === 'number' ? v.docNote.updated : 0 } } : {}),
+        ...(typeof v.hash === 'string' ? { hash: v.hash } : {}),
+        ...(typeof v.name === 'string' ? { name: v.name } : {})
+      }
+    }
+    await meta.importDocs(cleanMeta)
+    await notes.importDocs(cleanNotes)
+    n += new Set([...Object.keys(cleanMeta), ...Object.keys(cleanNotes)]).size
+  }
+  return n
+}
+
 /**
  * Opens a library file with its default app. Only safe types are opened (see open-policy.ts);
  * anything else is shown in Explorer. `fromPage`: the request came from inside a document
@@ -539,6 +769,40 @@ function registerIpc(): void {
     return snapshot()
   })
 
+  // ---------- files opened on their own, backup ----------
+  ipcMain.handle('files:open', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      title: 'Mở tài liệu',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'Tài liệu', extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'epub', 'mobi', 'azw3', 'azw'] }]
+    })
+    return canceled ? [] : addFiles(filePaths)
+  })
+  ipcMain.handle('files:add', (_e, paths: unknown) => addFiles(Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string') : []))
+  ipcMain.handle('files:remove', (_e, abs: string) => removeLooseFile(String(abs)))
+  ipcMain.handle('data:export', async () => {
+    const stamp = new Date().toISOString().slice(0, 10)
+    const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+      title: 'Sao lưu tag và ghi chú',
+      defaultPath: path.join(app.getPath('documents'), `Study Docs - sao lưu ${stamp}.json`),
+      filters: [{ name: 'Sao lưu Study Docs', extensions: ['json'] }]
+    })
+    if (canceled || !filePath) return null
+    await fs.writeFile(filePath, JSON.stringify(await exportData(), null, 2), 'utf8')
+    return filePath
+  })
+  ipcMain.handle('data:import', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      title: 'Khôi phục tag và ghi chú',
+      properties: ['openFile'],
+      filters: [{ name: 'Sao lưu Study Docs', extensions: ['json'] }]
+    })
+    if (canceled || !filePaths[0]) return null
+    const n = await importData(await fs.readFile(filePaths[0], 'utf8'))
+    await pushSnapshot()
+    return n
+  })
+
   ipcMain.handle('doc:read', async (_e, rel: string) => {
     const abs = inLibrary(rel)
     if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
@@ -641,7 +905,7 @@ function registerIpc(): void {
     try {
       for (const r of roots) {
         if (r.warning) continue // folder unreachable: its files only look missing
-        for (const st of storesOf(r)) n += await st.pruneOrphans(r.docs.map((d) => d.path))
+        for (const st of storesOf(r)) n += await st.pruneOrphans(knownPaths(r))
       }
     } catch (err) {
       throw friendlyWriteError(err)
@@ -828,8 +1092,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     protocol.handle('doc', async (request) => {
       const target = parseDocUrl(request.url) // null for malformed URLs such as a stray "%"
-      // Hidden files (.docs-meta.json, .docs-notes.json, backups...) are the app's own data,
-      // never something a page may load.
+      // Hidden files and folders (.git, old .docs-*.json...) are never served to a page.
       const hidden = target?.path.split('/').some((part) => part.startsWith('.'))
       const abs = target && !hidden ? inLibrary(target.path) : null
       if (!abs) return new Response('Not found', { status: 404 })
@@ -883,7 +1146,7 @@ if (!app.requestSingleInstanceLock()) {
 
     // DOCS_LIBRARY lets you (or the smoke test) open folders directly, separated by ";".
     const fromEnv = (process.env.DOCS_LIBRARY ?? '').split(path.delimiter).filter(Boolean)
-    await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths())
+    await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths(), await loadLooseFiles())
 
     // Started by double-clicking a document in Explorer.
     const [file] = filesInArgs(process.argv)

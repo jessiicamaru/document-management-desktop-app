@@ -57,6 +57,6 @@ describe('NotesStore', () => {
     await writeFile(path.join(dir, NOTES_FILE), '{ broken')
     const store = await NotesStore.open(dir)
     expect(store.warning).toMatch(/highlight và ghi chú/)
-    expect((await readdir(dir)).some((f) => f.startsWith('.docs-notes.corrupt-'))).toBe(true)
+    expect((await readdir(dir)).some((f) => f.startsWith('notes.corrupt-'))).toBe(true)
   })
 })

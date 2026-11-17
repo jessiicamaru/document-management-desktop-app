@@ -130,7 +130,7 @@ export function viewModeInjection(): string {
     const key = e.key.toLowerCase()
     if (isHistoryKey(e)) {
       e.preventDefault()
-    } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f'].includes(key)) {
+    } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f', 'o'].includes(key)) {
       e.preventDefault()
       send({ type: 'key', key: 'ctrl+' + key })
     } else if (e.key === 'Escape') {
