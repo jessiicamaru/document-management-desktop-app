@@ -17,6 +17,7 @@ export interface ScrollTarget {
 interface Toast {
   id: number
   text: string
+  kind: 'error' | 'info'
 }
 
 export default function App() {
@@ -36,12 +37,22 @@ export default function App() {
   const dirtyRef = useRef(false)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  /** Shows an error message in the bottom-right corner for a few seconds. */
-  const notify = useCallback((err: unknown) => {
-    const toast = { id: Date.now() + Math.random(), text: errorMessage(err) }
+  /** Shows a message in the bottom-right corner for a few seconds. */
+  const showToast = useCallback((text: string, kind: Toast['kind']) => {
+    const toast = { id: Date.now() + Math.random(), text, kind }
     setToasts((t) => [...t, toast])
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== toast.id)), 6000)
   }, [])
+  const notify = useCallback((err: unknown) => showToast(errorMessage(err), 'error'), [showToast])
+  const inform = useCallback((text: string) => showToast(text, 'info'), [showToast])
+
+  // Back/forward history of opened documents, like a browser.
+  const history = useRef<{ entries: { path: string; hash: string }[]; index: number }>({ entries: [], index: -1 })
+  const [historyPos, setHistoryPos] = useState({ canBack: false, canForward: false })
+  const syncHistory = (): void => {
+    const h = history.current
+    setHistoryPos({ canBack: h.index > 0, canForward: h.index < h.entries.length - 1 })
+  }
 
   // Load the library once, then follow changes on disk.
   useEffect(() => {
@@ -77,27 +88,6 @@ export default function App() {
     [notify]
   )
 
-  // Keyboard shortcuts: Ctrl+K / Ctrl+P search (like VS Code), Ctrl+E recent, Ctrl+, settings.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (!(e.ctrlKey || e.metaKey)) return
-      const key = e.key.toLowerCase()
-      if (key === 'k' || key === 'p') {
-        e.preventDefault()
-        searchRef.current?.focus()
-        searchRef.current?.select()
-      } else if (key === 'e') {
-        e.preventDefault()
-        setRecentOpen((o) => !o)
-      } else if (key === ',') {
-        e.preventDefault()
-        setSettingsOpen(true)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
   // Closing the window with unsaved edits: the main process asks what to do.
   const setDirty = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty
@@ -112,11 +102,21 @@ export default function App() {
   const docs = lib?.docs ?? []
   const meta = lib?.meta ?? {}
 
+  /** Opens a document; returns false if you chose to stay because of unsaved edits. */
   const openDoc = useCallback(
-    (path: string, hash = '') => {
+    (path: string, hash = '', fromHistory = false): boolean => {
       if (dirtyRef.current && path !== selected) {
-        if (!window.confirm('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?')) return
+        if (!window.confirm('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?')) return false
         setDirty(false)
+      }
+      if (!fromHistory) {
+        const h = history.current
+        const cur = h.entries[h.index]
+        if (!cur || cur.path !== path || cur.hash !== hash) {
+          h.entries = [...h.entries.slice(0, h.index + 1), { path, hash }].slice(-100)
+          h.index = h.entries.length - 1
+          syncHistory()
+        }
       }
       setSelected(path)
       setScrollTarget((t) => ({ hash, n: t.n + 1 }))
@@ -125,12 +125,59 @@ export default function App() {
         .markOpened(path)
         .then((recent) => setLib((l) => l && { ...l, recent }))
         .catch(notify)
+      return true
     },
     [notify, selected, setDirty]
   )
 
+  const goHistory = useCallback(
+    (direction: 'back' | 'forward') => {
+      const h = history.current
+      const target = h.index + (direction === 'back' ? -1 : 1)
+      const entry = h.entries[target]
+      if (!entry) return
+      if (openDoc(entry.path, entry.hash, true)) {
+        h.index = target
+        syncHistory()
+      }
+    },
+    [openDoc]
+  )
+
   // A link clicked inside an HTML document points to another document.
   useEffect(() => window.api.onNavigate((path, hash) => openDoc(path, hash)), [openDoc])
+  // Mouse back/forward buttons.
+  useEffect(() => window.api.onHistory(goHistory), [goHistory])
+
+  /**
+   * App shortcuts. Also called with keys forwarded from inside an HTML document,
+   * which has the keyboard focus while you read it.
+   * Ctrl+K / Ctrl+P search (like VS Code), Ctrl+E recent, Ctrl+, settings, Alt+←/→ history.
+   */
+  const runShortcut = useCallback(
+    (key: string) => {
+      if (key === 'ctrl+k' || key === 'ctrl+p') {
+        searchRef.current?.focus()
+        searchRef.current?.select()
+      } else if (key === 'ctrl+e') setRecentOpen((o) => !o)
+      else if (key === 'ctrl+,') setSettingsOpen(true)
+      else if (key === 'back' || key === 'forward') goHistory(key)
+    },
+    [goHistory]
+  )
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      let key: string | null = null
+      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ','].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
+      if (e.altKey && e.key === 'ArrowLeft') key = 'back'
+      if (e.altKey && e.key === 'ArrowRight') key = 'forward'
+      if (!key) return
+      e.preventDefault()
+      runShortcut(key)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [runShortcut])
 
   const addFolders = useCallback(async () => {
     try {
@@ -241,7 +288,11 @@ export default function App() {
             onUpdateMeta={(patch) => updateMeta(current.path, patch)}
             onOpenDoc={openDoc}
             onError={notify}
+            onInfo={inform}
             onDirtyChange={setDirty}
+            onShortcut={runShortcut}
+            history={historyPos}
+            onHistory={goHistory}
             rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (
@@ -261,7 +312,7 @@ export default function App() {
       )}
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className="toast">
+          <div key={t.id} className={`toast ${t.kind}`}>
             {t.text}
           </div>
         ))}
@@ -306,7 +357,7 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpen }: WelcomeProps) {
           <div className="group-title">Mở gần đây</div>
           {recentDocs.map((d) => (
             <button key={d.path} className="row doc" onClick={() => onOpen(d.path)} title={d.rel}>
-              <span className={`kind kind-${d.kind}`}>{d.kind === 'md' ? 'MD' : 'HTML'}</span>
+              <span className={`kind kind-${d.kind}`}>{d.kind.toUpperCase()}</span>
               <span className="row-title">{d.title}</span>
               <span className="row-time">{timeAgo(recent[d.path])}</span>
             </button>

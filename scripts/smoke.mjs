@@ -32,6 +32,9 @@ const ROADMAP = 'backend/Lộ trình Backend.html'
 const REACT = 'frontend/React useEffect.md'
 
 let failures = 0
+/** Prints the step name, so a timeout shows where it happened. */
+const step = (name) => console.log(`
+# ${name}`)
 function check(ok, label) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`)
   if (!ok) failures++
@@ -43,9 +46,12 @@ writeFileSync(metaFile, '{ "version": 1, "docs": { <<<<<<< HEAD')
 const app = await electron.launch({
   executablePath: electronPath,
   args: [projectRoot],
-  env: { ...process.env, DOCS_LIBRARY: [library, notes].join(path.delimiter), STUDYDOCS_USER_DATA: userData }
+  env: { ...process.env, STUDYDOCS_DEBUG: '1', DOCS_LIBRARY: [library, notes].join(path.delimiter), STUDYDOCS_USER_DATA: userData }
 })
 const errors = []
+let mainLog = ''
+app.process().stdout?.on('data', (d) => (mainLog += d))
+app.process().stderr?.on('data', (d) => (mainLog += d))
 const page = await app.firstWindow()
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
@@ -62,12 +68,14 @@ try {
   await page.waitForSelector('.sidebar')
 
   // 1. Corrupt meta file: backed up and reported, not silently dropped.
+  step("1. Corrupt meta file: backed up and reported, not silently dropped.")
   await page.waitForSelector('.banner')
   check((await page.textContent('.banner')).includes('bị hỏng'), 'corrupt meta file shows a warning')
   check(readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')), 'corrupt meta file was backed up')
   await page.click('.banner button')
 
   // 1b. Two folders in one workspace: each is a top-level node in the tree.
+  step("1b. Two folders in one workspace: each is a top-level node in the tree.")
   const rootNames = await page.locator('.root-row .row.root .row-title').allTextContents()
   check(rootNames.join('|') === 'library|notes', `both folders shown as roots (${rootNames.join(', ')})`)
   check((await page.textContent('.library-name')).includes('2 thư mục'), 'header says the workspace has 2 folders')
@@ -86,6 +94,7 @@ try {
   await page.screenshot({ path: shot('0-two-folders') })
 
   // 2. HTML document renders in the sandboxed iframe.
+  step("2. HTML document renders in the sandboxed iframe.")
   await openDoc('Event Sourcing — Bài học để chép vào vở')
   const frame = page.frameLocator('iframe.html-frame')
   await frame.locator('h1').waitFor()
@@ -94,6 +103,7 @@ try {
   await page.screenshot({ path: shot('1-html-doc') })
 
   // 3. Status + tag are saved; two writes at the same time both survive.
+  step("3. Status + tag are saved; two writes at the same time both survive.")
   await page.click('.segmented >> text=Đang học')
   await page.fill('.tag-editor input', 'backend')
   await page.press('.tag-editor input', 'Enter')
@@ -108,6 +118,7 @@ try {
   check(!JSON.stringify(saved).includes('lastOpened'), '"recently opened" is not written into the library')
 
   // 4. Links inside HTML switch the whole app to the target doc, including #hash.
+  step("4. Links inside HTML switch the whole app to the target doc, including #hash.")
   await openDoc('Lộ trình Backend')
   await page.frameLocator('iframe.html-frame').locator('#link-concurrency').click()
   await docPathIs(ES)
@@ -118,6 +129,7 @@ try {
   check(true, 'HTML link opens a Markdown doc')
 
   // 5. Markdown with Mermaid, in-doc anchor and cross-doc link.
+  step("5. Markdown with Mermaid, in-doc anchor and cross-doc link.")
   await page.waitForSelector('.markdown pre.mermaid svg g.node', { timeout: 15000 })
   check(true, 'Mermaid diagram renders')
   await page.click('.markdown a[href="#bang-tom-tat"]')
@@ -128,6 +140,7 @@ try {
   check(true, 'Markdown link opens another doc')
 
   // 6. Search, filters.
+  step("6. Search, filters.")
   await page.fill('.search input', 'su kien')
   await page.waitForSelector('.hit')
   check((await page.textContent('.hit mark')) === 'sự kiện', 'search "su kien" highlights "sự kiện"')
@@ -137,6 +150,7 @@ try {
   await page.click('.filters >> text=Tất cả')
 
   // 7. Recently opened lives in a popover (Ctrl+E), not in the sidebar list.
+  step("7. Recently opened lives in a popover (Ctrl+E), not in the sidebar list.")
   check((await page.locator('.doc-list >> text=Mở gần đây').count()) === 0, 'sidebar has no "recently opened" block')
   await page.keyboard.press('Control+E')
   await page.waitForSelector('.recent-popover')
@@ -146,6 +160,7 @@ try {
   check((await page.locator('.recent-popover').count()) === 0, 'Escape closes the popover')
 
   // 8. Settings: dark mode, accent colour, reading size; saved to the settings file.
+  step("8. Settings: dark mode, accent colour, reading size; saved to the settings file.")
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await page.waitForSelector('dialog.settings[open]')
   await page.click('dialog.settings >> text=Tối')
@@ -170,6 +185,7 @@ try {
   check((await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)) === 'system', 'settings reset to default')
 
   // 9. Inline text edit in Markdown: only the typed text changes in the file.
+  step("9. Inline text edit in Markdown: only the typed text changes in the file.")
   const mdBefore = read(REACT)
   await page.click('.doc-controls >> text=Sửa chữ')
   await page.waitForSelector('.markdown.editing')
@@ -190,6 +206,7 @@ try {
   )
 
   // 10. Inline text edit in HTML: only that element's text changes in the file.
+  step("10. Inline text edit in HTML: only that element's text changes in the file.")
   const htmlBefore = read(ES)
   await openDoc('Event Sourcing — Bài học để chép vào vở')
   await page.click('.doc-controls >> text=Sửa chữ')
@@ -215,6 +232,7 @@ try {
   check(true, 'HTML view reloads with the saved text')
 
   // 11. Unsaved changes: switching docs asks first (dismissed = stay), Esc + confirm cancels.
+  step("11. Unsaved changes: switching docs asks first (dismissed = stay), Esc + confirm cancels.")
   await page.click('.doc-controls >> text=Sửa chữ')
   await page.frameLocator('iframe.html-frame.editing').locator('h1[data-sd-block]').click()
   await page.keyboard.type('XYZ')
@@ -228,6 +246,7 @@ try {
   check(read(ES) === htmlAfter, 'cancelled edit does not touch the file')
 
   // 12. Edit refused if the file changed on disk meanwhile.
+  step("12. Edit refused if the file changed on disk meanwhile.")
   await openDoc('Lộ trình Backend')
   await page.click('.doc-controls >> text=Sửa chữ')
   await page.frameLocator('iframe.html-frame.editing').locator('h1[data-sd-block]').click()
@@ -241,6 +260,7 @@ try {
   await page.waitForSelector('.edit-bar', { state: 'detached' })
 
   // 13. Raw editor: live Markdown preview, Ctrl+S saves.
+  step("13. Raw editor: live Markdown preview, Ctrl+S saves.")
   await openDoc('React useEffect — khi nào chạy?')
   await page.click('.doc-controls >> text=Raw')
   await page.waitForSelector('.raw-host .cm-content')
@@ -256,7 +276,81 @@ try {
   check(read(REACT).trimEnd().endsWith('Thêm từ raw editor.'), 'raw editor saves with Ctrl+S')
   await page.click('.raw-toolbar >> text=Đóng raw')
 
-  // 14. Removing a folder from the workspace keeps its files.
+  // 14. Outline panel for an HTML doc: lists the headings and jumps to one.
+  step("14. Outline panel")
+  await openDoc('Event Sourcing — Bài học để chép vào vở')
+  await page.waitForFunction(() => document.querySelectorAll('.outline-item').length >= 12, null, { timeout: 8000 })
+  check(true, 'outline lists the HTML headings')
+  await page.click('.outline-item >> text=Concurrency — Optimistic')
+  await page.waitForTimeout(1500)
+  const esFrame = page.frames().find((fr) => fr.url().startsWith('doc://'))
+  check((await esFrame.evaluate(() => scrollY)) > 1000, 'clicking an outline item scrolls the page')
+  check((await page.textContent('.outline-item.active'))?.includes('Concurrency'), 'outline highlights the section being read')
+  await page.screenshot({ path: shot('8-outline') })
+
+  // 15. Reading position is remembered per document.
+  step("15. Reading position")
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.waitForSelector('.markdown h2')
+  await page.evaluate(() => (document.querySelector('.md-scroll').scrollTop = 220))
+  await page.waitForTimeout(600)
+  await openDoc('Lộ trình Backend')
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.waitForTimeout(1200)
+  const restored = await page.evaluate(() => document.querySelector('.md-scroll').scrollTop)
+  check(Math.abs(restored - 220) < 5, `reading position restored (${restored}px)`)
+
+  // 16. Back / forward: header buttons, Alt+←/→, and Alt+← typed inside an HTML page.
+  step("16. Back / forward")
+  await page.click('.history-buttons .icon-btn[title^="Quay lại"]')
+  await docPathIs(ROADMAP)
+  await page.click('.doc-heading h1')
+  await page.keyboard.press('Alt+ArrowRight')
+  await docPathIs(REACT)
+  await page.keyboard.press('Alt+ArrowLeft')
+  await docPathIs(ROADMAP)
+  check(true, 'back/forward buttons and Alt+←/→ work')
+  await page.frameLocator('iframe.html-frame').locator('h1').click()
+  await page.keyboard.press('Alt+ArrowLeft')
+  // History: ... ES, REACT, ROADMAP, REACT; we are on ROADMAP, so back goes to REACT.
+  await docPathIs(REACT)
+  check(true, 'Alt+← works while the HTML page has the focus')
+
+  // 17. Export to PDF (HTML and Markdown), in light colours even in dark mode; open the PDF in the app.
+  step("17. Export PDF")
+  const exportTo = async (title, target) => {
+    await app.evaluate(({ dialog }, p) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: p }) // a test can't click the native dialog
+    }, target)
+    await openDoc(title)
+    await page.click('.more > .btn')
+    await page.click('.popover.menu >> text=Xuất PDF…')
+    // Wait for the toast naming this file (an earlier export's toast may still be showing).
+    await page.waitForSelector(`.toast.info >> text=${path.basename(target)}`, { timeout: 30000 })
+  }
+  await page.evaluate(async () => window.api.setUiSettings({ ...(await window.api.getUiSettings()), theme: 'dark' }))
+  const esPdf = file('backend/Event Sourcing.pdf')
+  const mdPdf = file('frontend/React useEffect.pdf')
+  await exportTo('Event Sourcing — Bài học để chép vào vở', esPdf)
+  await exportTo('React useEffect — khi nào chạy?', mdPdf)
+  await page.evaluate(async () => window.api.setUiSettings({ ...(await window.api.getUiSettings()), theme: 'system' }))
+  for (const [label, p] of [['HTML', esPdf], ['Markdown', mdPdf]]) {
+    const bytes = readFileSync(p)
+    check(bytes.subarray(0, 5).toString() === '%PDF-' && bytes.length > 20000, `${label} exported to a valid PDF (${Math.round(bytes.length / 1024)} KB)`)
+  }
+  // The exported PDFs land in the library, so they show up in the tree.
+  await page.waitForFunction(() => document.querySelectorAll('.doc-list .row.doc .kind-pdf').length === 2, null, { timeout: 5000 })
+  await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=React useEffect')
+  await page.waitForSelector('iframe.html-frame.pdf')
+  await page.waitForTimeout(2500)
+  check(page.frames().some((fr) => fr.url().startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')), 'PDF opens in the built-in viewer')
+  await page.screenshot({ path: shot('9-pdf-viewer-md') })
+  await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=Event Sourcing')
+  await page.waitForTimeout(2500)
+  await page.screenshot({ path: shot('10-pdf-viewer-html') })
+
+  // 18. Removing a folder from the workspace keeps its files.
+  step("18. Remove folder")
   dialogAnswer = 'accept'
   await page.hover('.root-row:has-text("notes")')
   await page.click('.root-row:has-text("notes") .root-remove')
@@ -270,6 +364,8 @@ try {
 } catch (err) {
   console.error(err)
   await page.screenshot({ path: shot('error') }).catch(() => {})
+  const lastLines = mainLog.split(/\r?\n/).slice(-25).join('\n')
+  console.error(`--- main process log (last lines) ---\n${lastLines}`)
   failures++
 } finally {
   await app.close()

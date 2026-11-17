@@ -25,7 +25,8 @@ const EXTENSIONS: Record<string, DocKind> = {
   '.md': 'md',
   '.markdown': 'md',
   '.html': 'html',
-  '.htm': 'html'
+  '.htm': 'html',
+  '.pdf': 'pdf'
 }
 
 /** Files bigger than this are listed but not indexed for search. */
@@ -92,10 +93,13 @@ async function readEntry(root: string, abs: string, kind: DocKind, previous: Map
     if (stat.size <= MAX_INDEX_BYTES) {
       const buffer = await fs.readFile(abs)
       hash = createHash('sha1').update(buffer).digest('hex')
-      const source = buffer.toString('utf8')
-      const extracted = kind === 'html' ? extractHtml(source) : extractMarkdown(source)
-      title = extracted.title || fallbackTitle
-      text = extracted.text
+      // PDFs are found by file name only; their text is not indexed.
+      if (kind !== 'pdf') {
+        const source = buffer.toString('utf8')
+        const extracted = kind === 'html' ? extractHtml(source) : extractMarkdown(source)
+        title = extracted.title || fallbackTitle
+        text = extracted.text
+      }
     }
     return { path: rel, name, kind, title, text, size: stat.size, mtime: stat.mtimeMs, hash }
   } catch {

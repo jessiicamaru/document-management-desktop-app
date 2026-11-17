@@ -243,7 +243,7 @@ function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number
       onClick={() => onOpen(doc.path)}
       title={doc.rel}
     >
-      <span className={`kind kind-${doc.kind}`}>{doc.kind === 'md' ? 'MD' : 'HTML'}</span>
+      <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
       <span className="row-title">{doc.title}</span>
     </button>
   )
@@ -270,7 +270,7 @@ function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResul
         return (
           <button key={doc.path} className={`hit ${selected === doc.path ? 'selected' : ''}`} onClick={() => onOpen(doc.path)}>
             <div className="hit-title">
-              <span className={`kind kind-${doc.kind}`}>{doc.kind === 'md' ? 'MD' : 'HTML'}</span>
+              <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
               {doc.title}
             </div>
             {folder && <div className="hit-path">{folder}</div>}
@@ -325,7 +325,7 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
             onClose()
           }}
         >
-          <span className={`kind kind-${d.kind}`}>{d.kind === 'md' ? 'MD' : 'HTML'}</span>
+          <span className={`kind kind-${d.kind}`}>{d.kind.toUpperCase()}</span>
           <span className="row-title">{d.title}</span>
           <span className="row-time">{timeAgo(times[d.path])}</span>
         </button>

@@ -5,6 +5,7 @@ import type { DocEntry } from '../../../shared/types'
 import { docUrl, parseDocUrl } from '../lib/docs'
 import { applyMarkdownEdits, lineStartsOf, MdEditError, sourceRangesPlugin } from '../lib/md-edit'
 import type { ScrollTarget } from '../App'
+import type { ReaderCallbacks, ReaderHandle } from './reader'
 
 // html: true lets you mix raw HTML/SVG into Markdown. Everything is passed through
 // DOMPurify afterwards, which removes <script> and on*="" handlers.
@@ -40,7 +41,7 @@ md.core.ruler.push('heading_ids', (state) => {
 })
 
 /** Renders a whole .md file (front matter skipped) to safe HTML with source ranges. */
-function renderMarkdown(source: string): string {
+export function renderMarkdown(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
   const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length }
   return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true } })
@@ -51,12 +52,7 @@ const plainText = (el: Element): string => (el.textContent ?? '').replace(/ /g,
 /** Text editing only: no new paragraphs, no formatting, no dropped content. */
 const ALLOWED_INPUT = /^(insertText|insertReplacementText|insertFromPaste|insertCompositionText|deleteContent|deleteWord|deleteSoftLine|deleteHardLine|deleteByCut|historyUndo|historyRedo)/
 
-export interface MarkdownViewHandle {
-  /** The new file content with your edits, or null if nothing changed. Throws if it can't be saved safely. */
-  collectSource(): string | null
-}
-
-interface Props {
+interface Props extends ReaderCallbacks {
   doc: DocEntry
   allDocs: DocEntry[]
   scrollTarget: ScrollTarget
@@ -75,8 +71,13 @@ interface EditBlock {
   oldText: string
 }
 
-const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView(props, ref) {
+const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props, ref) {
   const { doc, allDocs, scrollTarget, editing, sourceOverride, onDirty, onOpenDoc, onError } = props
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const headings = useRef<HTMLElement[]>([])
+  // Latest outline/reading callbacks, read from effects without re-running them.
+  const cb = useRef(props)
+  cb.current = props
   const [source, setSource] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // Bumped when an edit session ends, so the article is rebuilt from the file (drops unsaved typing).
@@ -116,8 +117,19 @@ const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView
       if (!/^(https?:|data:|doc:)/i.test(src)) img.src = new URL(src, base).href
     })
 
+    let cancelled = false
+    // Outline + "ready" once everything is drawn, so a saved reading position lands right.
+    const finish = (): void => {
+      if (cancelled) return
+      headings.current = [...el.querySelectorAll<HTMLElement>('h1, h2, h3')]
+      cb.current.onOutline(headings.current.map((h) => ({ level: Number(h.tagName[1]), text: (h.textContent ?? '').trim() })))
+      cb.current.onReady()
+      reportScroll()
+    }
+
     const diagrams = el.querySelectorAll<HTMLElement>('pre.mermaid')
-    if (diagrams.length) {
+    if (!diagrams.length) finish()
+    else {
       void import('mermaid').then(async ({ default: mermaid }) => {
         const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
         mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
@@ -129,9 +141,37 @@ const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView
         } catch (e) {
           if (live.some((d) => d.isConnected)) console.error('Mermaid error', e)
         }
+        finish()
       })
     }
+    return () => {
+      cancelled = true
+    }
   }, [html, doc.path, renderKey])
+
+  /** Tells DocView where you are: scroll position and the heading at the top of the view. */
+  function reportScroll(): void {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    const top = scroller.getBoundingClientRect().top
+    let active = -1
+    for (let i = 0; i < headings.current.length; i++) {
+      if (headings.current[i].getBoundingClientRect().top - top <= 90) active = i
+      else break
+    }
+    cb.current.onReading(Math.round(scroller.scrollTop), active)
+  }
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (!scroller) return
+    let frame = 0
+    const onScroll = (): void => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(reportScroll)
+    }
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => scroller.removeEventListener('scroll', onScroll)
+  })
 
   // Edit mode: make every block with a known source range editable as plain text.
   useEffect(() => {
@@ -169,25 +209,32 @@ const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView
     }
   }, [editing, html])
 
-  useImperativeHandle(ref, () => ({
-    collectSource() {
-      if (source === null) return null
-      const edits = blocks.current
-        .filter((b) => plainText(b.el) !== b.oldText)
-        .map((b) => ({ start: b.start, end: b.end, oldText: b.oldText, newText: plainText(b.el) }))
-      if (!edits.length) return null
-      const next = applyMarkdownEdits(source, edits)
+  /** The new file content with your edits, or null if nothing changed. Throws if it can't be saved safely. */
+  const collectSource = (): string | null => {
+    if (source === null) return null
+    const edits = blocks.current
+      .filter((b) => plainText(b.el) !== b.oldText)
+      .map((b) => ({ start: b.start, end: b.end, oldText: b.oldText, newText: plainText(b.el) }))
+    if (!edits.length) return null
+    const next = applyMarkdownEdits(source, edits)
 
-      // Safety check: the new file must render to exactly the text you see now.
-      const check = document.createElement('div')
-      check.innerHTML = renderMarkdown(next)
-      const after = [...check.querySelectorAll('[data-src]')].map((e) => plainText(e).trim())
-      const expected = blocks.current.map((b) => plainText(b.el).trim())
-      if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {
-        throw new MdEditError('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.')
-      }
-      return next
+    // Safety check: the new file must render to exactly the text you see now.
+    const check = document.createElement('div')
+    check.innerHTML = renderMarkdown(next)
+    const after = [...check.querySelectorAll('[data-src]')].map((e) => plainText(e).trim())
+    const expected = blocks.current.map((b) => plainText(b.el).trim())
+    if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {
+      throw new MdEditError('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.')
     }
+    return next
+  }
+
+  useImperativeHandle(ref, () => ({
+    gotoHeading: (index) => headings.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    restoreScroll: (y) => {
+      if (scrollRef.current) scrollRef.current.scrollTop = y
+    },
+    collectChanges: async () => ({ kind: 'md', source: collectSource() })
   }))
 
   const scrollTo = (id: string, smooth: boolean): void => {
@@ -224,7 +271,7 @@ const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView
 
   if (error) return <div className="md-error">Không đọc được file: {error}</div>
   return (
-    <div className="md-scroll">
+    <div className="md-scroll" ref={scrollRef}>
       <article
         key={renderKey}
         ref={ref_}

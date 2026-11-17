@@ -7,7 +7,7 @@
 
 import { app, type BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import type { UpdateStatus } from '../shared/types'
+import type { UpdateCheck, UpdateStatus } from '../shared/types'
 
 const CHECK_EVERY_MS = 4 * 60 * 60 * 1000 // every 4 hours while the app stays open
 
@@ -42,10 +42,19 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | null): void {
   setInterval(check, CHECK_EVERY_MS)
 }
 
-/** "Kiểm tra cập nhật" button in Settings. */
-export async function checkForUpdatesNow(): Promise<void> {
+/** "Kiểm tra cập nhật" button in Settings: says plainly whether there is something new. */
+export async function checkForUpdatesNow(): Promise<UpdateCheck> {
   if (!app.isPackaged) throw new Error('Đang chạy bản dev (npm run dev): không có cập nhật.')
-  await autoUpdater.checkForUpdates()
+  if (status.state === 'ready') return { result: 'ready', version: status.version ?? '' }
+  if (status.state === 'downloading') return { result: 'downloading', version: status.version ?? '' }
+  let check
+  try {
+    check = await autoUpdater.checkForUpdates()
+  } catch (err) {
+    throw new Error(`Không kiểm tra được cập nhật (mất mạng hoặc GitHub không phản hồi): ${(err as Error).message}`)
+  }
+  if (check?.isUpdateAvailable) return { result: 'downloading', version: check.updateInfo.version }
+  return { result: 'latest', version: app.getVersion() }
 }
 
 /** Closes the app, installs the downloaded update silently and starts the new version. */

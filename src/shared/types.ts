@@ -1,6 +1,7 @@
 // Types shared by the main process, the preload bridge and the React UI.
 
-export type DocKind = 'md' | 'html'
+/** md and html can be read, edited and exported; pdf is shown with the built-in PDF viewer. */
+export type DocKind = 'md' | 'html' | 'pdf'
 
 /** How far along you are with a document. */
 export type StudyStatus = 'new' | 'learning' | 'review' | 'done'
@@ -92,6 +93,13 @@ export interface UpdateStatus {
   percent?: number
 }
 
+/** Result of pressing "Kiểm tra cập nhật". */
+export interface UpdateCheck {
+  /** latest = nothing newer; downloading = a newer version is being downloaded; ready = downloaded, restart to install. */
+  result: 'latest' | 'downloading' | 'ready'
+  version: string
+}
+
 export interface AppInfo {
   version: string
   update: UpdateStatus
@@ -114,11 +122,15 @@ export interface DocsApi {
   onLibraryChanged(cb: (snapshot: LibrarySnapshot) => void): () => void
   /** Called when a link inside an HTML document points to another library document. */
   onNavigate(cb: (path: string, hash: string) => void): () => void
+  /** Mouse back/forward buttons. */
+  onHistory(cb: (direction: 'back' | 'forward') => void): () => void
+  /** Asks where to save, then prints the document (md or html) to PDF. Resolves with the file path, or null if cancelled. */
+  exportPdf(path: string): Promise<string | null>
   getAppInfo(): Promise<AppInfo>
   onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
   /** Restarts the app into the downloaded update. */
   installUpdate(): Promise<void>
-  checkForUpdates(): Promise<void>
+  checkForUpdates(): Promise<UpdateCheck>
 
   getUiSettings(): Promise<UiSettings>
   setUiSettings(ui: UiSettings): Promise<UiSettings>

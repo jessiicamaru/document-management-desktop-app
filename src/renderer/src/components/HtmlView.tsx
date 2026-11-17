@@ -1,13 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { DocEntry, HtmlBlockEdit } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
+import type { ReaderCallbacks, ReaderHandle } from './reader'
 
-export interface HtmlViewHandle {
-  /** Asks the page for the blocks you changed (see editModeInjection in src/main/html-edit.ts). */
-  collectEdits(): Promise<HtmlBlockEdit[]>
-}
-
-interface Props {
+interface Props extends ReaderCallbacks {
   doc: DocEntry
   hash: string
   /** When set, the page is shown in text-edit mode, pinned to this file version. */
@@ -15,45 +11,80 @@ interface Props {
   onDirty: (dirty: boolean) => void
   onSaveShortcut: () => void
   onCancelShortcut: () => void
+  /** App shortcuts typed while the page has the keyboard focus. */
+  onShortcut: (key: string) => void
 }
 
 /**
  * HTML documents run in a sandboxed iframe without "allow-same-origin": the page can use
  * its own CSS/JS but cannot touch the app or your files. ?v= reloads it when the file
  * changes; #hash jumps to a section when you followed a link like other.html#part.
+ *
+ * The app talks to the page only through postMessage, with a helper script the doc://
+ * protocol appends to the page (src/main/view-helper.ts, or html-edit.ts in edit mode).
  */
-const HtmlView = forwardRef<HtmlViewHandle, Props>(function HtmlView(props, ref) {
-  const { doc, hash, editMtime, onDirty, onSaveShortcut, onCancelShortcut } = props
+const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
+  const { doc, hash, editMtime } = props
   const frameRef = useRef<HTMLIFrameElement>(null)
   const pending = useRef(new Map<number, (edits: HtmlBlockEdit[]) => void>())
-  const callbacks = useRef({ onDirty, onSaveShortcut, onCancelShortcut })
-  callbacks.current = { onDirty, onSaveShortcut, onCancelShortcut }
+  // Latest callbacks, so the message listener below is registered only once.
+  const cb = useRef(props)
+  cb.current = props
 
-  // Messages from the editor script inside the page.
+  const post = (msg: object): void => frameRef.current?.contentWindow?.postMessage({ source: 'studydocs-app', ...msg }, '*')
+
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
       if (e.source !== frameRef.current?.contentWindow || e.data?.source !== 'studydocs') return
       const msg = e.data
-      if (msg.type === 'dirty') callbacks.current.onDirty(msg.count > 0)
-      if (msg.type === 'save') callbacks.current.onSaveShortcut()
-      if (msg.type === 'cancel') callbacks.current.onCancelShortcut()
-      if (msg.type === 'edits') {
-        pending.current.get(msg.id)?.(msg.edits)
-        pending.current.delete(msg.id)
+      const p = cb.current
+      switch (msg.type) {
+        case 'outline':
+          p.onOutline(msg.items)
+          break
+        case 'scroll':
+          p.onReading(msg.y, msg.active)
+          break
+        case 'ready':
+          p.onReady()
+          break
+        case 'key':
+          p.onShortcut(msg.key)
+          break
+        case 'dirty':
+          p.onDirty(msg.count > 0)
+          break
+        case 'save':
+          p.onSaveShortcut()
+          break
+        case 'cancel':
+          p.onCancelShortcut()
+          break
+        case 'edits':
+          pending.current.get(msg.id)?.(msg.edits)
+          pending.current.delete(msg.id)
+          break
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
+  // The edit-mode page has no outline helper; clear the panel while editing.
+  useEffect(() => {
+    if (editMtime !== null) cb.current.onOutline([])
+  }, [editMtime])
+
   useImperativeHandle(ref, () => ({
-    collectEdits: () =>
+    gotoHeading: (index) => post({ type: 'goto', index }),
+    restoreScroll: (y) => post({ type: 'restore', y }),
+    collectChanges: () =>
       new Promise((resolve, reject) => {
         const win = frameRef.current?.contentWindow
         if (!win) return reject(new Error('Trang chưa tải xong'))
         const id = Date.now() + Math.random()
-        pending.current.set(id, resolve)
-        win.postMessage({ source: 'studydocs-app', type: 'collect', id }, '*')
+        pending.current.set(id, (edits) => resolve({ kind: 'html', edits }))
+        post({ type: 'collect', id })
         setTimeout(() => {
           if (pending.current.delete(id)) reject(new Error('Trang không phản hồi, chưa lưu được.'))
         }, 3000)

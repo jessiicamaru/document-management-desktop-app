@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DocEntry, DocMeta } from '../../../shared/types'
-import { STATUSES } from '../lib/docs'
+import { docUrl, loadLocal, saveLocal, STATUSES } from '../lib/docs'
 import type { ScrollTarget } from '../App'
-import HtmlView, { type HtmlViewHandle } from './HtmlView'
-import MarkdownView, { type MarkdownViewHandle } from './MarkdownView'
+import HtmlView from './HtmlView'
+import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
+import type { OutlineItem, ReaderHandle } from './reader'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
 type Mode = 'view' | 'edit' | 'raw'
@@ -17,21 +18,33 @@ interface Props {
   onUpdateMeta: (patch: Partial<Pick<DocMeta, 'tags' | 'status'>>) => void
   onOpenDoc: (path: string, hash?: string) => void
   onError: (err: unknown) => void
+  onInfo: (text: string) => void
   /** Tells the app whether there are unsaved changes (to warn before leaving). */
   onDirtyChange: (dirty: boolean) => void
+  /** App shortcuts typed while an HTML document has the keyboard focus. */
+  onShortcut: (key: string) => void
+  history: { canBack: boolean; canForward: boolean }
+  onHistory: (direction: 'back' | 'forward') => void
   /** Name of the workspace folder this doc is in; null when the workspace has only one folder. */
   rootName: string | null
 }
 
-export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta, onOpenDoc, onError, onDirtyChange, rootName }: Props) {
+const positionKey = (path: string): string => `pos:${path}`
+
+export default function DocView(props: Props) {
+  const { doc, meta, allDocs, scrollTarget, onUpdateMeta, onOpenDoc, onError, onInfo, onDirtyChange, rootName } = props
   const [mode, setMode] = useState<Mode>('view')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   // File version the text edit started from; the save is refused if the file changed since.
   const [editMtime, setEditMtime] = useState<number | null>(null)
   const [rawDraft, setRawDraft] = useState<string | null>(null)
-  const htmlRef = useRef<HtmlViewHandle>(null)
-  const mdRef = useRef<MarkdownViewHandle>(null)
+  const [outline, setOutline] = useState<OutlineItem[]>([])
+  const [activeHeading, setActiveHeading] = useState(-1)
+  const [outlineOpen, setOutlineOpen] = useState(() => loadLocal('outline-open', true))
+  const [exporting, setExporting] = useState(false)
+  const readerRef = useRef<ReaderHandle>(null)
+  const isPdf = doc.kind === 'pdf'
 
   const updateDirty = useCallback(
     (value: boolean) => {
@@ -40,6 +53,8 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
     },
     [onDirtyChange]
   )
+
+  // ---------- text editing ----------
 
   const startEdit = (): void => {
     setEditMtime(doc.mtime)
@@ -60,13 +75,9 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
     if (mode !== 'edit' || editMtime === null || saving) return
     setSaving(true)
     try {
-      if (doc.kind === 'html') {
-        const edits = (await htmlRef.current?.collectEdits()) ?? []
-        if (edits.length) await window.api.saveHtmlEdits(doc.path, edits, editMtime)
-      } else {
-        const next = mdRef.current?.collectSource()
-        if (next !== null && next !== undefined) await window.api.writeDoc(doc.path, next, editMtime)
-      }
+      const change = await readerRef.current?.collectChanges()
+      if (change?.kind === 'html' && change.edits.length) await window.api.saveHtmlEdits(doc.path, change.edits, editMtime)
+      if (change?.kind === 'md' && change.source !== null) await window.api.writeDoc(doc.path, change.source, editMtime)
       stopEdit()
     } catch (err) {
       onError(err)
@@ -75,7 +86,7 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
     } finally {
       setSaving(false)
     }
-  }, [mode, editMtime, saving, doc.kind, doc.path, stopEdit, onError])
+  }, [mode, editMtime, saving, doc.path, stopEdit, onError])
 
   // Ctrl+S saves and Esc cancels while editing text (the HTML page sends these itself).
   useEffect(() => {
@@ -91,20 +102,68 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
     return () => window.removeEventListener('keydown', onKey)
   }, [mode, saveEdit, cancelEdit])
 
+  // ---------- outline + reading position ----------
+
+  // The document finished rendering: go back to where you stopped reading last time
+  // (unless you followed a link to a specific #section).
+  const onReady = useCallback(() => {
+    if (scrollTarget.hash || mode !== 'view') return
+    const y = loadLocal<number>(positionKey(doc.path), 0)
+    if (y > 0) readerRef.current?.restoreScroll(y)
+  }, [doc.path, scrollTarget.hash, mode])
+
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const onReading = useCallback(
+    (y: number, active: number) => {
+      setActiveHeading(active)
+      clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => saveLocal(positionKey(doc.path), y), 300)
+    },
+    [doc.path]
+  )
+
+  const toggleOutline = (): void => {
+    setOutlineOpen(!outlineOpen)
+    saveLocal('outline-open', !outlineOpen)
+  }
+
+  // ---------- export ----------
+
+  const exportPdf = async (): Promise<void> => {
+    if (dirty) return onError(new Error('Hãy lưu thay đổi trước khi xuất PDF.'))
+    setExporting(true)
+    try {
+      const file = await window.api.exportPdf(doc.path)
+      if (file) onInfo(`Đã xuất PDF: ${file}`)
+    } catch (err) {
+      onError(err)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  // ---------- layout ----------
+
+  const readerProps = { ref: readerRef, onOutline: setOutline, onReading, onReady }
   const preview =
-    doc.kind === 'html' ? (
+    doc.kind === 'pdf' ? (
+      // The built-in Chromium PDF viewer (zoom, search, print...). PDFs can't run page scripts
+      // like HTML can, so this frame needs no sandbox (the viewer refuses to run in one).
+      <iframe className="html-frame pdf" src={`${docUrl(doc.path)}?v=${doc.mtime}`} title={doc.title} />
+    ) : doc.kind === 'html' ? (
       <HtmlView
-        ref={htmlRef}
+        {...readerProps}
         doc={doc}
         hash={scrollTarget.hash}
         editMtime={mode === 'edit' ? editMtime : null}
         onDirty={updateDirty}
         onSaveShortcut={() => void saveEdit()}
         onCancelShortcut={cancelEdit}
+        onShortcut={props.onShortcut}
       />
     ) : (
       <MarkdownView
-        ref={mdRef}
+        {...readerProps}
         doc={doc}
         allDocs={allDocs}
         scrollTarget={scrollTarget}
@@ -116,14 +175,30 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
       />
     )
 
+  const showOutline = !isPdf && mode === 'view' && outlineOpen
+
   return (
     <div className="doc-view">
       <header className="doc-header">
-        <div className="doc-heading">
-          <h1 title={doc.title}>{doc.title}</h1>
-          <div className="doc-where">
-            {rootName && <span className="doc-root" title="Thư mục trong workspace">{rootName}</span>}
-            <span className="doc-path">{doc.rel}</span>
+        <div className="doc-title-row">
+          <div className="history-buttons">
+            <button className="icon-btn" title="Quay lại (Alt+←)" disabled={!props.history.canBack} onClick={() => props.onHistory('back')}>
+              ‹
+            </button>
+            <button className="icon-btn" title="Tiến tới (Alt+→)" disabled={!props.history.canForward} onClick={() => props.onHistory('forward')}>
+              ›
+            </button>
+          </div>
+          <div className="doc-heading">
+            <h1 title={doc.title}>{doc.title}</h1>
+            <div className="doc-where">
+              {rootName && (
+                <span className="doc-root" title="Thư mục trong workspace">
+                  {rootName}
+                </span>
+              )}
+              <span className="doc-path">{doc.rel}</span>
+            </div>
           </div>
         </div>
 
@@ -156,17 +231,24 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
             </div>
             <TagEditor tags={meta.tags} onChange={(tags) => onUpdateMeta({ tags })} />
             <div className="spacer" />
-            <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title="Sửa chữ ngay trên bài">
-              Sửa chữ
-            </button>
-            <button
-              className={`btn ${mode === 'raw' ? 'active' : ''}`}
-              onClick={() => (mode === 'raw' ? setMode('view') : setMode('raw'))}
-              title="Mở mã nguồn để sửa bố cục, sơ đồ..."
-            >
-              Raw
-            </button>
-            <MoreMenu doc={doc} onError={onError} />
+            {!isPdf && (
+              <>
+                <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục">
+                  Mục lục
+                </button>
+                <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title="Sửa chữ ngay trên bài">
+                  Sửa chữ
+                </button>
+                <button
+                  className={`btn ${mode === 'raw' ? 'active' : ''}`}
+                  onClick={() => (mode === 'raw' ? setMode('view') : setMode('raw'))}
+                  title="Mở mã nguồn để sửa bố cục, sơ đồ..."
+                >
+                  Raw
+                </button>
+              </>
+            )}
+            <MoreMenu doc={doc} onError={onError} onExport={isPdf ? null : exportPdf} exporting={exporting} />
           </div>
         )}
       </header>
@@ -179,13 +261,39 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
           </div>
         </div>
       ) : (
-        <div className="doc-body">{preview}</div>
+        <div className={`doc-body ${showOutline ? 'with-outline' : ''}`}>
+          <div className="pane">{preview}</div>
+          {showOutline && (
+            <nav className="outline" aria-label="Mục lục">
+              <div className="group-title">Mục lục</div>
+              {outline.length === 0 && <div className="empty">Bài này không có tiêu đề nào.</div>}
+              {outline.map((item, i) => (
+                <button
+                  key={i}
+                  className={`outline-item level-${item.level} ${i === activeHeading ? 'active' : ''}`}
+                  onClick={() => readerRef.current?.gotoHeading(i)}
+                  title={item.text}
+                >
+                  {item.text}
+                </button>
+              ))}
+            </nav>
+          )}
+        </div>
       )}
     </div>
   )
 }
 
-function MoreMenu({ doc, onError }: { doc: DocEntry; onError: (err: unknown) => void }) {
+interface MoreMenuProps {
+  doc: DocEntry
+  onError: (err: unknown) => void
+  /** null for PDFs, which are already PDFs. */
+  onExport: (() => Promise<void>) | null
+  exporting: boolean
+}
+
+function MoreMenu({ doc, onError, onExport, exporting }: MoreMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -199,10 +307,15 @@ function MoreMenu({ doc, onError }: { doc: DocEntry; onError: (err: unknown) => 
   return (
     <div className="more" ref={ref}>
       <button className="btn" aria-label="Thêm" aria-expanded={open} onClick={() => setOpen(!open)}>
-        ⋯
+        {exporting ? 'Đang xuất PDF…' : '⋯'}
       </button>
       {open && (
         <div className="popover menu">
+          {onExport && (
+            <button disabled={exporting} onClick={() => (setOpen(false), void onExport())}>
+              Xuất PDF…
+            </button>
+          )}
           <button onClick={() => (setOpen(false), window.api.openPath(doc.path).catch(onError))}>Mở bằng app mặc định</button>
           <button onClick={() => (setOpen(false), window.api.revealInFolder(doc.path).catch(onError))}>Hiện trong thư mục</button>
         </div>

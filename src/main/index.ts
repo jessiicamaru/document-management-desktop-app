@@ -7,6 +7,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
+import { viewModeInjection } from './view-helper'
 import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { META_FILE, MetaStore } from './meta-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
@@ -21,6 +22,9 @@ if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDO
 protocol.registerSchemesAsPrivileged([
   { scheme: 'doc', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
+
+/** Origin of Chromium's built-in PDF viewer, which shows PDF documents inside an iframe. */
+const PDF_VIEWER = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'
 
 /** File types that are never launched from a link; they are shown in Explorer instead. */
 const EXECUTABLE = new Set([
@@ -235,7 +239,8 @@ async function openLibraryFile(rel: string): Promise<void> {
  */
 async function writeDocChecked(rel: string, build: (current: string) => string, expectedMtime: number): Promise<number> {
   const abs = inLibrary(rel)
-  if (!abs || !kindOf(abs)) throw new Error('Chỉ sửa được file .md / .html trong thư mục tài liệu.')
+  const kind = abs ? kindOf(abs) : null
+  if (!abs || (kind !== 'md' && kind !== 'html')) throw new Error('Chỉ sửa được file .md / .html trong thư mục tài liệu.')
   const stat = await fs.stat(abs)
   if (Math.abs(stat.mtimeMs - expectedMtime) > 1) {
     throw new Error('File vừa bị thay đổi bên ngoài app. Bài đã được tải lại; hãy sửa lại thay đổi của bạn.')
@@ -250,6 +255,83 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
     throw friendlyWriteError(err)
   }
   return (await fs.stat(abs)).mtimeMs
+}
+
+/**
+ * Prints a document to PDF in a hidden window: HTML pages as they are (without the app's
+ * helper script), Markdown through the app's own renderer (#print=<id>, see PrintPage.tsx).
+ * Always in light colours, whatever theme the app uses.
+ */
+async function printToPdf(id: string, kind: 'md' | 'html'): Promise<Buffer> {
+  const printWin = new BrowserWindow({
+    show: false,
+    width: 900,
+    height: 1200,
+    webPreferences: {
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      // Markdown is rendered by the app's own page, which reads the file through window.api.
+      preload: kind === 'md' ? path.join(__dirname, '../preload/index.js') : undefined
+    }
+  })
+  const wc = printWin.webContents
+  const debug = (msg: string): void => {
+    if (process.env.STUDYDOCS_DEBUG) console.log(`[printToPdf] ${msg}`)
+  }
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }))
+  wc.on('will-navigate', (e) => e.preventDefault())
+  try {
+    debug('load')
+    if (kind === 'html') {
+      await printWin.loadURL(`doc://library/${id.split('/').map(encodeURIComponent).join('/')}?raw=1`)
+    } else if (process.env.ELECTRON_RENDERER_URL) {
+      await printWin.loadURL(`${process.env.ELECTRON_RENDERER_URL}#print=${encodeURIComponent(id)}`)
+    } else {
+      await printWin.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: `print=${encodeURIComponent(id)}` })
+    }
+    // HTML pages that have a dark mode: print them light. Done after loading and given at
+    // most 3 s, so a debugger hiccup can never block the export (the page then prints as is).
+    if (kind === 'html') {
+      debug('emulate light')
+      try {
+        wc.debugger.attach('1.3')
+        await Promise.race([
+          wc.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
+        ])
+      } catch (err) {
+        debug(`could not force light colours: ${(err as Error).message}`)
+      }
+    }
+
+    // Wait for web fonts, images and (Markdown) diagrams before printing, but never more
+    // than 15 s: a page that keeps loading must not block the export.
+    debug('wait for content')
+    await wc.executeJavaScript(`(async () => {
+      const ready = (async () => {
+        await document.fonts.ready
+        await Promise.all([...document.images].map((img) => img.complete ? null : new Promise((r) => { img.onload = img.onerror = r })))
+        if (window.__studydocsPrintReady) await window.__studydocsPrintReady
+      })()
+      await Promise.race([ready, new Promise((r) => setTimeout(r, 15000))])
+      await new Promise((r) => setTimeout(r, 250))
+    })()`)
+    debug('print')
+
+    return await wc.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { top: 0.55, bottom: 0.6, left: 0.5, right: 0.5 },
+      generateDocumentOutline: true, // PDF bookmarks from the headings
+      displayHeaderFooter: true,
+      headerTemplate: '<div></div>',
+      footerTemplate:
+        '<div style="width:100%;font-size:8px;color:#888;text-align:center;font-family:sans-serif"><span class="pageNumber"></span> / <span class="totalPages"></span></div>'
+    })
+  } finally {
+    printWin.destroy()
+  }
 }
 
 /** Turns low-level file errors into a message that makes sense in the UI. */
@@ -314,6 +396,26 @@ function registerIpc(): void {
 
   ipcMain.handle('doc:openPath', (_e, rel: string) => openLibraryFile(rel))
 
+  ipcMain.handle('doc:exportPdf', async (_e, id: string) => {
+    const loc = locate(id)
+    const doc = loc?.root.docs.find((d) => d.path === loc.rel)
+    if (!loc || !doc || (doc.kind !== 'md' && doc.kind !== 'html')) throw new Error('Chỉ xuất PDF được bài .md hoặc .html.')
+    const safeName = doc.title.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || path.parse(doc.name).name
+    const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+      title: 'Xuất PDF',
+      defaultPath: path.join(path.dirname(loc.abs), `${safeName}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath) return null
+    const pdf = await printToPdf(id, doc.kind)
+    try {
+      await fs.writeFile(filePath, pdf)
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+    return filePath
+  })
+
   ipcMain.handle('doc:reveal', (_e, rel: string) => {
     const abs = inLibrary(rel)
     if (abs) shell.showItemInFolder(abs)
@@ -360,6 +462,8 @@ function createWindow(): void {
     minWidth: 820,
     minHeight: 520,
     title: 'Study Docs',
+    // The installed app takes its icon from the .exe; in `npm run dev` use the PNG directly.
+    icon: app.isPackaged ? undefined : path.join(__dirname, '../../build/icon.png'),
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1b1d21' : '#f6f4ef',
     webPreferences: {
@@ -381,6 +485,8 @@ function createWindow(): void {
   // Navigation inside the document iframe.
   webContents.on('will-frame-navigate', (e) => {
     if (e.isMainFrame || e.url.startsWith('about:')) return
+    // The built-in PDF viewer is an internal extension page that loads the PDF itself.
+    if (e.url.startsWith(PDF_VIEWER) || e.initiator?.url.startsWith(PDF_VIEWER)) return
     if (!e.url.startsWith('doc://')) {
       e.preventDefault()
       openInBrowser(e.url)
@@ -405,6 +511,12 @@ function createWindow(): void {
   webContents.setWindowOpenHandler(({ url }) => {
     openInBrowser(url)
     return { action: 'deny' }
+  })
+
+  // Back/forward buttons on the mouse (Windows sends them as "app commands").
+  win.on('app-command', (_e, command) => {
+    if (command === 'browser-backward') webContents.send('nav:history', 'back')
+    if (command === 'browser-forward') webContents.send('nav:history', 'forward')
   })
 
   // The UI blocks closing while an edit is unsaved; ask what to do.
@@ -456,6 +568,12 @@ if (!app.requestSingleInstanceLock()) {
             'Content-Security-Policy': `script-src 'nonce-${nonce}'; object-src 'none'`
           }
         })
+      }
+      // Reading mode: add the helper for outline, reading position and shortcuts.
+      // ?raw=1 serves the file untouched (used when exporting to PDF).
+      if (kindOf(abs) === 'html' && new URL(request.url).searchParams.get('raw') !== '1') {
+        const source = await fs.readFile(abs, 'utf8')
+        return new Response(source + viewModeInjection(), { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
       }
       return net.fetch(pathToFileURL(abs).toString())
     })

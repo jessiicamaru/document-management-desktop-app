@@ -12,6 +12,7 @@ npm test           # unit test (Vitest)
 npm run smoke      # build rồi tự bấm thử app trên bản sao của sample-library/, fail nếu có lỗi; ảnh lưu vào scripts/
 npm run dist       # đóng gói ra release/Study Docs Setup x.y.z.exe (chỉ trên máy, không phát hành)
 npm run release    # đóng gói + phát hành lên GitHub Releases để các máy tự cập nhật
+npm run make-icon  # vẽ lại build/icon.png + icon.ico từ build/icon.svg
 ```
 
 ## Dùng app
@@ -21,6 +22,10 @@ npm run release    # đóng gói + phát hành lên GitHub Releases để các m
 | Icon thư mục có dấu + | Thêm một hoặc nhiều thư mục vào workspace, ở ổ nào cũng được (C:, D:, USB...). Mỗi thư mục là một nhánh trên cây; di chuột vào tên thư mục rồi bấm × để bỏ nó khỏi workspace (file không bị xoá). |
 | `Ctrl+K` | Tìm kiếm trong mọi thư mục (không cần gõ dấu) |
 | `Ctrl+E` hoặc icon đồng hồ | Danh sách bài mở gần đây |
+| `Alt+←` / `Alt+→`, nút ‹ ›, nút lùi/tiến trên chuột | Quay lại / tiến tới giữa các bài đã mở |
+| **Mục lục** | Danh sách tiêu đề bên phải; bấm để nhảy tới, mục đang đọc được tô sáng. App nhớ vị trí đang đọc của từng bài. |
+| **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
+| File `.pdf` | Mở ngay trong app bằng trình xem PDF có sẵn (phóng to, tìm chữ, in). PDF được tìm theo tên file, chưa tìm theo nội dung. |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown |
 | **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
 | **Raw** | Mở mã nguồn bên cạnh bài để sửa bố cục, sơ đồ, thẻ HTML... Markdown được xem trước trực tiếp khi gõ; HTML cập nhật sau khi lưu (`Ctrl+S`). |
@@ -56,6 +61,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/main/index.ts` | Process chính: cửa sổ, giao thức `doc://`, IPC, theo dõi thư mục, chặn link |
 | `src/main/library.ts` | Quét thư mục (có cache), lấy tiêu đề + chữ để tìm kiếm từ md/html |
 | `src/main/html-edit.ts` | Sửa chữ trên bài HTML: script chèn vào trang khi sửa, và ghi lại đúng chỗ trong file (parse5) |
+| `src/main/view-helper.ts` | Script nhỏ chèn vào bài HTML khi đọc: mục lục, vị trí đọc, phím tắt |
 | `src/main/updater.ts` | Tự cập nhật từ GitHub Releases |
 | `src/main/workspace.ts` | Workspace nhiều thư mục: id của thư mục, chống thêm trùng/lồng nhau, tên hiển thị |
 | `src/main/meta-store.ts` | `.docs-meta.json`: hàng đợi ghi, sao lưu file hỏng, giữ tag khi đổi tên file |
@@ -67,6 +73,8 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/renderer/src/components/MarkdownView.tsx` | Render Markdown + Mermaid, xử lý link, sửa chữ trên bài |
 | `src/renderer/src/components/HtmlView.tsx` | iframe cho bài HTML, nói chuyện với script sửa chữ |
 | `src/renderer/src/components/RawEditor.tsx` | Trình sửa mã nguồn (CodeMirror) |
+| `src/renderer/src/components/reader.ts` | Giao diện chung của HtmlView/MarkdownView (mục lục, vị trí đọc, sửa chữ) |
+| `src/renderer/src/PrintPage.tsx` | Trang dùng khi xuất Markdown ra PDF |
 | `src/renderer/src/components/SettingsDialog.tsx` | Cửa sổ Cài đặt |
 | `src/renderer/src/lib/md-edit.ts` | Ánh xạ chữ đã sửa về đúng vị trí trong file Markdown |
 | `src/renderer/src/lib/docs.ts` | Tìm kiếm không dấu, cây thư mục, tiện ích |

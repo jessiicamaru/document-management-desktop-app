@@ -34,8 +34,14 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
   const checkUpdates = async (): Promise<void> => {
     setUpdateMsg('Đang kiểm tra…')
     try {
-      await window.api.checkForUpdates()
-      setUpdateMsg('Đã kiểm tra. Nếu có bản mới, app sẽ tự tải và báo ở thanh trên cùng.')
+      const { result, version } = await window.api.checkForUpdates()
+      setUpdateMsg(
+        result === 'latest'
+          ? `Bạn đang dùng bản mới nhất (${version}).`
+          : result === 'downloading'
+            ? `Có bản mới ${version}. App đang tải ngầm; tải xong sẽ hiện nút "Khởi động lại để cập nhật".`
+            : `Bản ${version} đã tải xong. Bấm "Khởi động lại để cập nhật" ở thanh trên cùng, hoặc tắt app để cài.`
+      )
     } catch (err) {
       setUpdateMsg(errorMessage(err))
     }
