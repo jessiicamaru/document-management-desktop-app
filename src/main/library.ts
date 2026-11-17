@@ -1,8 +1,22 @@
 // Scans the library folder and pulls a title + searchable text out of each document.
 
+import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { DocEntry, DocKind } from '../shared/types'
+
+/** How many files are read at the same time while scanning. */
+const READ_CONCURRENCY = 16
+
+/**
+ * Turns a library-relative path into an absolute one.
+ * Returns null for anything that would land outside the library (e.g. "../secret.txt").
+ */
+export function resolveInLibrary(root: string, rel: string): string | null {
+  const base = path.resolve(root)
+  const abs = path.resolve(base, rel)
+  return abs.startsWith(base + path.sep) ? abs : null
+}
 
 const EXTENSIONS: Record<string, DocKind> = {
   '.md': 'md',
@@ -22,9 +36,13 @@ export function kindOf(file: string): DocKind | null {
   return EXTENSIONS[path.extname(file).toLowerCase()] ?? null
 }
 
-/** Walks the folder recursively and returns every .md / .html document. */
-export async function scanLibrary(root: string): Promise<DocEntry[]> {
-  const docs: DocEntry[] = []
+/**
+ * Walks the folder recursively and returns every .md / .html document.
+ * Pass the previous result as `cache`: files whose size and modified time did not
+ * change are reused instead of being read again.
+ */
+export async function scanLibrary(root: string, cache: DocEntry[] = []): Promise<DocEntry[]> {
+  const files: { abs: string; kind: DocKind }[] = []
 
   async function walk(dir: string): Promise<void> {
     let entries
@@ -40,32 +58,43 @@ export async function scanLibrary(root: string): Promise<DocEntry[]> {
         continue
       }
       const kind = kindOf(entry.name)
-      if (!entry.isFile() || !kind) continue
-      const doc = await readEntry(root, abs, kind)
-      if (doc) docs.push(doc)
+      if (entry.isFile() && kind) files.push({ abs, kind })
     }
   }
-
   await walk(root)
+
+  const previous = new Map(cache.map((d) => [d.path, d]))
+  const docs: DocEntry[] = []
+  for (let i = 0; i < files.length; i += READ_CONCURRENCY) {
+    const batch = files.slice(i, i + READ_CONCURRENCY)
+    const results = await Promise.all(batch.map((f) => readEntry(root, f.abs, f.kind, previous)))
+    for (const doc of results) if (doc) docs.push(doc)
+  }
   docs.sort((a, b) => a.path.localeCompare(b.path, 'vi'))
   return docs
 }
 
-async function readEntry(root: string, abs: string, kind: DocKind): Promise<DocEntry | null> {
+async function readEntry(root: string, abs: string, kind: DocKind, previous: Map<string, DocEntry>): Promise<DocEntry | null> {
   try {
     const stat = await fs.stat(abs)
     const rel = path.relative(root, abs).split(path.sep).join('/')
+    const cached = previous.get(rel)
+    if (cached && cached.mtime === stat.mtimeMs && cached.size === stat.size) return cached
+
     const name = path.basename(abs)
     const fallbackTitle = name.replace(/\.[^.]+$/, '')
     let title = fallbackTitle
     let text = ''
+    let hash: string | undefined
     if (stat.size <= MAX_INDEX_BYTES) {
-      const source = await fs.readFile(abs, 'utf8')
+      const buffer = await fs.readFile(abs)
+      hash = createHash('sha1').update(buffer).digest('hex')
+      const source = buffer.toString('utf8')
       const extracted = kind === 'html' ? extractHtml(source) : extractMarkdown(source)
       title = extracted.title || fallbackTitle
       text = extracted.text
     }
-    return { path: rel, name, kind, title, text, size: stat.size, mtime: stat.mtimeMs }
+    return { path: rel, name, kind, title, text, size: stat.size, mtime: stat.mtimeMs, hash }
   } catch {
     return null
   }

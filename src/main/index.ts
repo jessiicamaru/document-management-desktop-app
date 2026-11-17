@@ -1,12 +1,13 @@
 // Electron main process: owns the window, the file system and the `doc://` protocol.
 
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from 'electron'
-import { watch, type FSWatcher } from 'node:fs'
+import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DocEntry, DocMeta, LibrarySnapshot } from '../shared/types'
-import { scanLibrary } from './library'
-import { loadMeta, loadSettings, saveSettings, updateMeta } from './storage'
+import { resolveInLibrary, scanLibrary } from './library'
+import { META_FILE, MetaStore } from './meta-store'
+import { loadRecent, loadSettings, markOpened, saveSettings } from './storage'
 
 // Documents are served as doc://library/<relative path>. A "standard" scheme means
 // relative links inside an HTML document (images, other pages) resolve normally.
@@ -14,52 +15,138 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'doc', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 
+/** File types that are never launched from a link; they are shown in Explorer instead. */
+const EXECUTABLE = new Set([
+  '.exe', '.bat', '.cmd', '.com', '.msi', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
+  '.scr', '.lnk', '.pif', '.hta', '.cpl', '.jar', '.reg', '.msc', '.appref-ms'
+])
+
 let win: BrowserWindow | null = null
 let root: string | null = null
 let docs: DocEntry[] = []
+let metaStore: MetaStore | null = null
 let watcher: FSWatcher | null = null
+let libraryWarning: string | null = null
 
 // ---------- library ----------
 
-/** Turns a relative doc path into an absolute one, refusing anything outside the library. */
-function resolveInLibrary(rel: string): string | null {
-  if (!root) return null
-  const base = path.resolve(root)
-  const abs = path.resolve(base, rel)
-  return abs.startsWith(base + path.sep) ? abs : null
+const inLibrary = (rel: string): string | null => (root ? resolveInLibrary(root, rel) : null)
+
+/** Splits doc://library/a/b.html#part into { path: 'a/b.html', hash: 'part' }. */
+function parseDocUrl(url: string): { path: string; hash: string } | null {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'doc:') return null
+    return {
+      path: decodeURIComponent(u.pathname).replace(/^\/+/, ''),
+      hash: decodeURIComponent(u.hash.replace(/^#/, ''))
+    }
+  } catch {
+    return null
+  }
 }
 
 async function snapshot(): Promise<LibrarySnapshot> {
-  return { root, docs, meta: root ? await loadMeta(root) : {} }
+  const warnings = [metaStore?.warning, libraryWarning].filter((w): w is string => !!w)
+  return {
+    root,
+    docs,
+    meta: metaStore?.all() ?? {},
+    recent: root ? await loadRecent(root) : {},
+    warnings
+  }
+}
+
+async function pushSnapshot(): Promise<void> {
+  win?.webContents.send('library:changed', await snapshot())
 }
 
 async function openLibrary(dir: string | null): Promise<LibrarySnapshot> {
   watcher?.close()
   watcher = null
   root = dir
-  docs = dir ? await scanLibrary(dir) : []
-  if (dir) watchLibrary(dir)
+  docs = []
+  metaStore = null
+  libraryWarning = null
+  if (!dir) return snapshot()
+
+  try {
+    if (!(await fs.stat(dir)).isDirectory()) throw new Error('not a folder')
+    metaStore = await MetaStore.open(dir)
+  } catch {
+    libraryWarning = `Không mở được thư mục tài liệu: ${dir}. Hãy bấm icon thư mục để chọn lại.`
+    return snapshot()
+  }
+  docs = await scanLibrary(dir)
+  await metaStore.reconcile(docs).catch((err) => console.error('reconcile failed', err))
+  watchLibrary(dir)
   return snapshot()
 }
 
 function watchLibrary(dir: string): void {
-  let timer: NodeJS.Timeout | undefined
+  let rescanTimer: NodeJS.Timeout | undefined
+  let metaTimer: NodeJS.Timeout | undefined
+
+  const rescan = async (): Promise<void> => {
+    if (root !== dir) return
+    docs = await scanLibrary(dir, docs)
+    await metaStore?.reconcile(docs).catch((err) => console.error('reconcile failed', err))
+    await pushSnapshot()
+  }
+  const reloadMeta = async (): Promise<void> => {
+    if (root !== dir || !metaStore) return
+    const changed = await metaStore.reloadFromDisk().catch(() => false)
+    if (changed || metaStore.warning) await pushSnapshot()
+  }
+
   try {
     // Windows supports recursive watching natively, no extra dependency needed.
     watcher = watch(dir, { recursive: true }, (_event, filename) => {
-      // Ignore hidden files such as .docs-meta.json (written by this app).
-      const parts = (filename ?? '').split(/[\\/]/)
-      if (parts.some((p) => p.startsWith('.') || p === 'node_modules')) return
-      clearTimeout(timer)
-      timer = setTimeout(async () => {
-        if (root !== dir) return
-        docs = await scanLibrary(dir)
-        win?.webContents.send('library:changed', await snapshot())
-      }, 400)
+      const name = String(filename ?? '')
+      if (name === META_FILE) {
+        // Changed by a sync tool or another PC (our own writes are recognised and skipped).
+        clearTimeout(metaTimer)
+        metaTimer = setTimeout(() => void reloadMeta(), 400)
+        return
+      }
+      // Other hidden files (backups, temp files) and node_modules are not documents.
+      if (name.split(/[\\/]/).some((p) => p.startsWith('.') || p === 'node_modules')) return
+      clearTimeout(rescanTimer)
+      rescanTimer = setTimeout(() => void rescan(), 400)
+    })
+    // Happens when the folder is deleted, renamed or on a USB drive that was removed.
+    watcher.on('error', (err) => {
+      console.error('watcher error', err)
+      watcher?.close()
+      watcher = null
+      libraryWarning = 'Mất kết nối với thư mục tài liệu (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file thay đổi.'
+      void pushSnapshot()
     })
   } catch (err) {
     console.error('Cannot watch library folder', err)
+    libraryWarning = 'Không theo dõi được thư mục tài liệu; app sẽ không tự cập nhật khi file thay đổi.'
   }
+}
+
+/** Opens a library file with its default app; programs/scripts are only shown in Explorer. */
+async function openLibraryFile(rel: string): Promise<void> {
+  const abs = inLibrary(rel)
+  if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+  if (EXECUTABLE.has(path.extname(abs).toLowerCase())) {
+    shell.showItemInFolder(abs)
+    return
+  }
+  const error = await shell.openPath(abs)
+  if (error) throw new Error(error)
+}
+
+/** Turns low-level file errors into a message that makes sense in the UI. */
+function friendlyWriteError(err: unknown): Error {
+  const code = (err as NodeJS.ErrnoException).code
+  if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+    return new Error('Không lưu được: thư mục tài liệu chỉ đọc, hoặc file đang bị app khác khoá.')
+  }
+  return new Error(`Không lưu được: ${(err as Error).message}`)
 }
 
 // ---------- IPC handlers (called through window.api in the UI) ----------
@@ -78,24 +165,37 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('doc:read', async (_e, rel: string) => {
-    const abs = resolveInLibrary(rel)
-    if (!abs) throw new Error('Path outside library')
-    const { readFile } = await import('node:fs/promises')
-    return readFile(abs, 'utf8')
+    const abs = inLibrary(rel)
+    if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+    return fs.readFile(abs, 'utf8')
   })
 
-  ipcMain.handle('meta:update', (_e, rel: string, patch: Partial<DocMeta>) => {
-    if (!root || !resolveInLibrary(rel)) throw new Error('Path outside library')
-    return updateMeta(root, rel, patch)
+  ipcMain.handle('meta:update', async (_e, rel: string, patch: Partial<DocMeta>) => {
+    if (!metaStore || !inLibrary(rel)) throw new Error('File nằm ngoài thư mục tài liệu')
+    // Only tags and status can be changed from the UI.
+    const clean: Partial<DocMeta> = {}
+    if (Array.isArray(patch.tags)) clean.tags = patch.tags.map(String)
+    if (patch.status) clean.status = patch.status
+    try {
+      return await metaStore.update(rel, clean, docs.find((d) => d.path === rel))
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
   })
 
-  ipcMain.handle('doc:openExternal', async (_e, rel: string) => {
-    const abs = resolveInLibrary(rel)
-    if (abs) await shell.openPath(abs)
+  ipcMain.handle('doc:opened', async (_e, rel: string) => {
+    if (!root) return {}
+    try {
+      return await markOpened(root, rel)
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
   })
+
+  ipcMain.handle('doc:openPath', (_e, rel: string) => openLibraryFile(rel))
 
   ipcMain.handle('doc:reveal', (_e, rel: string) => {
-    const abs = resolveInLibrary(rel)
+    const abs = inLibrary(rel)
     if (abs) shell.showItemInFolder(abs)
   })
 }
@@ -130,13 +230,31 @@ function createWindow(): void {
     e.preventDefault()
     openInBrowser(e.url)
   })
-  // Inside a document iframe: allow other library docs, send web links to the browser.
+
+  // Navigation inside the document iframe.
   webContents.on('will-frame-navigate', (e) => {
-    if (e.isMainFrame) return
-    if (e.url.startsWith('doc://') || e.url.startsWith('about:')) return
+    if (e.isMainFrame || e.url.startsWith('about:')) return
+    if (!e.url.startsWith('doc://')) {
+      e.preventDefault()
+      openInBrowser(e.url)
+      return
+    }
+    // The app itself set the iframe's src: let it load.
+    const initiator = e.initiator
+    if (!initiator || initiator.frameTreeNodeId === webContents.mainFrame.frameTreeNodeId) return
+
+    // A link clicked inside the document: let the UI switch documents so the
+    // title, tags and status always belong to what you are reading.
     e.preventDefault()
-    openInBrowser(e.url)
+    const target = parseDocUrl(e.url)
+    if (!target) return
+    if (docs.some((d) => d.path === target.path)) {
+      webContents.send('doc:navigate', target.path, target.hash)
+    } else {
+      openLibraryFile(target.path).catch((err) => console.error('open failed', err))
+    }
   })
+
   webContents.setWindowOpenHandler(({ url }) => {
     openInBrowser(url)
     return { action: 'deny' }
@@ -162,8 +280,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     protocol.handle('doc', (request) => {
-      const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '')
-      const abs = resolveInLibrary(rel)
+      const target = parseDocUrl(request.url) // null for malformed URLs such as a stray "%"
+      const abs = target ? inLibrary(target.path) : null
       if (!abs) return new Response('Not found', { status: 404 })
       return net.fetch(pathToFileURL(abs).toString())
     })

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import type { DocEntry } from '../../../shared/types'
-import { docUrl, pathFromDocUrl } from '../lib/docs'
+import { docUrl, parseDocUrl } from '../lib/docs'
+import type { ScrollTarget } from '../App'
 
 // html: true lets you mix raw HTML/SVG into Markdown. Everything is passed through
 // DOMPurify afterwards, which removes <script> and on*="" handlers.
@@ -43,10 +44,12 @@ function stripFrontMatter(src: string): string {
 interface Props {
   doc: DocEntry
   allDocs: DocEntry[]
-  onOpenDoc: (path: string) => void
+  scrollTarget: ScrollTarget
+  onOpenDoc: (path: string, hash?: string) => void
+  onError: (err: unknown) => void
 }
 
-export default function MarkdownView({ doc, allDocs, onOpenDoc }: Props) {
+export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, onError }: Props) {
   const [source, setSource] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
@@ -56,7 +59,11 @@ export default function MarkdownView({ doc, allDocs, onOpenDoc }: Props) {
     let alive = true
     window.api
       .readDoc(doc.path)
-      .then((s) => alive && setSource(s))
+      .then((s) => {
+        if (!alive) return
+        setError(null) // the file may have been unreadable a moment ago
+        setSource(s)
+      })
       .catch((e: Error) => alive && setError(e.message))
     return () => {
       alive = false
@@ -94,21 +101,31 @@ export default function MarkdownView({ doc, allDocs, onOpenDoc }: Props) {
     }
   }, [html, doc.path])
 
-  // Links: #anchors scroll, links to other library docs open in the app,
-  // web links go to the browser (handled by the main process).
+  const scrollTo = (id: string, smooth: boolean): void => {
+    if (!id) return
+    ref.current
+      ?.querySelector(`[id="${CSS.escape(id)}"]`)
+      ?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' })
+  }
+
+  // Opened through a link such as other.md#part: jump to that section once rendered.
+  useEffect(() => {
+    if (html) scrollTo(scrollTarget.hash, false)
+  }, [html, scrollTarget])
+
+  // Links: #anchors scroll, links to other library docs open in the app, other library
+  // files (pdf, images...) open in their default app, web links go to the browser
+  // (handled by the main process).
   const onClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     const a = (e.target as HTMLElement).closest('a')
     const href = a?.getAttribute('href')
-    if (!a || !href) return
-    if (href.startsWith('#')) {
-      e.preventDefault()
-      ref.current?.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`)?.scrollIntoView({ behavior: 'smooth' })
-      return
-    }
-    if (/^[a-z]+:/i.test(href)) return
+    if (!a || !href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return
     e.preventDefault()
-    const target = pathFromDocUrl(new URL(href, docUrl(doc.path)).href)
-    if (target && allDocs.some((d) => d.path === target)) onOpenDoc(target)
+    const target = parseDocUrl(new URL(href, docUrl(doc.path)).href)
+    if (!target) return
+    if (target.path === doc.path) scrollTo(target.hash, true)
+    else if (allDocs.some((d) => d.path === target.path)) onOpenDoc(target.path, target.hash)
+    else window.api.openPath(target.path).catch(onError)
   }
 
   if (error) return <div className="md-error">Không đọc được file: {error}</div>

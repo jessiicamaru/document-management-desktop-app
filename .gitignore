@@ -2,4 +2,4 @@ node_modules/
 out/
 release/
 scripts/*.png
-sample-library/.docs-meta.json
+sample-library/.docs-meta*

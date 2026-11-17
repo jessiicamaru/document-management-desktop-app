@@ -1,17 +1,21 @@
 import { useState } from 'react'
 import type { DocEntry, DocMeta } from '../../../shared/types'
 import { docUrl, STATUSES } from '../lib/docs'
+import type { ScrollTarget } from '../App'
 import MarkdownView from './MarkdownView'
 
 interface Props {
   doc: DocEntry
   meta: DocMeta
   allDocs: DocEntry[]
-  onUpdateMeta: (patch: Partial<DocMeta>) => void
-  onOpenDoc: (path: string) => void
+  scrollTarget: ScrollTarget
+  onUpdateMeta: (patch: Partial<Pick<DocMeta, 'tags' | 'status'>>) => void
+  onOpenDoc: (path: string, hash?: string) => void
+  onError: (err: unknown) => void
 }
 
-export default function DocView({ doc, meta, allDocs, onUpdateMeta, onOpenDoc }: Props) {
+export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta, onOpenDoc, onError }: Props) {
+  const hash = scrollTarget.hash ? `#${encodeURIComponent(scrollTarget.hash)}` : ''
   return (
     <div className="doc-view">
       <header className="doc-header">
@@ -34,10 +38,10 @@ export default function DocView({ doc, meta, allDocs, onUpdateMeta, onOpenDoc }:
           </div>
           <TagEditor tags={meta.tags} onChange={(tags) => onUpdateMeta({ tags })} />
           <div className="spacer" />
-          <button className="btn" onClick={() => window.api.openExternal(doc.path)} title="Mở bằng app mặc định của Windows">
+          <button className="btn" onClick={() => window.api.openPath(doc.path).catch(onError)} title="Mở bằng app mặc định của Windows">
             Mở ngoài
           </button>
-          <button className="btn" onClick={() => window.api.revealInFolder(doc.path)} title="Hiện file trong File Explorer">
+          <button className="btn" onClick={() => window.api.revealInFolder(doc.path).catch(onError)} title="Hiện file trong File Explorer">
             Hiện trong thư mục
           </button>
         </div>
@@ -46,15 +50,16 @@ export default function DocView({ doc, meta, allDocs, onUpdateMeta, onOpenDoc }:
       <div className="doc-body">
         {doc.kind === 'html' ? (
           // sandbox without "allow-same-origin": the page runs its own CSS/JS
-          // but cannot touch the app or your files. ?v= reloads it when the file changes.
+          // but cannot touch the app or your files. ?v= reloads it when the file changes,
+          // and #hash jumps to a section when you followed a link like other.html#part.
           <iframe
             className="html-frame"
-            src={`${docUrl(doc.path)}?v=${doc.mtime}`}
+            src={`${docUrl(doc.path)}?v=${doc.mtime}${hash}`}
             sandbox="allow-scripts allow-popups"
             title={doc.title}
           />
         ) : (
-          <MarkdownView doc={doc} allDocs={allDocs} onOpenDoc={onOpenDoc} />
+          <MarkdownView doc={doc} allDocs={allDocs} scrollTarget={scrollTarget} onOpenDoc={onOpenDoc} onError={onError} />
         )}
       </div>
     </div>

@@ -1,58 +1,57 @@
-// Small JSON files on disk:
-//  - app settings (which library folder to open) live in Electron's userData folder
-//  - per-document metadata (tags, study status) lives inside the library itself,
-//    so it travels with your documents if you sync the folder (Git, OneDrive...).
+// App-level JSON files in Electron's userData folder (%APPDATA%\Study Docs):
+//  - settings.json: which library folder to open
+//  - recent.json:   when you last opened each document, per library
+// "Recently opened" changes on every click, so it is kept here instead of in the
+// library's .docs-meta.json, which may be synced between computers.
 
 import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { DEFAULT_META, type DocMeta } from '../shared/types'
-
-export const META_FILE = '.docs-meta.json'
 
 interface Settings {
   libraryPath?: string
 }
 
-const settingsFile = (): string => path.join(app.getPath('userData'), 'settings.json')
+type RecentFile = Record<string, Record<string, number>>
 
-async function readJson<T>(file: string, fallback: T): Promise<T> {
+const MAX_RECENT = 50
+const file = (name: string): string => path.join(app.getPath('userData'), name)
+
+async function readJson<T>(name: string, fallback: T): Promise<T> {
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8')) as T
+    return JSON.parse(await fs.readFile(file(name), 'utf8')) as T
   } catch {
     return fallback
   }
 }
 
-/** Write to a temp file first, then rename, so a crash never leaves half a JSON file. */
-async function writeJson(file: string, data: unknown): Promise<void> {
-  const tmp = `${file}.tmp`
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
-  await fs.rename(tmp, file)
+async function writeJson(name: string, data: unknown): Promise<void> {
+  const target = file(name)
+  await fs.mkdir(path.dirname(target), { recursive: true })
+  await fs.writeFile(`${target}.tmp`, JSON.stringify(data, null, 2), 'utf8')
+  await fs.rename(`${target}.tmp`, target)
 }
 
-export const loadSettings = (): Promise<Settings> => readJson<Settings>(settingsFile(), {})
-export const saveSettings = (s: Settings): Promise<void> => writeJson(settingsFile(), s)
+export const loadSettings = (): Promise<Settings> => readJson<Settings>('settings.json', {})
+export const saveSettings = (s: Settings): Promise<void> => writeJson('settings.json', s)
 
-interface MetaFile {
-  version: 1
-  docs: Record<string, DocMeta>
+// recent.json is written one call at a time, same idea as MetaStore.
+let recentQueue: Promise<unknown> = Promise.resolve()
+
+export async function loadRecent(root: string): Promise<Record<string, number>> {
+  return (await readJson<RecentFile>('recent.json', {}))[root] ?? {}
 }
 
-export async function loadMeta(root: string): Promise<Record<string, DocMeta>> {
-  const file = await readJson<MetaFile>(path.join(root, META_FILE), { version: 1, docs: {} })
-  return file.docs ?? {}
-}
-
-export async function updateMeta(
-  root: string,
-  docPath: string,
-  patch: Partial<DocMeta>
-): Promise<Record<string, DocMeta>> {
-  const docs = await loadMeta(root)
-  const next: DocMeta = { ...DEFAULT_META, ...docs[docPath], ...patch }
-  next.tags = [...new Set(next.tags.map((t) => t.trim()).filter(Boolean))]
-  docs[docPath] = next
-  await writeJson(path.join(root, META_FILE), { version: 1, docs } satisfies MetaFile)
-  return docs
+export function markOpened(root: string, docPath: string): Promise<Record<string, number>> {
+  const run = recentQueue.then(async () => {
+    const all = await readJson<RecentFile>('recent.json', {})
+    const entries = Object.entries({ ...all[root], [docPath]: Date.now() })
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_RECENT)
+    all[root] = Object.fromEntries(entries)
+    await writeJson('recent.json', all)
+    return all[root]
+  })
+  recentQueue = run.catch(() => undefined)
+  return run
 }

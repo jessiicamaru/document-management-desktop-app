@@ -1,27 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { LibrarySnapshot, StudyStatus } from '../../shared/types'
-import { buildIndex, loadLocal, metaOf, saveLocal } from './lib/docs'
+import type { DocMeta, LibrarySnapshot, StudyStatus } from '../../shared/types'
+import { buildIndex, errorMessage, loadLocal, metaOf, saveLocal } from './lib/docs'
 import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
 
 export type StatusFilter = StudyStatus | 'all'
 
+/** Where to scroll inside the open document. `n` changes on every jump so the same #hash can be reused. */
+export interface ScrollTarget {
+  hash: string
+  n: number
+}
+
+interface Toast {
+  id: number
+  text: string
+}
+
 export default function App() {
   const [lib, setLib] = useState<LibrarySnapshot | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [scrollTarget, setScrollTarget] = useState<ScrollTarget>({ hash: '', n: 0 })
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const [dismissed, setDismissed] = useState<string[]>([])
   const searchRef = useRef<HTMLInputElement>(null)
+
+  /** Shows an error message in the bottom-right corner for a few seconds. */
+  const notify = useCallback((err: unknown) => {
+    const toast = { id: Date.now() + Math.random(), text: errorMessage(err) }
+    setToasts((t) => [...t, toast])
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== toast.id)), 6000)
+  }, [])
 
   // Load the library once, then follow changes on disk.
   useEffect(() => {
-    void window.api.getLibrary().then((snap) => {
-      setLib(snap)
-      if (snap.root) setSelected(loadLocal<string | null>(`selected:${snap.root}`, null))
-    })
+    window.api
+      .getLibrary()
+      .then((snap) => {
+        setLib(snap)
+        if (snap.root) setSelected(loadLocal<string | null>(`selected:${snap.root}`, null))
+      })
+      .catch(notify)
     return window.api.onLibraryChanged(setLib)
-  }, [])
+  }, [notify])
 
   // Ctrl+K / Ctrl+P jumps to search, like in VS Code.
   useEffect(() => {
@@ -40,27 +64,42 @@ export default function App() {
   const meta = lib?.meta ?? {}
 
   const openDoc = useCallback(
-    (path: string) => {
+    (path: string, hash = '') => {
       setSelected(path)
+      setScrollTarget((t) => ({ hash, n: t.n + 1 }))
       if (lib?.root) saveLocal(`selected:${lib.root}`, path)
-      void window.api.updateMeta(path, { lastOpened: Date.now() }).then((m) => setLib((l) => l && { ...l, meta: m }))
+      window.api
+        .markOpened(path)
+        .then((recent) => setLib((l) => l && { ...l, recent }))
+        .catch(notify)
     },
-    [lib?.root]
+    [lib?.root, notify]
   )
 
+  // A link clicked inside an HTML document points to another document.
+  useEffect(() => window.api.onNavigate((path, hash) => openDoc(path, hash)), [openDoc])
+
   const chooseLibrary = useCallback(async () => {
-    const snap = await window.api.chooseLibrary()
-    setLib(snap)
-    setSelected(snap.root ? loadLocal<string | null>(`selected:${snap.root}`, null) : null)
-  }, [])
+    try {
+      const snap = await window.api.chooseLibrary()
+      setLib(snap)
+      setSelected(snap.root ? loadLocal<string | null>(`selected:${snap.root}`, null) : null)
+    } catch (err) {
+      notify(err)
+    }
+  }, [notify])
 
-  const updateMeta = useCallback((path: string, patch: Parameters<typeof window.api.updateMeta>[1]) => {
-    void window.api.updateMeta(path, patch).then((m) => setLib((l) => l && { ...l, meta: m }))
-  }, [])
+  const updateMeta = useCallback(
+    (path: string, patch: Partial<Pick<DocMeta, 'tags' | 'status'>>) => {
+      window.api
+        .updateMeta(path, patch)
+        .then((m) => setLib((l) => l && { ...l, meta: m }))
+        .catch(notify)
+    },
+    [notify]
+  )
 
-  // Only rebuild the search index when documents or tags change (not on every "lastOpened").
-  const tagsKey = JSON.stringify(docs.map((d) => meta[d.path]?.tags ?? []))
-  const index = useMemo(() => buildIndex(docs, meta), [docs, tagsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const index = useMemo(() => buildIndex(docs, meta), [docs, meta])
 
   const visibleDocs = useMemo(
     () =>
@@ -83,6 +122,7 @@ export default function App() {
   }, [query, index, visibleDocs, docs])
 
   const current = docs.find((d) => d.path === selected) ?? null
+  const warnings = (lib?.warnings ?? []).filter((w) => !dismissed.includes(w))
 
   return (
     <div className="app">
@@ -102,19 +142,36 @@ export default function App() {
         onChooseLibrary={chooseLibrary}
       />
       <main className="content">
+        {warnings.map((w) => (
+          <div key={w} className="banner" role="alert">
+            <span>{w}</span>
+            <button aria-label="Ẩn cảnh báo" onClick={() => setDismissed((d) => [...d, w])}>
+              ×
+            </button>
+          </div>
+        ))}
         {current ? (
           <DocView
             key={current.path}
             doc={current}
             meta={metaOf(meta, current.path)}
             allDocs={docs}
+            scrollTarget={scrollTarget}
             onUpdateMeta={(patch) => updateMeta(current.path, patch)}
             onOpenDoc={openDoc}
+            onError={notify}
           />
         ) : (
           <Welcome hasLibrary={!!lib?.root} count={docs.length} onChoose={chooseLibrary} />
         )}
       </main>
+      <div className="toasts" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className="toast">
+            {t.text}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

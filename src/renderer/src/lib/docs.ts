@@ -21,15 +21,24 @@ export function docUrl(path: string): string {
   return 'doc://library/' + path.split('/').map(encodeURIComponent).join('/')
 }
 
-/** Inverse of docUrl: returns the library-relative path, or null for non-library URLs. */
-export function pathFromDocUrl(url: string): string | null {
+/** Inverse of docUrl: returns the library-relative path and #hash, or null for non-library URLs. */
+export function parseDocUrl(url: string): { path: string; hash: string } | null {
   try {
     const u = new URL(url)
     if (u.protocol !== 'doc:') return null
-    return decodeURIComponent(u.pathname).replace(/^\/+/, '')
+    return {
+      path: decodeURIComponent(u.pathname).replace(/^\/+/, ''),
+      hash: decodeURIComponent(u.hash.replace(/^#/, ''))
+    }
   } catch {
     return null
   }
+}
+
+/** Error from window.api calls without Electron's "Error invoking remote method ..." prefix. */
+export function errorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  return msg.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 }
 
 // ---------- search ----------

@@ -1,4 +1,4 @@
-import { useMemo, useState, type RefObject } from 'react'
+import { useMemo, useState, type ReactNode, type RefObject } from 'react'
 import type { DocEntry, LibrarySnapshot } from '../../../shared/types'
 import { buildTree, loadLocal, makeSnippet, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import type { StatusFilter } from '../App'
@@ -45,14 +45,14 @@ export default function Sidebar(props: Props) {
     return [...counts].sort((a, b) => a[0].localeCompare(b[0], 'vi'))
   }, [allDocs, meta])
 
-  const recent = useMemo(
-    () =>
-      allDocs
-        .filter((d) => meta[d.path]?.lastOpened)
-        .sort((a, b) => (meta[b.path]!.lastOpened ?? 0) - (meta[a.path]!.lastOpened ?? 0))
-        .slice(0, 5),
-    [allDocs, meta]
-  )
+  const recentTimes = lib?.recent
+  const recent = useMemo(() => {
+    const times = recentTimes ?? {}
+    return allDocs
+      .filter((d) => times[d.path])
+      .sort((a, b) => times[b.path] - times[a.path])
+      .slice(0, 5)
+  }, [allDocs, recentTimes])
 
   const filtering = props.statusFilter !== 'all' || props.tagFilter !== null
 
@@ -121,7 +121,8 @@ export default function Sidebar(props: Props) {
             )}
             <div className="group">
               {!filtering && recent.length > 0 && <div className="group-title">Tất cả tài liệu</div>}
-              <Tree root={buildTree(docs)} libraryKey={lib?.root ?? ''} selected={selected} onOpen={onOpen} />
+              {/* key: a different library gets a fresh Tree, so collapsed folders don't leak between libraries */}
+              <Tree key={lib?.root ?? ''} root={buildTree(docs)} libraryKey={lib?.root ?? ''} selected={selected} onOpen={onOpen} />
               {docs.length === 0 && lib?.root && <div className="empty">Không có tài liệu nào khớp.</div>}
             </div>
           </>
@@ -131,7 +132,7 @@ export default function Sidebar(props: Props) {
   )
 }
 
-function Chip(props: { active: boolean; onClick: () => void; className?: string; children: React.ReactNode }) {
+function Chip(props: { active: boolean; onClick: () => void; className?: string; children: ReactNode }) {
   return (
     <button className={`chip ${props.className ?? ''} ${props.active ? 'active' : ''}`} onClick={props.onClick}>
       {props.children}
@@ -149,7 +150,7 @@ function Tree({ root, libraryKey, selected, onOpen }: { root: TreeFolder; librar
     saveLocal(storageKey, next)
   }
 
-  const renderFolder = (folder: TreeFolder, depth: number): React.ReactNode => (
+  const renderFolder = (folder: TreeFolder, depth: number): ReactNode => (
     <>
       {folder.folders.map((f) => {
         const open = !collapsed.includes(f.path)
