@@ -15,6 +15,8 @@ const readMetaFile = async (): Promise<Record<string, { tags: string[]; status: 
   JSON.parse(await readFile(path.join(dir, META_FILE), 'utf8')).docs
 
 const doc = (p: string, hash: string): DocEntry => ({
+  root: 'r1',
+  rel: p,
   path: p,
   name: p.split('/').pop()!,
   kind: 'md',

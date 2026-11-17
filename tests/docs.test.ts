@@ -3,6 +3,8 @@ import type { DocEntry } from '../src/shared/types'
 import { buildTree, docUrl, errorMessage, makeSnippet, normalize, parseDocUrl } from '../src/renderer/src/lib/docs'
 
 const doc = (path: string, title = path): DocEntry => ({
+  root: 'r1',
+  rel: path,
   path,
   name: path.split('/').pop()!,
   kind: path.endsWith('.md') ? 'md' : 'html',

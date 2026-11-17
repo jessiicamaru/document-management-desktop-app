@@ -19,9 +19,11 @@ interface Props {
   onError: (err: unknown) => void
   /** Tells the app whether there are unsaved changes (to warn before leaving). */
   onDirtyChange: (dirty: boolean) => void
+  /** Name of the workspace folder this doc is in; null when the workspace has only one folder. */
+  rootName: string | null
 }
 
-export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta, onOpenDoc, onError, onDirtyChange }: Props) {
+export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta, onOpenDoc, onError, onDirtyChange, rootName }: Props) {
   const [mode, setMode] = useState<Mode>('view')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -119,7 +121,10 @@ export default function DocView({ doc, meta, allDocs, scrollTarget, onUpdateMeta
       <header className="doc-header">
         <div className="doc-heading">
           <h1 title={doc.title}>{doc.title}</h1>
-          <div className="doc-path">{doc.path}</div>
+          <div className="doc-where">
+            {rootName && <span className="doc-root" title="Thư mục trong workspace">{rootName}</span>}
+            <span className="doc-path">{doc.rel}</span>
+          </div>
         </div>
 
         {mode === 'edit' ? (

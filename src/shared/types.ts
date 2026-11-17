@@ -5,10 +5,26 @@ export type DocKind = 'md' | 'html'
 /** How far along you are with a document. */
 export type StudyStatus = 'new' | 'learning' | 'review' | 'done'
 
-/** One file found in the library folder. */
-export interface DocEntry {
-  /** Path relative to the library root, always with forward slashes. */
+/** One folder in the workspace (a workspace can hold folders on different drives). */
+export interface RootInfo {
+  /** Short stable id; the first part of every document id in this folder. */
+  key: string
+  /** Absolute path on disk. */
   path: string
+  /** Display name: the folder name, with its location added when two names clash. */
+  name: string
+  /** False when the folder can't be opened (deleted, renamed, USB unplugged...). */
+  available: boolean
+}
+
+/** One file found in the workspace. */
+export interface DocEntry {
+  /** Workspace-wide id: "<root key>/<path inside that folder>", forward slashes. */
+  path: string
+  /** Key of the folder (RootInfo.key) this document belongs to. */
+  root: string
+  /** Path inside that folder. */
+  rel: string
   name: string
   kind: DocKind
   title: string
@@ -30,10 +46,12 @@ export interface DocMeta {
 }
 
 export interface LibrarySnapshot {
-  root: string | null
+  /** Folders in the workspace, in the order you added them. */
+  roots: RootInfo[]
   docs: DocEntry[]
+  /** Keyed by document id. Each folder's part is stored in that folder's .docs-meta.json. */
   meta: Record<string, DocMeta>
-  /** path -> timestamp of when you last opened it. Kept in the app's own data folder, not the library. */
+  /** Document id -> when you last opened it. Kept in the app's own data folder, not the library. */
   recent: Record<string, number>
   /** Problems the user should know about (corrupt meta file, folder missing...). */
   warnings: string[]
@@ -82,7 +100,10 @@ export interface AppInfo {
 /** The API the preload script exposes as `window.api`. */
 export interface DocsApi {
   getLibrary(): Promise<LibrarySnapshot>
-  chooseLibrary(): Promise<LibrarySnapshot>
+  /** Opens a folder picker (several folders allowed) and adds them to the workspace. */
+  addFolders(): Promise<{ snapshot: LibrarySnapshot; refused: string[] }>
+  /** Removes a folder from the workspace. Nothing on disk is deleted. */
+  removeFolder(key: string): Promise<LibrarySnapshot>
   readDoc(path: string): Promise<string>
   updateMeta(path: string, patch: Partial<Pick<DocMeta, 'tags' | 'status'>>): Promise<Record<string, DocMeta>>
   markOpened(path: string): Promise<Record<string, number>>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import type { AppInfo, DocEntry, LibrarySnapshot } from '../../../shared/types'
+import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo } from '../../../shared/types'
 import { buildTree, loadLocal, makeSnippet, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
@@ -26,13 +26,18 @@ interface Props {
   recentOpen: boolean
   onRecentOpen: (open: boolean) => void
   onOpenSettings: () => void
+  onAddFolders: () => void
+  onRemoveFolder: (key: string) => void
 }
 
 export default function Sidebar(props: Props) {
   const { lib, docs, hits, query, onQuery, selected, onOpen } = props
   const allDocs = lib?.docs ?? []
   const meta = lib?.meta ?? {}
-  const libraryName = lib?.root ? lib.root.split(/[\\/]/).filter(Boolean).pop() : null
+  const roots = lib?.roots ?? []
+  const workspaceName =
+    roots.length === 0 ? 'Chưa có thư mục' : roots.length === 1 ? roots[0].name : `Workspace · ${roots.length} thư mục`
+  const rootNames = Object.fromEntries(roots.map((r) => [r.key, r.name]))
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: allDocs.length }
@@ -52,9 +57,12 @@ export default function Sidebar(props: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-head">
-        <div className="library-name" title={lib?.root ?? ''}>
-          {libraryName ?? 'Chưa chọn thư mục'}
+        <div className="library-name" title={roots.map((r) => r.path).join('\n')}>
+          {workspaceName}
         </div>
+        <button className="icon-btn" title="Thêm thư mục vào workspace" onClick={props.onAddFolders}>
+          <FolderPlusIcon />
+        </button>
         <button
           className={`icon-btn ${props.recentOpen ? 'active' : ''}`}
           title="Mở gần đây (Ctrl+E)"
@@ -112,12 +120,11 @@ export default function Sidebar(props: Props) {
 
       <div className="doc-list">
         {hits ? (
-          <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} />
+          <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 ? rootNames : null} />
         ) : (
           <div className="group">
-            {/* key: a different library gets a fresh Tree, so collapsed folders don't leak between libraries */}
-            <Tree key={lib?.root ?? ''} root={buildTree(docs)} libraryKey={lib?.root ?? ''} selected={selected} onOpen={onOpen} />
-            {docs.length === 0 && lib?.root && <div className="empty">Không có tài liệu nào khớp.</div>}
+            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} />
+            {docs.length === 0 && roots.length > 0 && <div className="empty">Không có tài liệu nào khớp.</div>}
           </div>
         )}
       </div>
@@ -144,9 +151,21 @@ function Chip(props: { active: boolean; onClick: () => void; className?: string;
   )
 }
 
-function Tree({ root, libraryKey, selected, onOpen }: { root: TreeFolder; libraryKey: string; selected: string | null; onOpen: (p: string) => void }) {
-  // Remember which folders you collapsed, per library.
-  const storageKey = `collapsed:${libraryKey}`
+interface TreeProps {
+  roots: RootInfo[]
+  docs: DocEntry[]
+  selected: string | null
+  onOpen: (p: string) => void
+  onRemoveRoot: (key: string) => void
+}
+
+/**
+ * One folder: its documents as a plain tree, like before.
+ * Several folders: each one is a top-level node (like a VS Code multi-root workspace).
+ */
+function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
+  // Remember which folders you collapsed. Folder ids start with their root key, so they never clash.
+  const storageKey = 'collapsed:workspace'
   const [collapsed, setCollapsed] = useState<string[]>(() => loadLocal(storageKey, []))
   const toggle = (path: string): void => {
     const next = collapsed.includes(path) ? collapsed.filter((p) => p !== path) : [...collapsed, path]
@@ -173,7 +192,47 @@ function Tree({ root, libraryKey, selected, onOpen }: { root: TreeFolder; librar
       ))}
     </>
   )
-  return <>{renderFolder(root, 0)}</>
+
+  const treeOf = (root: RootInfo): TreeFolder =>
+    buildTree(
+      docs.filter((d) => d.root === root.key),
+      root.key
+    )
+
+  if (roots.length === 1) return <>{renderFolder(treeOf(roots[0]), 0)}</>
+
+  return (
+    <>
+      {roots.map((root) => {
+        const open = !collapsed.includes(root.key)
+        const tree = treeOf(root)
+        const empty = tree.folders.length === 0 && tree.docs.length === 0
+        return (
+          <div key={root.key} className="root-group">
+            <div className="root-row">
+              <button className="row folder root" onClick={() => toggle(root.key)} title={root.path}>
+                <span className={`chevron ${open ? 'open' : ''}`}>▸</span>
+                <span className="row-title">{root.name}</span>
+                {!root.available && <span className="root-missing">không tìm thấy</span>}
+              </button>
+              <button
+                className="icon-btn small root-remove"
+                title="Bỏ thư mục này khỏi workspace (không xoá file)"
+                aria-label={`Bỏ ${root.name} khỏi workspace`}
+                onClick={() => {
+                  if (window.confirm(`Bỏ thư mục "${root.name}" khỏi workspace?\n\n${root.path}\n\nFile trên ổ đĩa không bị xoá.`)) onRemoveRoot(root.key)
+                }}
+              >
+                ×
+              </button>
+            </div>
+            {open && renderFolder(tree, 1)}
+            {open && empty && root.available && <div className="empty indent">Không có tài liệu nào khớp.</div>}
+          </div>
+        )
+      })}
+    </>
+  )
 }
 
 function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number; selected: boolean; onOpen: (p: string) => void }) {
@@ -182,7 +241,7 @@ function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number
       className={`row doc ${selected ? 'selected' : ''}`}
       style={{ paddingLeft: 10 + depth * 14 + 14 }}
       onClick={() => onOpen(doc.path)}
-      title={doc.path}
+      title={doc.rel}
     >
       <span className={`kind kind-${doc.kind}`}>{doc.kind === 'md' ? 'MD' : 'HTML'}</span>
       <span className="row-title">{doc.title}</span>
@@ -190,14 +249,24 @@ function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number
   )
 }
 
-function SearchResults({ hits, query, selected, onOpen }: { hits: SearchHit[]; query: string; selected: string | null; onOpen: (p: string) => void }) {
+interface SearchResultsProps {
+  hits: SearchHit[]
+  query: string
+  selected: string | null
+  onOpen: (p: string) => void
+  /** Folder names to show in front of the path, when the workspace has several folders. */
+  rootNames: Record<string, string> | null
+}
+
+function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResultsProps) {
   if (hits.length === 0) return <div className="empty">Không tìm thấy kết quả.</div>
   return (
     <div className="group">
       <div className="group-title">{hits.length} kết quả</div>
       {hits.map(({ doc, terms }) => {
         const snip = makeSnippet(doc.text, query, terms)
-        const folder = doc.path.includes('/') ? doc.path.slice(0, doc.path.lastIndexOf('/')) : ''
+        const inside = doc.rel.includes('/') ? doc.rel.slice(0, doc.rel.lastIndexOf('/')) : ''
+        const folder = rootNames ? [rootNames[doc.root], inside].filter(Boolean).join(' / ') : inside
         return (
           <button key={doc.path} className={`hit ${selected === doc.path ? 'selected' : ''}`} onClick={() => onOpen(doc.path)}>
             <div className="hit-title">
@@ -250,7 +319,7 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
         <button
           key={d.path}
           className={`row doc ${selected === d.path ? 'selected' : ''}`}
-          title={d.path}
+          title={d.rel}
           onClick={() => {
             onOpen(d.path)
             onClose()
@@ -266,6 +335,15 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
 }
 
 const iconProps = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round' } as const
+
+function FolderPlusIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2.2h8.8A1.5 1.5 0 0 1 21 8.7v9.8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
+      <path d="M12 10.5v6M9 13.5h6" />
+    </svg>
+  )
+}
 
 function ClockIcon() {
   return (

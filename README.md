@@ -18,7 +18,8 @@ npm run release    # đóng gói + phát hành lên GitHub Releases để các m
 
 | Phím / nút | Làm gì |
 |---|---|
-| `Ctrl+K` | Tìm kiếm (không cần gõ dấu) |
+| Icon thư mục có dấu + | Thêm một hoặc nhiều thư mục vào workspace, ở ổ nào cũng được (C:, D:, USB...). Mỗi thư mục là một nhánh trên cây; di chuột vào tên thư mục rồi bấm × để bỏ nó khỏi workspace (file không bị xoá). |
+| `Ctrl+K` | Tìm kiếm trong mọi thư mục (không cần gõ dấu) |
 | `Ctrl+E` hoặc icon đồng hồ | Danh sách bài mở gần đây |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown |
 | **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
@@ -56,6 +57,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/main/library.ts` | Quét thư mục (có cache), lấy tiêu đề + chữ để tìm kiếm từ md/html |
 | `src/main/html-edit.ts` | Sửa chữ trên bài HTML: script chèn vào trang khi sửa, và ghi lại đúng chỗ trong file (parse5) |
 | `src/main/updater.ts` | Tự cập nhật từ GitHub Releases |
+| `src/main/workspace.ts` | Workspace nhiều thư mục: id của thư mục, chống thêm trùng/lồng nhau, tên hiển thị |
 | `src/main/meta-store.ts` | `.docs-meta.json`: hàng đợi ghi, sao lưu file hỏng, giữ tag khi đổi tên file |
 | `src/main/storage.ts` | Settings và danh sách "mở gần đây" trong `%APPDATA%\Study Docs` |
 | `src/preload/index.ts` | Cầu nối duy nhất UI ↔ Node, lộ ra `window.api` |
@@ -73,7 +75,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 ## Dữ liệu nằm ở đâu
 
 - **File gốc không bao giờ bị sửa.**
-- **Tag và trạng thái học** nằm trong `<thư mục tài liệu>/.docs-meta.json`, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
+- **Tag và trạng thái học** nằm trong `.docs-meta.json` của từng thư mục trong workspace, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
   - Nếu file này bị hỏng (ví dụ do xung đột khi đồng bộ), app sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` và hiện cảnh báo, chứ không lặng lẽ xoá dữ liệu.
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.

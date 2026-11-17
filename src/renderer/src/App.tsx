@@ -49,7 +49,7 @@ export default function App() {
       .getLibrary()
       .then((snap) => {
         setLib(snap)
-        if (snap.root) setSelected(loadLocal<string | null>(`selected:${snap.root}`, null))
+        setSelected(loadLocal<string | null>('selected:workspace', null))
       })
       .catch(notify)
     return window.api.onLibraryChanged(setLib)
@@ -120,27 +120,42 @@ export default function App() {
       }
       setSelected(path)
       setScrollTarget((t) => ({ hash, n: t.n + 1 }))
-      if (lib?.root) saveLocal(`selected:${lib.root}`, path)
+      saveLocal('selected:workspace', path)
       window.api
         .markOpened(path)
         .then((recent) => setLib((l) => l && { ...l, recent }))
         .catch(notify)
     },
-    [lib?.root, notify, selected, setDirty]
+    [notify, selected, setDirty]
   )
 
   // A link clicked inside an HTML document points to another document.
   useEffect(() => window.api.onNavigate((path, hash) => openDoc(path, hash)), [openDoc])
 
-  const chooseLibrary = useCallback(async () => {
+  const addFolders = useCallback(async () => {
     try {
-      const snap = await window.api.chooseLibrary()
-      setLib(snap)
-      setSelected(snap.root ? loadLocal<string | null>(`selected:${snap.root}`, null) : null)
+      const { snapshot, refused } = await window.api.addFolders()
+      setLib(snapshot)
+      refused.forEach((msg) => notify(msg))
     } catch (err) {
       notify(err)
     }
   }, [notify])
+
+  const removeFolder = useCallback(
+    async (key: string) => {
+      if (dirtyRef.current && selected?.startsWith(`${key}/`)) {
+        if (!window.confirm('Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?')) return
+        setDirty(false)
+      }
+      try {
+        setLib(await window.api.removeFolder(key))
+      } catch (err) {
+        notify(err)
+      }
+    },
+    [notify, selected, setDirty]
+  )
 
   const updateMeta = useCallback(
     (path: string, patch: Partial<Pick<DocMeta, 'tags' | 'status'>>) => {
@@ -195,6 +210,8 @@ export default function App() {
         appInfo={appInfo}
         recentOpen={recentOpen}
         onRecentOpen={setRecentOpen}
+        onAddFolders={addFolders}
+        onRemoveFolder={removeFolder}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="content">
@@ -225,9 +242,10 @@ export default function App() {
             onOpenDoc={openDoc}
             onError={notify}
             onDirtyChange={setDirty}
+            rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (
-          <Welcome hasLibrary={!!lib?.root} docs={docs} recent={lib?.recent ?? {}} onChoose={chooseLibrary} onOpen={openDoc} />
+          <Welcome hasLibrary={(lib?.roots.length ?? 0) > 0} docs={docs} recent={lib?.recent ?? {}} onChoose={addFolders} onOpen={openDoc} />
         )}
       </main>
       {settingsOpen && (
@@ -235,8 +253,9 @@ export default function App() {
           ui={ui}
           onChange={changeUi}
           onClose={() => setSettingsOpen(false)}
-          libraryRoot={lib?.root ?? null}
-          onChooseLibrary={chooseLibrary}
+          roots={lib?.roots ?? []}
+          onAddFolders={addFolders}
+          onRemoveFolder={removeFolder}
           appInfo={appInfo}
         />
       )}
@@ -268,9 +287,9 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpen }: WelcomeProps) {
     return (
       <div className="welcome">
         <h1>Study Docs</h1>
-        <p>Chọn một thư mục chứa tài liệu học của bạn (.md, .html). App chỉ đọc file, không sửa nội dung gốc.</p>
+        <p>Thêm một hoặc nhiều thư mục chứa tài liệu học của bạn (.md, .html), ở bất kỳ ổ đĩa nào. App không sửa file nếu bạn không bấm Sửa chữ hoặc Raw.</p>
         <button className="btn primary" onClick={onChoose}>
-          Chọn thư mục tài liệu
+          Thêm thư mục tài liệu
         </button>
       </div>
     )
@@ -286,7 +305,7 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpen }: WelcomeProps) {
         <div className="welcome-recent">
           <div className="group-title">Mở gần đây</div>
           {recentDocs.map((d) => (
-            <button key={d.path} className="row doc" onClick={() => onOpen(d.path)} title={d.path}>
+            <button key={d.path} className="row doc" onClick={() => onOpen(d.path)} title={d.rel}>
               <span className={`kind kind-${d.kind}`}>{d.kind === 'md' ? 'MD' : 'HTML'}</span>
               <span className="row-title">{d.title}</span>
               <span className="row-time">{timeAgo(recent[d.path])}</span>

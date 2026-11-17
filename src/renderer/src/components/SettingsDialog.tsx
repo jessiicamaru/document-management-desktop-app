@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_UI, type AppInfo, type UiSettings } from '../../../shared/types'
+import { DEFAULT_UI, type AppInfo, type RootInfo, type UiSettings } from '../../../shared/types'
 import { errorMessage } from '../lib/docs'
 
 const ACCENTS = [
@@ -16,12 +16,13 @@ interface Props {
   ui: UiSettings
   onChange: (ui: UiSettings) => void
   onClose: () => void
-  libraryRoot: string | null
-  onChooseLibrary: () => void
+  roots: RootInfo[]
+  onAddFolders: () => void
+  onRemoveFolder: (key: string) => void
   appInfo: AppInfo | null
 }
 
-export default function SettingsDialog({ ui, onChange, onClose, libraryRoot, onChooseLibrary, appInfo }: Props) {
+export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFolders, onRemoveFolder, appInfo }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [updateMsg, setUpdateMsg] = useState<string | null>(null)
   const set = <K extends keyof UiSettings>(key: K, value: UiSettings[K]): void => onChange({ ...ui, [key]: value })
@@ -117,12 +118,34 @@ export default function SettingsDialog({ ui, onChange, onClose, libraryRoot, onC
       </section>
 
       <section>
-        <h3>Thư mục tài liệu</h3>
-        <Row label={<span className="path">{libraryRoot ?? 'Chưa chọn'}</span>}>
-          <button className="btn" onClick={onChooseLibrary}>
-            Đổi thư mục…
-          </button>
-        </Row>
+        <h3>Thư mục trong workspace</h3>
+        {roots.length === 0 && <p className="hint">Chưa có thư mục nào.</p>}
+        {roots.map((r) => (
+          <Row
+            key={r.key}
+            label={
+              <span>
+                <b>{r.name}</b>
+                {!r.available && <span className="root-missing">không tìm thấy</span>}
+                <br />
+                <span className="path">{r.path}</span>
+              </span>
+            }
+          >
+            <button
+              className="btn small"
+              onClick={() => {
+                if (window.confirm(`Bỏ thư mục "${r.name}" khỏi workspace? File trên ổ đĩa không bị xoá.`)) onRemoveFolder(r.key)
+              }}
+            >
+              Bỏ
+            </button>
+          </Row>
+        ))}
+        <button className="btn" onClick={onAddFolders}>
+          + Thêm thư mục…
+        </button>
+        <p className="hint">Có thể thêm thư mục ở nhiều ổ đĩa khác nhau (C:, D:, USB...). Tag và trạng thái học của mỗi thư mục nằm trong chính thư mục đó.</p>
       </section>
 
       <section>

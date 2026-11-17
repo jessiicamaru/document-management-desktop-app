@@ -5,6 +5,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { DocEntry, DocKind } from '../shared/types'
 
+/** A document as found inside one folder: `path` is relative to that folder. */
+export type ScannedDoc = Omit<DocEntry, 'root' | 'rel'>
+
 /** How many files are read at the same time while scanning. */
 const READ_CONCURRENCY = 16
 
@@ -41,7 +44,7 @@ export function kindOf(file: string): DocKind | null {
  * Pass the previous result as `cache`: files whose size and modified time did not
  * change are reused instead of being read again.
  */
-export async function scanLibrary(root: string, cache: DocEntry[] = []): Promise<DocEntry[]> {
+export async function scanLibrary(root: string, cache: ScannedDoc[] = []): Promise<ScannedDoc[]> {
   const files: { abs: string; kind: DocKind }[] = []
 
   async function walk(dir: string): Promise<void> {
@@ -64,7 +67,7 @@ export async function scanLibrary(root: string, cache: DocEntry[] = []): Promise
   await walk(root)
 
   const previous = new Map(cache.map((d) => [d.path, d]))
-  const docs: DocEntry[] = []
+  const docs: ScannedDoc[] = []
   for (let i = 0; i < files.length; i += READ_CONCURRENCY) {
     const batch = files.slice(i, i + READ_CONCURRENCY)
     const results = await Promise.all(batch.map((f) => readEntry(root, f.abs, f.kind, previous)))
@@ -74,7 +77,7 @@ export async function scanLibrary(root: string, cache: DocEntry[] = []): Promise
   return docs
 }
 
-async function readEntry(root: string, abs: string, kind: DocKind, previous: Map<string, DocEntry>): Promise<DocEntry | null> {
+async function readEntry(root: string, abs: string, kind: DocKind, previous: Map<string, ScannedDoc>): Promise<ScannedDoc | null> {
   try {
     const stat = await fs.stat(abs)
     const rel = path.relative(root, abs).split(path.sep).join('/')

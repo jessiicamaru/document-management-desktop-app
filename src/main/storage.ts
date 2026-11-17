@@ -1,6 +1,6 @@
 // App-level JSON files in Electron's userData folder (%APPDATA%\Study Docs):
-//  - settings.json: which library folder to open
-//  - recent.json:   when you last opened each document, per library
+//  - settings.json: the folders in the workspace, appearance
+//  - recent.json:   when you last opened each document, by absolute file path
 // "Recently opened" changes on every click, so it is kept here instead of in the
 // library's .docs-meta.json, which may be synced between computers.
 
@@ -8,15 +8,25 @@ import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { DEFAULT_UI, type UiSettings } from '../shared/types'
+import { pathKey } from './workspace'
 
 interface Settings {
+  /** Folders in the workspace. */
+  libraryPaths?: string[]
+  /** Before v0.4 the workspace was a single folder; read once and migrated. */
   libraryPath?: string
   ui?: Partial<UiSettings>
 }
 
-type RecentFile = Record<string, Record<string, number>>
+/** v2: { version: 2, files: { "<absolute path, lower-case on Windows>": timestamp } } */
+interface RecentFileV2 {
+  version: 2
+  files: Record<string, number>
+}
+/** v1 (before v0.4): { "<library root>": { "<relative path>": timestamp } } */
+type RecentFileV1 = Record<string, Record<string, number>>
 
-const MAX_RECENT = 50
+const MAX_RECENT = 200
 const file = (name: string): string => path.join(app.getPath('userData'), name)
 
 async function readJson<T>(name: string, fallback: T): Promise<T> {
@@ -36,9 +46,19 @@ async function writeJson(name: string, data: unknown): Promise<void> {
 
 export const loadSettings = (): Promise<Settings> => readJson<Settings>('settings.json', {})
 
-/** Merges `patch` into settings.json so library path and appearance don't overwrite each other. */
+/** Merges `patch` into settings.json so workspace and appearance don't overwrite each other. */
 export async function saveSettings(patch: Settings): Promise<void> {
   await writeJson('settings.json', { ...(await loadSettings()), ...patch })
+}
+
+export async function loadWorkspacePaths(): Promise<string[]> {
+  const s = await loadSettings()
+  if (Array.isArray(s.libraryPaths)) return s.libraryPaths.filter((p) => typeof p === 'string')
+  return s.libraryPath ? [s.libraryPath] : []
+}
+
+export async function saveWorkspacePaths(paths: string[]): Promise<void> {
+  await saveSettings({ libraryPaths: paths, libraryPath: undefined }) // undefined is dropped from the JSON
 }
 
 const HEX = /^#[0-9a-f]{6}$/i
@@ -63,19 +83,26 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
 // recent.json is written one call at a time, same idea as MetaStore.
 let recentQueue: Promise<unknown> = Promise.resolve()
 
-export async function loadRecent(root: string): Promise<Record<string, number>> {
-  return (await readJson<RecentFile>('recent.json', {}))[root] ?? {}
+/** Absolute file path -> last opened time. Converts the old per-library format on the fly. */
+export async function loadRecent(): Promise<Record<string, number>> {
+  const raw = await readJson<RecentFileV2 | RecentFileV1>('recent.json', { version: 2, files: {} })
+  if ((raw as RecentFileV2).version === 2) return (raw as RecentFileV2).files ?? {}
+  const files: Record<string, number> = {}
+  for (const [root, entries] of Object.entries(raw as RecentFileV1)) {
+    if (!entries || typeof entries !== 'object') continue
+    for (const [rel, ts] of Object.entries(entries)) files[pathKey(path.join(root, rel))] = ts
+  }
+  return files
 }
 
-export function markOpened(root: string, docPath: string): Promise<Record<string, number>> {
+export function markOpened(absPath: string): Promise<Record<string, number>> {
   const run = recentQueue.then(async () => {
-    const all = await readJson<RecentFile>('recent.json', {})
-    const entries = Object.entries({ ...all[root], [docPath]: Date.now() })
+    const entries = Object.entries({ ...(await loadRecent()), [pathKey(absPath)]: Date.now() })
       .sort((a, b) => b[1] - a[1])
       .slice(0, MAX_RECENT)
-    all[root] = Object.fromEntries(entries)
-    await writeJson('recent.json', all)
-    return all[root]
+    const files = Object.fromEntries(entries)
+    await writeJson('recent.json', { version: 2, files } satisfies RecentFileV2)
+    return files
   })
   recentQueue = run.catch(() => undefined)
   return run

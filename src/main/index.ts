@@ -7,15 +7,16 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
-import { kindOf, resolveInLibrary, scanLibrary } from './library'
+import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { META_FILE, MetaStore } from './meta-store'
-import { loadRecent, loadSettings, loadUiSettings, markOpened, sanitizeUi, saveSettings } from './storage'
+import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
+import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 
 // Tests run with their own settings folder so they never touch your real settings.
 if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
 
-// Documents are served as doc://library/<relative path>. A "standard" scheme means
+// Documents are served as doc://library/<root key>/<path inside that folder>. A "standard" scheme means
 // relative links inside an HTML document (images, other pages) resolve normally.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'doc', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -28,17 +29,40 @@ const EXECUTABLE = new Set([
 ])
 
 let win: BrowserWindow | null = null
-let root: string | null = null
-let docs: DocEntry[] = []
-let metaStore: MetaStore | null = null
-let watcher: FSWatcher | null = null
-let libraryWarning: string | null = null
 
-// ---------- library ----------
+/** One folder of the workspace, with its own scan cache, metadata file and watcher. */
+interface Root {
+  key: string
+  path: string
+  name: string
+  /** Documents with paths relative to this folder. */
+  docs: ScannedDoc[]
+  /** Null when the folder could not be opened. */
+  meta: MetaStore | null
+  watcher: FSWatcher | null
+  warning: string | null
+}
 
-const inLibrary = (rel: string): string | null => (root ? resolveInLibrary(root, rel) : null)
+let roots: Root[] = []
 
-/** Splits doc://library/a/b.html#part into { path: 'a/b.html', hash: 'part' }. */
+// ---------- workspace ----------
+
+const newRoot = (p: string): Root => ({ key: rootKeyOf(p), path: p, name: '', docs: [], meta: null, watcher: null, warning: null })
+
+/** Finds a document id ("<root key>/<path>") in the workspace; null if it isn't in any folder. */
+function locate(id: string): { root: Root; rel: string; abs: string } | null {
+  const parts = splitDocId(id)
+  const root = parts && roots.find((r) => r.key === parts.key)
+  const abs = root && resolveInLibrary(root.path, parts.rel)
+  return root && abs ? { root, rel: parts.rel, abs } : null
+}
+const inLibrary = (id: string): string | null => locate(id)?.abs ?? null
+const hasDoc = (id: string): boolean => {
+  const loc = locate(id)
+  return !!loc && loc.root.docs.some((d) => d.path === loc.rel)
+}
+
+/** Splits doc://library/<id>#part into { path: id, hash: 'part' }. */
 function parseDocUrl(url: string): { path: string; hash: string } | null {
   try {
     const u = new URL(url)
@@ -52,13 +76,32 @@ function parseDocUrl(url: string): { path: string; hash: string } | null {
   }
 }
 
+/** Document id -> last opened time, for documents currently in the workspace. */
+function recentByDoc(byFile: Record<string, number>): Record<string, number> {
+  const recent: Record<string, number> = {}
+  for (const r of roots) {
+    for (const d of r.docs) {
+      const ts = byFile[pathKey(path.join(r.path, d.path))]
+      if (ts) recent[`${r.key}/${d.path}`] = ts
+    }
+  }
+  return recent
+}
+
 async function snapshot(): Promise<LibrarySnapshot> {
-  const warnings = [metaStore?.warning, libraryWarning].filter((w): w is string => !!w)
+  const docs: DocEntry[] = []
+  const meta: Record<string, DocMeta> = {}
+  const warnings: string[] = []
+  for (const r of roots) {
+    for (const d of r.docs) docs.push({ ...d, path: `${r.key}/${d.path}`, root: r.key, rel: d.path })
+    for (const [rel, m] of Object.entries(r.meta?.all() ?? {})) meta[`${r.key}/${rel}`] = m
+    for (const w of [r.meta?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
+  }
   return {
-    root,
+    roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta })),
     docs,
-    meta: metaStore?.all() ?? {},
-    recent: root ? await loadRecent(root) : {},
+    meta,
+    recent: recentByDoc(await loadRecent()),
     warnings
   }
 }
@@ -67,47 +110,87 @@ async function pushSnapshot(): Promise<void> {
   win?.webContents.send('library:changed', await snapshot())
 }
 
-async function openLibrary(dir: string | null): Promise<LibrarySnapshot> {
-  watcher?.close()
-  watcher = null
-  root = dir
-  docs = []
-  metaStore = null
-  libraryWarning = null
-  if (!dir) return snapshot()
-
-  try {
-    if (!(await fs.stat(dir)).isDirectory()) throw new Error('not a folder')
-    metaStore = await MetaStore.open(dir)
-  } catch {
-    libraryWarning = `Không mở được thư mục tài liệu: ${dir}. Hãy bấm icon thư mục để chọn lại.`
-    return snapshot()
-  }
-  docs = await scanLibrary(dir)
-  await metaStore.reconcile(docs).catch((err) => console.error('reconcile failed', err))
-  watchLibrary(dir)
-  return snapshot()
+function relabel(): void {
+  const labels = labelRoots(roots.map((r) => r.path))
+  roots.forEach((r, i) => (r.name = labels[i]))
 }
 
-function watchLibrary(dir: string): void {
+async function openRoot(root: Root): Promise<void> {
+  try {
+    if (!(await fs.stat(root.path)).isDirectory()) throw new Error('not a folder')
+    root.meta = await MetaStore.open(root.path)
+  } catch {
+    root.warning = 'Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.'
+    return
+  }
+  root.docs = await scanLibrary(root.path)
+  await root.meta.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
+  watchRoot(root)
+}
+
+function closeRoot(root: Root): void {
+  root.watcher?.close()
+  root.watcher = null
+}
+
+/** Replaces the whole workspace (at startup). Duplicate or nested folders are skipped. */
+async function openWorkspace(paths: string[]): Promise<void> {
+  roots.forEach(closeRoot)
+  roots = []
+  for (const p of paths) {
+    const norm = normalizeRoot(p)
+    if (!rootConflict(roots.map((r) => r.path), norm)) roots.push(newRoot(norm))
+  }
+  relabel()
+  await Promise.all(roots.map(openRoot))
+}
+
+/** Adds folders; returns a message for each folder that was refused. */
+async function addRoots(paths: string[]): Promise<string[]> {
+  const refused: string[] = []
+  const added: Root[] = []
+  for (const p of paths) {
+    const norm = normalizeRoot(p)
+    const conflict = rootConflict(roots.map((r) => r.path), norm)
+    if (conflict) refused.push(conflict)
+    else added.push(newRoot(norm))
+  }
+  roots.push(...added)
+  relabel()
+  await saveWorkspacePaths(roots.map((r) => r.path))
+  await Promise.all(added.map(openRoot))
+  return refused
+}
+
+async function removeRoot(key: string): Promise<void> {
+  const root = roots.find((r) => r.key === key)
+  if (!root) return
+  closeRoot(root)
+  roots = roots.filter((r) => r !== root)
+  relabel()
+  await saveWorkspacePaths(roots.map((r) => r.path))
+}
+
+function watchRoot(root: Root): void {
   let rescanTimer: NodeJS.Timeout | undefined
   let metaTimer: NodeJS.Timeout | undefined
+  const stillOpen = (): boolean => roots.includes(root)
 
   const rescan = async (): Promise<void> => {
-    if (root !== dir) return
-    docs = await scanLibrary(dir, docs)
-    await metaStore?.reconcile(docs).catch((err) => console.error('reconcile failed', err))
+    if (!stillOpen()) return
+    root.docs = await scanLibrary(root.path, root.docs)
+    await root.meta?.reconcile(root.docs).catch((err) => console.error('reconcile failed', err))
     await pushSnapshot()
   }
   const reloadMeta = async (): Promise<void> => {
-    if (root !== dir || !metaStore) return
-    const changed = await metaStore.reloadFromDisk().catch(() => false)
-    if (changed || metaStore.warning) await pushSnapshot()
+    if (!stillOpen() || !root.meta) return
+    const changed = await root.meta.reloadFromDisk().catch(() => false)
+    if (changed || root.meta.warning) await pushSnapshot()
   }
 
   try {
     // Windows supports recursive watching natively, no extra dependency needed.
-    watcher = watch(dir, { recursive: true }, (_event, filename) => {
+    root.watcher = watch(root.path, { recursive: true }, (_event, filename) => {
       const name = String(filename ?? '')
       if (name === META_FILE) {
         // Changed by a sync tool or another PC (our own writes are recognised and skipped).
@@ -121,16 +204,15 @@ function watchLibrary(dir: string): void {
       rescanTimer = setTimeout(() => void rescan(), 400)
     })
     // Happens when the folder is deleted, renamed or on a USB drive that was removed.
-    watcher.on('error', (err) => {
+    root.watcher.on('error', (err) => {
       console.error('watcher error', err)
-      watcher?.close()
-      watcher = null
-      libraryWarning = 'Mất kết nối với thư mục tài liệu (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file thay đổi.'
+      closeRoot(root)
+      root.warning = 'Mất kết nối với thư mục này (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file trong đó thay đổi.'
       void pushSnapshot()
     })
   } catch (err) {
-    console.error('Cannot watch library folder', err)
-    libraryWarning = 'Không theo dõi được thư mục tài liệu; app sẽ không tự cập nhật khi file thay đổi.'
+    console.error('Cannot watch folder', err)
+    root.warning = 'Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.'
   }
 }
 
@@ -184,14 +266,19 @@ function friendlyWriteError(err: unknown): Error {
 function registerIpc(): void {
   ipcMain.handle('library:get', () => snapshot())
 
-  ipcMain.handle('library:choose', async () => {
+  ipcMain.handle('workspace:add', async () => {
     const result = await dialog.showOpenDialog(win!, {
-      title: 'Chọn thư mục tài liệu',
-      properties: ['openDirectory']
+      title: 'Thêm thư mục vào workspace',
+      buttonLabel: 'Thêm thư mục',
+      properties: ['openDirectory', 'multiSelections']
     })
-    if (result.canceled || !result.filePaths[0]) return snapshot()
-    await saveSettings({ libraryPath: result.filePaths[0] })
-    return openLibrary(result.filePaths[0])
+    const refused = result.canceled ? [] : await addRoots(result.filePaths)
+    return { snapshot: await snapshot(), refused }
+  })
+
+  ipcMain.handle('workspace:remove', async (_e, key: string) => {
+    await removeRoot(key)
+    return snapshot()
   })
 
   ipcMain.handle('doc:read', async (_e, rel: string) => {
@@ -200,23 +287,26 @@ function registerIpc(): void {
     return fs.readFile(abs, 'utf8')
   })
 
-  ipcMain.handle('meta:update', async (_e, rel: string, patch: Partial<DocMeta>) => {
-    if (!metaStore || !inLibrary(rel)) throw new Error('File nằm ngoài thư mục tài liệu')
+  ipcMain.handle('meta:update', async (_e, id: string, patch: Partial<DocMeta>) => {
+    const loc = locate(id)
+    if (!loc?.root.meta) throw new Error('File nằm ngoài thư mục tài liệu')
     // Only tags and status can be changed from the UI.
     const clean: Partial<DocMeta> = {}
     if (Array.isArray(patch.tags)) clean.tags = patch.tags.map(String)
     if (patch.status) clean.status = patch.status
     try {
-      return await metaStore.update(rel, clean, docs.find((d) => d.path === rel))
+      await loc.root.meta.update(loc.rel, clean, loc.root.docs.find((d) => d.path === loc.rel))
+      return (await snapshot()).meta
     } catch (err) {
       throw friendlyWriteError(err)
     }
   })
 
-  ipcMain.handle('doc:opened', async (_e, rel: string) => {
-    if (!root) return {}
+  ipcMain.handle('doc:opened', async (_e, id: string) => {
+    const loc = locate(id)
+    if (!loc) return {}
     try {
-      return await markOpened(root, rel)
+      return recentByDoc(await markOpened(loc.abs))
     } catch (err) {
       throw friendlyWriteError(err)
     }
@@ -305,7 +395,7 @@ function createWindow(): void {
     e.preventDefault()
     const target = parseDocUrl(e.url)
     if (!target) return
-    if (docs.some((d) => d.path === target.path)) {
+    if (hasDoc(target.path)) {
       webContents.send('doc:navigate', target.path, target.hash)
     } else {
       openLibraryFile(target.path).catch((err) => console.error('open failed', err))
@@ -373,9 +463,9 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     nativeTheme.themeSource = (await loadUiSettings()).theme
 
-    // DOCS_LIBRARY lets you (or the smoke test) point the app at a folder directly.
-    const settings = await loadSettings()
-    await openLibrary(process.env.DOCS_LIBRARY || settings.libraryPath || null)
+    // DOCS_LIBRARY lets you (or the smoke test) open folders directly, separated by ";".
+    const fromEnv = (process.env.DOCS_LIBRARY ?? '').split(path.delimiter).filter(Boolean)
+    await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths())
 
     createWindow()
     startAutoUpdate(() => win)

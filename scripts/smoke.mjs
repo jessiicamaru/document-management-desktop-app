@@ -7,7 +7,7 @@ import electronPath from 'electron'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(here, '..')
@@ -18,6 +18,10 @@ cpSync(path.join(projectRoot, 'sample-library'), library, {
   recursive: true,
   filter: (src) => !path.basename(src).startsWith('.docs-meta')
 })
+// A second folder, so the whole test runs on a multi-folder workspace (think D:\Học + C:\notes).
+const notes = path.join(workDir, 'notes')
+mkdirSync(path.join(notes, 'devops'), { recursive: true })
+writeFileSync(path.join(notes, 'devops', 'Docker cơ bản.md'), '# Docker cơ bản\n\nContainer chạy một tiến trình cô lập.\n')
 const file = (rel) => path.join(library, rel)
 const read = (rel) => readFileSync(file(rel), 'utf8')
 const metaFile = file('.docs-meta.json')
@@ -39,7 +43,7 @@ writeFileSync(metaFile, '{ "version": 1, "docs": { <<<<<<< HEAD')
 const app = await electron.launch({
   executablePath: electronPath,
   args: [projectRoot],
-  env: { ...process.env, DOCS_LIBRARY: library, STUDYDOCS_USER_DATA: userData }
+  env: { ...process.env, DOCS_LIBRARY: [library, notes].join(path.delimiter), STUDYDOCS_USER_DATA: userData }
 })
 const errors = []
 const page = await app.firstWindow()
@@ -63,6 +67,24 @@ try {
   check(readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')), 'corrupt meta file was backed up')
   await page.click('.banner button')
 
+  // 1b. Two folders in one workspace: each is a top-level node in the tree.
+  const rootNames = await page.locator('.root-row .row.root .row-title').allTextContents()
+  check(rootNames.join('|') === 'library|notes', `both folders shown as roots (${rootNames.join(', ')})`)
+  check((await page.textContent('.library-name')).includes('2 thư mục'), 'header says the workspace has 2 folders')
+  await page.fill('.search input', 'container')
+  await page.waitForSelector('.hit')
+  check((await page.textContent('.hit .hit-path')) === 'notes / devops', 'search finds docs in the second folder, with its name')
+  await page.click('.hit')
+  await docPathIs('devops/Docker cơ bản.md')
+  check((await page.textContent('.doc-root')) === 'notes', 'doc header shows which folder the doc is in')
+  await page.fill('.search input', '')
+  await page.fill('.tag-editor input', 'devops')
+  await page.press('.tag-editor input', 'Enter')
+  await page.waitForTimeout(300)
+  const notesMeta = JSON.parse(readFileSync(path.join(notes, '.docs-meta.json'), 'utf8')).docs
+  check(notesMeta['devops/Docker cơ bản.md']?.tags?.[0] === 'devops', "tags are stored in that folder's own .docs-meta.json")
+  await page.screenshot({ path: shot('0-two-folders') })
+
   // 2. HTML document renders in the sandboxed iframe.
   await openDoc('Event Sourcing — Bài học để chép vào vở')
   const frame = page.frameLocator('iframe.html-frame')
@@ -75,7 +97,11 @@ try {
   await page.click('.segmented >> text=Đang học')
   await page.fill('.tag-editor input', 'backend')
   await page.press('.tag-editor input', 'Enter')
-  await page.evaluate((p) => Promise.all([window.api.updateMeta(p, { status: 'review' }), window.api.updateMeta(p, { tags: ['react'] })]), REACT)
+  await page.evaluate(async (rel) => {
+    // Documents are addressed by workspace id "<folder key>/<path>".
+    const id = (await window.api.getLibrary()).docs.find((d) => d.rel === rel).path
+    await Promise.all([window.api.updateMeta(id, { status: 'review' }), window.api.updateMeta(id, { tags: ['react'] })])
+  }, REACT)
   const saved = JSON.parse(readFileSync(metaFile, 'utf8')).docs
   check(saved[ES]?.status === 'learning' && saved[ES]?.tags?.includes('backend'), 'status and tag saved')
   check(saved[REACT]?.status === 'review' && saved[REACT]?.tags?.[0] === 'react', 'concurrent writes both kept')
@@ -229,6 +255,16 @@ try {
   await page.waitForFunction(() => !document.querySelector('.raw-toolbar .dirty-dot'), null, { timeout: 5000 })
   check(read(REACT).trimEnd().endsWith('Thêm từ raw editor.'), 'raw editor saves with Ctrl+S')
   await page.click('.raw-toolbar >> text=Đóng raw')
+
+  // 14. Removing a folder from the workspace keeps its files.
+  dialogAnswer = 'accept'
+  await page.hover('.root-row:has-text("notes")')
+  await page.click('.root-row:has-text("notes") .root-remove')
+  await page.waitForFunction(() => document.querySelectorAll('.root-row').length === 0)
+  check((await page.textContent('.library-name')) === 'library', 'removed folder disappears; workspace shows the one folder left')
+  check(existsSync(path.join(notes, 'devops', 'Docker cơ bản.md')), 'removing a folder does not delete its files')
+  const ws = JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).libraryPaths
+  check(Array.isArray(ws) && ws.length === 1, 'workspace folders saved in settings')
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

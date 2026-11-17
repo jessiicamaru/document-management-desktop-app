@@ -71,7 +71,7 @@ export class MetaStore {
    * that are clearly the same document (same content hash, or same file name), and
    * remembers hash/name for entries that don't have them yet.
    */
-  reconcile(docs: DocEntry[]): Promise<boolean> {
+  reconcile(docs: Pick<DocEntry, 'path' | 'hash' | 'name'>[]): Promise<boolean> {
     return this.enqueue(async () => {
       const next = { ...this.docs }
       const byPath = new Map(docs.map((d) => [d.path, d]))

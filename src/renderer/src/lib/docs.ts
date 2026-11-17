@@ -141,10 +141,15 @@ export interface TreeFolder {
   docs: DocEntry[]
 }
 
-export function buildTree(docs: DocEntry[]): TreeFolder {
-  const root: TreeFolder = { name: '', path: '', folders: [], docs: [] }
+/**
+ * Groups documents into nested folders by their path inside their workspace folder (doc.rel).
+ * `prefix` is put in front of every folder path, so folders of different workspace
+ * folders get distinct ids (used to remember which ones are collapsed).
+ */
+export function buildTree(docs: DocEntry[], prefix = ''): TreeFolder {
+  const root: TreeFolder = { name: '', path: prefix, folders: [], docs: [] }
   for (const doc of docs) {
-    const parts = doc.path.split('/')
+    const parts = doc.rel.split('/')
     let cur = root
     for (const part of parts.slice(0, -1)) {
       let next = cur.folders.find((f) => f.name === part)

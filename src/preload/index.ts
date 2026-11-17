@@ -13,7 +13,8 @@ function listen<A extends unknown[]>(channel: string, cb: (...args: A) => void):
 
 const api: DocsApi = {
   getLibrary: () => ipcRenderer.invoke('library:get'),
-  chooseLibrary: () => ipcRenderer.invoke('library:choose'),
+  addFolders: () => ipcRenderer.invoke('workspace:add'),
+  removeFolder: (key) => ipcRenderer.invoke('workspace:remove', key),
   readDoc: (path) => ipcRenderer.invoke('doc:read', path),
   updateMeta: (path, patch) => ipcRenderer.invoke('meta:update', path, patch),
   markOpened: (path) => ipcRenderer.invoke('doc:opened', path),
