@@ -8,6 +8,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import type { DocEntry } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
 import type { ReaderCallbacks, ReaderHandle } from './reader'
+import { t } from '../../../shared/i18n'
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -83,22 +84,20 @@ const ImageView = forwardRef<ReaderHandle, Props>(function ImageView(props, ref)
             cb.current.onOutline([])
             cb.current.onReady()
           }}
-          onError={() => cb.current.onError(new Error('Không hiển thị được ảnh này.'))}
+          onError={() => cb.current.onError(new Error(t('Không hiển thị được ảnh này.')))}
           onDoubleClick={() => setZoom(zoom === 'fit' ? 1 : 'fit')}
         />
       </div>
-      <div className="pdf-zoom" role="toolbar" aria-label="Thu phóng">
-        <button className="icon-btn" title="Thu nhỏ (Ctrl + lăn chuột)" onClick={() => step(-1)}>
+      <div className="pdf-zoom" role="toolbar" aria-label={t('Thu phóng')}>
+        <button className="icon-btn" title={t('Thu nhỏ (Ctrl + lăn chuột)')} onClick={() => step(-1)}>
           −
         </button>
         <span className="pdf-zoom-value">{Math.round(scale * 100)}%</span>
-        <button className="icon-btn" title="Phóng to (Ctrl + lăn chuột)" onClick={() => step(1)}>
+        <button className="icon-btn" title={t('Phóng to (Ctrl + lăn chuột)')} onClick={() => step(1)}>
           +
         </button>
-        <button className={`btn small ${zoom === 'fit' ? 'active' : ''}`} title="Vừa khung (bấm đúp vào ảnh để đổi)" onClick={() => setZoom('fit')}>
-          Vừa khung
-        </button>
-        <button className={`btn small ${zoom === 1 ? 'active' : ''}`} title="Kích thước thật" onClick={() => setZoom(1)}>
+        <button className={`btn small ${zoom === 'fit' ? 'active' : ''}`} title={t('Vừa khung (bấm đúp vào ảnh để đổi)')} onClick={() => setZoom('fit')}>{t('Vừa khung')}</button>
+        <button className={`btn small ${zoom === 1 ? 'active' : ''}`} title={t('Kích thước thật')} onClick={() => setZoom(1)}>
           100%
         </button>
       </div>

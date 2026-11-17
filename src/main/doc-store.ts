@@ -15,6 +15,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { DocEntry } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /** Every entry remembers the document's content hash and file name, to follow renames. */
 export interface DocKeyed {
@@ -124,7 +125,7 @@ export abstract class DocStore<V extends DocKeyed> {
   backupPath(name: string): string {
     const prefix = `${this.fileName.replace(/\.json$/, '')}.corrupt-`
     if (typeof name !== 'string' || !name.startsWith(prefix) || !name.endsWith('.json') || /[\\/]/.test(name)) {
-      throw new Error('Không phải bản sao lưu của app')
+      throw new Error(t('Không phải bản sao lưu của app'))
     }
     return path.join(this.dir, name)
   }
@@ -137,7 +138,7 @@ export abstract class DocStore<V extends DocKeyed> {
     return this.enqueue(async () => {
       const file = this.backupPath(name)
       const docs = this.recover(await fs.readFile(file, 'utf8'))
-      if (!docs) throw new Error(`Không đọc được ${name}. Hãy mở file và sửa tay (hoặc bỏ bản này).`)
+      if (!docs) throw new Error(t('Không đọc được {0}. Hãy mở file và sửa tay (hoặc bỏ bản này).', { 0: name }))
       await this.write(this.mergeDocs(this.docs, docs))
       await fs.rename(file, file.replace('.corrupt-', '.merged-'))
       this.warning = null
@@ -290,7 +291,7 @@ export abstract class DocStore<V extends DocKeyed> {
     // Keep what is in memory too, in case the broken file lost something.
     await this.write(this.mergeDocs(recovered, this.docs))
     await fs.rename(backup, backup.replace('.corrupt-', '.merged-')).catch(() => undefined)
-    this.warning = `File ${this.fileName} bị xung đột khi đồng bộ; app đã tự gộp hai phiên bản (bản gốc lưu ở ${path.basename(backup).replace('.corrupt-', '.merged-')}).`
+    this.warning = t('File {0} bị xung đột khi đồng bộ; app đã tự gộp hai phiên bản (bản gốc lưu ở {1}).', { 0: this.fileName, 1: path.basename(backup).replace('.corrupt-', '.merged-') })
     return true
   }
 
@@ -299,9 +300,9 @@ export abstract class DocStore<V extends DocKeyed> {
     const backup = path.join(this.dir, `${this.fileName.replace(/\.json$/, '')}.corrupt-${stamp}.json`)
     await fs.writeFile(backup, raw, 'utf8')
     this.warning =
-      `File ${this.fileName} bị hỏng (có thể do xung đột khi đồng bộ). ` +
-      `Bản cũ đã được sao lưu thành ${path.basename(backup)}; ${this.contents} mới sẽ được ghi vào file mới. ` +
-      `Mở "Khôi phục" để gộp lại dữ liệu cũ.`
+      t('File {0} bị hỏng (có thể do xung đột khi đồng bộ). ', { 0: this.fileName }) +
+      t('Bản cũ đã được sao lưu thành {0}; {1} mới sẽ được ghi vào file mới. ', { 0: path.basename(backup), 1: this.contents }) +
+      t('Mở "Khôi phục" để gộp lại dữ liệu cũ.')
     return backup
   }
 }

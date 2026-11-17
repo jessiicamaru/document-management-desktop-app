@@ -16,6 +16,7 @@
 import { parse } from 'parse5'
 import type { DefaultTreeAdapterMap } from 'parse5'
 import type { HtmlBlockEdit } from '../shared/types'
+import { t } from '../shared/i18n'
 
 type Node = DefaultTreeAdapterMap['node']
 type Element = DefaultTreeAdapterMap['element']
@@ -30,21 +31,21 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
   const text = bom ? source.slice(1) : source
   const doc = parse(text, { sourceCodeLocationInfo: true })
   const html = doc.childNodes.find(isElement)
-  if (!html) throw new HtmlEditError('File HTML không có thẻ <html>.')
+  if (!html) throw new HtmlEditError(t('File HTML không có thẻ <html>.'))
 
   const ranges = edits.map((edit) => {
     let node: Element = html
     for (const index of edit.path) {
       const child = node.childNodes.filter(isElement)[index]
-      if (!child) throw new HtmlEditError('Không tìm thấy đoạn văn đã sửa trong file. File có thể vừa bị thay đổi.')
+      if (!child) throw new HtmlEditError(t('Không tìm thấy đoạn văn đã sửa trong file. File có thể vừa bị thay đổi.'))
       node = child
     }
     if (node.tagName !== edit.tag) {
-      throw new HtmlEditError(`Đoạn văn đã sửa không khớp với file (<${edit.tag}> ≠ <${node.tagName}>). Hãy sửa trong raw.`)
+      throw new HtmlEditError(t('Đoạn văn đã sửa không khớp với file (<{0}> ≠ <{1}>). Hãy sửa trong raw.', { 0: edit.tag, 1: node.tagName }))
     }
     const loc = node.sourceCodeLocation
     if (!loc?.startTag || !loc.endTag) {
-      throw new HtmlEditError(`Thẻ <${edit.tag}> trong file không có thẻ đóng nên không sửa trực tiếp được. Hãy sửa đoạn này trong raw.`)
+      throw new HtmlEditError(t('Thẻ <{0}> trong file không có thẻ đóng nên không sửa trực tiếp được. Hãy sửa đoạn này trong raw.', { 0: edit.tag }))
     }
     return { start: loc.startTag.endOffset, end: loc.endTag.startOffset, html: edit.html }
   })
@@ -52,7 +53,7 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
   // Replace from the end of the file backwards so earlier offsets stay valid.
   ranges.sort((a, b) => b.start - a.start)
   for (let i = 1; i < ranges.length; i++) {
-    if (ranges[i].end > ranges[i - 1].start) throw new HtmlEditError('Các đoạn sửa chồng lên nhau.')
+    if (ranges[i].end > ranges[i - 1].start) throw new HtmlEditError(t('Các đoạn sửa chồng lên nhau.'))
   }
   let out = text
   for (const r of ranges) out = out.slice(0, r.start) + r.html + out.slice(r.end)

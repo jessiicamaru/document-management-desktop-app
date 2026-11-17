@@ -1,6 +1,7 @@
 // Small helpers used across the UI.
 
 import { DEFAULT_META, type DocEntry, type DocMeta, type StudyStatus } from '../../../shared/types'
+import { t } from '../../../shared/i18n'
 
 export const STATUSES: { id: StudyStatus; label: string }[] = [
   { id: 'new', label: 'Chưa học' },
@@ -105,5 +106,5 @@ export function saveLocal(key: string, value: unknown): void {
 
 /** Short badge text for a document type. */
 export function kindLabel(kind: DocEntry['kind']): string {
-  return kind === 'image' ? 'ẢNH' : kind.toUpperCase()
+  return kind === 'image' ? t('ẢNH') : kind.toUpperCase()
 }

@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { DocEntry, HtmlBlockEdit } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
 import type { FindResult, ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
+import { t } from '../../../shared/i18n'
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -128,12 +129,12 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
     collectChanges: () =>
       new Promise((resolve, reject) => {
         const win = frameRef.current?.contentWindow
-        if (!win) return reject(new Error('Trang chưa tải xong'))
+        if (!win) return reject(new Error(t('Trang chưa tải xong')))
         const id = Date.now() + Math.random()
         pending.current.set(id, (edits) => resolve({ kind: 'html', edits }))
         post({ type: 'collect', id })
         setTimeout(() => {
-          if (pending.current.delete(id)) reject(new Error('Trang không phản hồi, chưa lưu được.'))
+          if (pending.current.delete(id)) reject(new Error(t('Trang không phản hồi, chưa lưu được.')))
         }, 3000)
       })
   }))

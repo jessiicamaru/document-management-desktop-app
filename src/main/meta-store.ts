@@ -4,12 +4,13 @@
 
 import { DEFAULT_META, type DocEntry, type DocMeta } from '../shared/types'
 import { DocStore } from './doc-store'
+import { t } from '../shared/i18n'
 
 export const META_FILE = 'meta.json'
 
 export class MetaStore extends DocStore<DocMeta> {
   private constructor(root: string) {
-    super(root, META_FILE, 'tag và trạng thái')
+    super(root, META_FILE, t('tag và trạng thái'))
   }
 
   static async open(root: string): Promise<MetaStore> {

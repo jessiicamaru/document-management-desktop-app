@@ -13,6 +13,7 @@ import { loadLocal, saveLocal } from '../lib/docs'
 import { generateLocations } from '../lib/epub-locations'
 import { HIGHLIGHT_COLORS } from './Annotations'
 import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
+import { t } from '../../../shared/i18n'
 
 type Book = ReturnType<typeof ePub>
 type Rendition = ReturnType<Book['renderTo']>
@@ -470,7 +471,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     <div className="epub-view">
       <div ref={hostRef} className="epub-host" />
       <div className="epub-bar">
-        <button className="icon-btn" title="Trang trước (←)" onClick={prev}>
+        <button className="icon-btn" title={t('Trang trước (←)')} onClick={prev}>
           ‹
         </button>
         <span className="epub-progress" title={progress.chapter}>

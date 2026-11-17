@@ -18,6 +18,7 @@ import { isSameOrInside, labelRoots, normalizeRoot, pathKey, rootConflict, rootK
 import { canOpenWithDefaultApp } from './open-policy'
 import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
+import { setLanguage, t } from '../shared/i18n'
 
 // Tests run with their own settings folder so they never touch your real settings.
 if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
@@ -193,7 +194,7 @@ const knownPaths = (r: Root): string[] => (r.loose ? r.files.map((f) => relOf(r,
 function storeFor(rootKey: string, store: string): MetaStore | NotesStore {
   const r = roots.find((x) => x.key === rootKey)
   const s = store === 'meta' ? r?.meta : store === 'notes' ? r?.notes : null
-  if (!s) throw new Error('Thư mục này không còn trong workspace')
+  if (!s) throw new Error(t('Thư mục này không còn trong workspace'))
   return s
 }
 /** Which store a backup file name belongs to. */
@@ -251,7 +252,7 @@ function openPendingFile(): void {
   } else if (!scanning) {
     const name = path.basename(pendingFile)
     pendingFile = null
-    void dialog.showMessageBox(win, { type: 'warning', message: `Không mở được "${name}"`, detail: 'File nằm trong thư mục ẩn (tên bắt đầu bằng dấu chấm) hoặc không còn tồn tại.' })
+    void dialog.showMessageBox(win, { type: 'warning', message: t('Không mở được "{0}"', { 0: name }), detail: t('File nằm trong thư mục ẩn (tên bắt đầu bằng dấu chấm) hoặc không còn tồn tại.') })
   }
 }
 
@@ -271,7 +272,7 @@ async function openRoot(root: Root): Promise<void> {
     root.notes = await NotesStore.open(dataDirOf(root.key))
     await writeDataInfo(root)
   } catch {
-    root.warning = 'Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.'
+    root.warning = t('Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.')
     return
   }
   root.docs = await scanRoot(root, [])
@@ -492,12 +493,12 @@ function watchRoot(root: Root): void {
       console.error('watcher error', err)
       closeRoot(root)
       // Loose files simply show as "không tìm thấy"; a workspace folder gets a warning.
-      if (!root.loose) root.warning = 'Mất kết nối với thư mục này (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file trong đó thay đổi.'
+      if (!root.loose) root.warning = t('Mất kết nối với thư mục này (bị xoá, đổi tên hoặc rút ổ). App không còn tự cập nhật khi file trong đó thay đổi.')
       void pushSnapshot()
     })
   } catch (err) {
     console.error('Cannot watch folder', err)
-    if (!root.loose) root.warning = 'Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.'
+    if (!root.loose) root.warning = t('Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.')
   }
 }
 
@@ -546,9 +547,9 @@ async function importData(raw: string): Promise<number> {
   try {
     backup = JSON.parse(raw)
   } catch {
-    throw new Error('File này không phải bản sao lưu của Study Docs.')
+    throw new Error(t('File này không phải bản sao lưu của Study Docs.'))
   }
-  if (backup?.app !== 'study-docs' || !Array.isArray(backup.folders)) throw new Error('File này không phải bản sao lưu của Study Docs.')
+  if (backup?.app !== 'study-docs' || !Array.isArray(backup.folders)) throw new Error(t('File này không phải bản sao lưu của Study Docs.'))
   const STATUSES = ['new', 'learning', 'review', 'done']
   let n = 0
   for (const folder of backup.folders) {
@@ -607,7 +608,7 @@ async function importData(raw: string): Promise<number> {
  */
 async function openLibraryFile(rel: string, fromPage = false): Promise<void> {
   const abs = inLibrary(rel)
-  if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+  if (!abs) throw new Error(t('File nằm ngoài thư mục tài liệu'))
   if (!canOpenWithDefaultApp(abs)) {
     shell.showItemInFolder(abs)
     return
@@ -615,9 +616,9 @@ async function openLibraryFile(rel: string, fromPage = false): Promise<void> {
   if (fromPage && win) {
     const { response } = await dialog.showMessageBox(win, {
       type: 'question',
-      title: 'Mở file',
-      message: `Bài đang đọc muốn mở "${path.basename(abs)}" bằng ứng dụng mặc định của Windows.`,
-      buttons: ['Mở', 'Không'],
+      title: t('Mở file'),
+      message: t('Bài đang đọc muốn mở "{0}" bằng ứng dụng mặc định của Windows.', { 0: path.basename(abs) }),
+      buttons: [t('Mở'), t('Không')],
       defaultId: 1,
       cancelId: 1
     })
@@ -635,10 +636,10 @@ async function openLibraryFile(rel: string, fromPage = false): Promise<void> {
 async function writeDocChecked(rel: string, build: (current: string) => string, expectedMtime: number): Promise<number> {
   const abs = inLibrary(rel)
   const kind = abs ? kindOf(abs) : null
-  if (!abs || (kind !== 'md' && kind !== 'html')) throw new Error('Chỉ sửa được file .md / .html trong thư mục tài liệu.')
+  if (!abs || (kind !== 'md' && kind !== 'html')) throw new Error(t('Chỉ sửa được file .md / .html trong thư mục tài liệu.'))
   const stat = await fs.stat(abs)
   if (Math.abs(stat.mtimeMs - expectedMtime) > 1) {
-    throw new Error('File vừa bị thay đổi bên ngoài app. Bài đã được tải lại; hãy sửa lại thay đổi của bạn.')
+    throw new Error(t('File vừa bị thay đổi bên ngoài app. Bài đã được tải lại; hãy sửa lại thay đổi của bạn.'))
   }
   // Refuse files that aren't UTF-8: saving them as UTF-8 would garble their text (issue #4).
   const content = build(decodeUtf8Strict(await fs.readFile(abs)))
@@ -739,9 +740,9 @@ async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): 
 function friendlyWriteError(err: unknown): Error {
   const code = (err as NodeJS.ErrnoException).code
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
-    return new Error('Không lưu được: thư mục tài liệu chỉ đọc, hoặc file đang bị app khác khoá.')
+    return new Error(t('Không lưu được: thư mục tài liệu chỉ đọc, hoặc file đang bị app khác khoá.'))
   }
-  return new Error(`Không lưu được: ${(err as Error).message}`)
+  return new Error(t('Không lưu được: {0}', { 0: (err as Error).message }))
 }
 
 // ---------- IPC handlers (called through window.api in the UI) ----------
@@ -756,8 +757,8 @@ function registerIpc(): void {
 
   ipcMain.handle('workspace:add', async () => {
     const result = await dialog.showOpenDialog(win!, {
-      title: 'Thêm thư mục vào workspace',
-      buttonLabel: 'Thêm thư mục',
+      title: t('Thêm thư mục vào workspace'),
+      buttonLabel: t('Thêm thư mục'),
       properties: ['openDirectory', 'multiSelections']
     })
     const refused = result.canceled ? [] : await addRoots(result.filePaths)
@@ -772,11 +773,11 @@ function registerIpc(): void {
   // ---------- files opened on their own, backup ----------
   ipcMain.handle('files:open', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
-      title: 'Mở tài liệu',
+      title: t('Mở tài liệu'),
       properties: ['openFile', 'multiSelections'],
       filters: [
-        { name: 'Tài liệu', extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'docx', 'txt', 'epub', 'mobi', 'azw3', 'azw'] },
-        { name: 'Ảnh', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }
+        { name: t('Tài liệu'), extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'docx', 'txt', 'epub', 'mobi', 'azw3', 'azw'] },
+        { name: t('Ảnh'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }
       ]
     })
     return canceled ? [] : addFiles(filePaths)
@@ -786,9 +787,9 @@ function registerIpc(): void {
   ipcMain.handle('data:export', async () => {
     const stamp = new Date().toISOString().slice(0, 10)
     const { canceled, filePath } = await dialog.showSaveDialog(win!, {
-      title: 'Sao lưu tag và ghi chú',
-      defaultPath: path.join(app.getPath('documents'), `Study Docs - sao lưu ${stamp}.json`),
-      filters: [{ name: 'Sao lưu Study Docs', extensions: ['json'] }]
+      title: t('Sao lưu tag và ghi chú'),
+      defaultPath: path.join(app.getPath('documents'), t('Study Docs - sao lưu {0}.json', { 0: stamp })),
+      filters: [{ name: t('Sao lưu Study Docs'), extensions: ['json'] }]
     })
     if (canceled || !filePath) return null
     await fs.writeFile(filePath, JSON.stringify(await exportData(), null, 2), 'utf8')
@@ -796,9 +797,9 @@ function registerIpc(): void {
   })
   ipcMain.handle('data:import', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
-      title: 'Khôi phục tag và ghi chú',
+      title: t('Khôi phục tag và ghi chú'),
       properties: ['openFile'],
-      filters: [{ name: 'Sao lưu Study Docs', extensions: ['json'] }]
+      filters: [{ name: t('Sao lưu Study Docs'), extensions: ['json'] }]
     })
     if (canceled || !filePaths[0]) return null
     const n = await importData(await fs.readFile(filePaths[0], 'utf8'))
@@ -808,13 +809,13 @@ function registerIpc(): void {
 
   ipcMain.handle('doc:read', async (_e, rel: string) => {
     const abs = inLibrary(rel)
-    if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!abs) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     return fs.readFile(abs, 'utf8')
   })
 
   ipcMain.handle('meta:update', async (_e, id: string, patch: Partial<DocMeta>) => {
     const loc = locate(id)
-    if (!loc?.root.meta) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!loc?.root.meta) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     // Only tags and status can be changed from the UI.
     const clean: Partial<DocMeta> = {}
     if (Array.isArray(patch.tags)) clean.tags = patch.tags.map(String)
@@ -843,13 +844,13 @@ function registerIpc(): void {
 
   ipcMain.handle('doc:readBinary', async (_e, id: string) => {
     const abs = inLibrary(id)
-    if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!abs) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     return new Uint8Array(await fs.readFile(abs))
   })
 
   ipcMain.handle('notes:save', async (_e, id: string, input: Partial<Annotation>) => {
     const loc = locate(id)
-    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!loc?.root.notes) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     const annotation = sanitizeAnnotation(input)
     try {
       return await loc.root.notes.save(loc.rel, annotation, loc.root.docs.find((d) => d.path === loc.rel))
@@ -860,7 +861,7 @@ function registerIpc(): void {
 
   ipcMain.handle('notes:delete', async (_e, id: string, annotationId: string) => {
     const loc = locate(id)
-    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!loc?.root.notes) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     try {
       return await loc.root.notes.remove(loc.rel, String(annotationId))
     } catch (err) {
@@ -870,7 +871,7 @@ function registerIpc(): void {
 
   ipcMain.handle('notes:docNote', async (_e, id: string, text: string) => {
     const loc = locate(id)
-    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    if (!loc?.root.notes) throw new Error(t('File nằm ngoài thư mục tài liệu'))
     try {
       return await loc.root.notes.setDocNote(loc.rel, String(text ?? ''), loc.root.docs.find((d) => d.path === loc.rel))
     } catch (err) {
@@ -882,7 +883,7 @@ function registerIpc(): void {
   ipcMain.handle('tags:rename', async (_e, from: string, to: string) => {
     const a = String(from ?? '').trim()
     const b = String(to ?? '').trim()
-    if (!a || !b) throw new Error('Tên tag không được trống')
+    if (!a || !b) throw new Error(t('Tên tag không được trống'))
     let n = 0
     try {
       for (const r of roots) n += (await r.meta?.renameTag(a, b)) ?? 0
@@ -903,7 +904,7 @@ function registerIpc(): void {
     return n
   })
   ipcMain.handle('library:cleanOrphans', async () => {
-    if (scanning) throw new Error('Đang quét thư mục, đợi quét xong rồi thử lại')
+    if (scanning) throw new Error(t('Đang quét thư mục, đợi quét xong rồi thử lại'))
     let n = 0
     try {
       for (const r of roots) {
@@ -936,10 +937,10 @@ function registerIpc(): void {
   ipcMain.handle('doc:exportPdf', async (_e, id: string, withNotes: boolean) => {
     const loc = locate(id)
     const doc = loc?.root.docs.find((d) => d.path === loc.rel)
-    if (!loc || !doc || (doc.kind !== 'md' && doc.kind !== 'html')) throw new Error('Chỉ xuất PDF được bài .md hoặc .html.')
+    if (!loc || !doc || (doc.kind !== 'md' && doc.kind !== 'html')) throw new Error(t('Chỉ xuất PDF được bài .md hoặc .html.'))
     const safeName = doc.title.replace(/[\\/:*?"<>|]+/g, ' ').trim().slice(0, 120) || path.parse(doc.name).name
     const { canceled, filePath } = await dialog.showSaveDialog(win!, {
-      title: 'Xuất PDF',
+      title: t('Xuất PDF'),
       defaultPath: path.join(path.dirname(loc.abs), `${safeName}.pdf`),
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     })
@@ -967,16 +968,17 @@ function registerIpc(): void {
     const clean = sanitizeUi(ui)
     await saveSettings({ ui: clean })
     nativeTheme.themeSource = clean.theme // also switches prefers-color-scheme for the pages
+    setLanguage(clean.language)
     return clean
   })
 
   ipcMain.handle('doc:write', (_e, rel: string, content: string, expectedMtime: number) => {
-    if (typeof content !== 'string') throw new Error('Nội dung không hợp lệ')
+    if (typeof content !== 'string') throw new Error(t('Nội dung không hợp lệ'))
     return writeDocChecked(rel, () => content, expectedMtime)
   })
 
   ipcMain.handle('doc:saveHtmlEdits', async (_e, rel: string, edits: HtmlBlockEdit[], expectedMtime: number) => {
-    if (kindOf(rel) !== 'html') throw new Error('Không phải file HTML')
+    if (kindOf(rel) !== 'html') throw new Error(t('Không phải file HTML'))
     try {
       return await writeDocChecked(rel, (current) => applyHtmlEdits(current, edits), expectedMtime)
     } catch (err) {
@@ -1060,10 +1062,10 @@ function createWindow(): void {
   webContents.on('will-prevent-unload', (e) => {
     const choice = dialog.showMessageBoxSync(win!, {
       type: 'question',
-      title: 'Thay đổi chưa lưu',
-      message: 'Bạn đang có thay đổi chưa lưu.',
-      detail: 'Thoát bây giờ sẽ mất các thay đổi đó.',
-      buttons: ['Ở lại', 'Thoát, bỏ thay đổi'],
+      title: t('Thay đổi chưa lưu'),
+      message: t('Bạn đang có thay đổi chưa lưu.'),
+      detail: t('Thoát bây giờ sẽ mất các thay đổi đó.'),
+      buttons: [t('Ở lại'), t('Thoát, bỏ thay đổi')],
       defaultId: 0,
       cancelId: 0
     })
@@ -1135,7 +1137,9 @@ if (!app.requestSingleInstanceLock()) {
     })
 
     registerIpc()
-    nativeTheme.themeSource = (await loadUiSettings()).theme
+    const startUi = await loadUiSettings()
+    nativeTheme.themeSource = startUi.theme
+    setLanguage(startUi.language)
 
     scanCache = new ScanCache(path.join(app.getPath('userData'), 'scan-cache.json'))
     await scanCache.load()

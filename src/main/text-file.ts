@@ -1,3 +1,4 @@
+import { t } from '../shared/i18n'
 // Reading a text file that is about to be edited.
 //
 // Edits are written back as UTF-8. A file in another encoding (e.g. Windows-1258) read as
@@ -6,7 +7,7 @@
 
 export class NotUtf8Error extends Error {
   constructor() {
-    super('File này không phải mã hoá UTF-8, nên không sửa được trong app (sẽ làm hỏng chữ). Hãy chuyển file sang UTF-8 bằng một trình soạn thảo khác, hoặc chỉ xem.')
+    super(t('File này không phải mã hoá UTF-8, nên không sửa được trong app (sẽ làm hỏng chữ). Hãy chuyển file sang UTF-8 bằng một trình soạn thảo khác, hoặc chỉ xem.'))
   }
 }
 

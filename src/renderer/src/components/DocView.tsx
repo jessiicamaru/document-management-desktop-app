@@ -12,6 +12,7 @@ import ImageView from './ImageView'
 import FindBar from './FindBar'
 import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
+import { t } from '../../../shared/i18n'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
 type Mode = 'view' | 'edit' | 'raw'
@@ -85,7 +86,7 @@ export default function DocView(props: Props) {
   }, [updateDirty])
 
   const cancelEdit = useCallback((): void => {
-    if (dirty && !window.confirm('Bỏ các thay đổi chưa lưu?')) return
+    if (dirty && !window.confirm(t('Bỏ các thay đổi chưa lưu?'))) return
     stopEdit()
   }, [dirty, stopEdit])
 
@@ -100,7 +101,7 @@ export default function DocView(props: Props) {
     } catch (err) {
       onError(err)
       // If the file changed under us, there is nothing safe to retry: reload it.
-      if (String(err).includes('thay đổi bên ngoài')) stopEdit()
+      if (String(err).includes(t('thay đổi bên ngoài'))) stopEdit()
     } finally {
       setSaving(false)
     }
@@ -220,11 +221,11 @@ export default function DocView(props: Props) {
   // ---------- export ----------
 
   const exportPdf = async (withNotes: boolean): Promise<void> => {
-    if (dirty) return onError(new Error('Hãy lưu thay đổi trước khi xuất PDF.'))
+    if (dirty) return onError(new Error(t('Hãy lưu thay đổi trước khi xuất PDF.')))
     setExporting(true)
     try {
       const file = await window.api.exportPdf(doc.path, withNotes)
-      if (file) onInfo(`Đã xuất PDF: ${file}`)
+      if (file) onInfo(t('Đã xuất PDF: {0}', { 0: file }))
     } catch (err) {
       onError(err)
     } finally {
@@ -290,10 +291,10 @@ export default function DocView(props: Props) {
       <header className="doc-header">
         <div className="doc-title-row">
           <div className="history-buttons">
-            <button className="icon-btn" title="Quay lại (Alt+←)" disabled={!props.history.canBack} onClick={() => props.onHistory('back')}>
+            <button className="icon-btn" title={t('Quay lại (Alt+←)')} disabled={!props.history.canBack} onClick={() => props.onHistory('back')}>
               ‹
             </button>
-            <button className="icon-btn" title="Tiến tới (Alt+→)" disabled={!props.history.canForward} onClick={() => props.onHistory('forward')}>
+            <button className="icon-btn" title={t('Tiến tới (Alt+→)')} disabled={!props.history.canForward} onClick={() => props.onHistory('forward')}>
               ›
             </button>
           </div>
@@ -301,7 +302,7 @@ export default function DocView(props: Props) {
             <h1 title={doc.title}>{doc.title}</h1>
             <div className="doc-where">
               {rootName && (
-                <span className="doc-root" title="Thư mục trong workspace">
+                <span className="doc-root" title={t('Thư mục trong workspace')}>
                   {rootName}
                 </span>
               )}
@@ -313,44 +314,38 @@ export default function DocView(props: Props) {
         {mode === 'edit' ? (
           <div className="doc-controls edit-bar">
             <span className="edit-hint">
-              <b>Đang sửa chữ.</b> Bấm vào đoạn văn (hoặc chữ trong sơ đồ) để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.
-            </span>
+              <b>{t('Đang sửa chữ.')}</b>{' '}{t('Bấm vào đoạn văn (hoặc chữ trong sơ đồ) để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.')}</span>
             <div className="spacer" />
-            {dirty && <span className="dirty-dot" title="Chưa lưu" />}
-            <button className="btn small" onClick={cancelEdit}>
-              Huỷ (Esc)
-            </button>
+            {dirty && <span className="dirty-dot" title={t('Chưa lưu')} />}
+            <button className="btn small" onClick={cancelEdit}>{t('Huỷ (Esc)')}</button>
             <button className="btn primary small" disabled={saving} onClick={() => void saveEdit()}>
-              {saving ? 'Đang lưu…' : 'Lưu (Ctrl+S)'}
+              {saving ? t('Đang lưu…') : t('Lưu (Ctrl+S)')}
             </button>
           </div>
         ) : (
           <div className="doc-controls">
-            <div className="segmented" role="group" aria-label="Trạng thái học">
+            <div className="segmented" role="group" aria-label={t('Trạng thái học')}>
               {STATUSES.map((s) => (
                 <button
                   key={s.id}
                   className={`status-${s.id} ${meta.status === s.id ? 'active' : ''}`}
                   onClick={() => onUpdateMeta({ status: s.id })}
                 >
-                  {s.label}
+                  {t(s.label)}
                 </button>
               ))}
             </div>
             <TagEditor tags={meta.tags} onChange={(tags) => onUpdateMeta({ tags })} />
             <div className="spacer" />
-            <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục và ghi chú">
-              Mục lục{annotations.length > 0 && ` · ${annotations.length} ghi chú`}
+            <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title={t('Hiện/ẩn mục lục và ghi chú')}>{t('Mục lục')}{annotations.length > 0 && t(' · {0} ghi chú', { 0: annotations.length })}
             </button>
             {canEdit && (
               <>
-                <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title="Sửa chữ ngay trên bài">
-                  Sửa chữ
-                </button>
+                <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title={t('Sửa chữ ngay trên bài')}>{t('Sửa chữ')}</button>
                 <button
                   className={`btn ${mode === 'raw' ? 'active' : ''}`}
                   onClick={() => (mode === 'raw' ? setMode('view') : setMode('raw'))}
-                  title="Mở mã nguồn để sửa bố cục, sơ đồ..."
+                  title={t('Mở mã nguồn để sửa bố cục, sơ đồ...')}
                 >
                   Raw
                 </button>
@@ -372,13 +367,10 @@ export default function DocView(props: Props) {
         <div className={`doc-body ${showOutline ? 'with-outline' : ''}`}>
           <div className="pane">{preview}</div>
           {showOutline && (
-            <nav className="outline" aria-label="Mục lục và ghi chú">
+            <nav className="outline" aria-label={t('Mục lục và ghi chú')}>
               <div className="panel-tabs" role="tablist">
-                <button role="tab" aria-selected={panelTab === 'outline'} className={panelTab === 'outline' ? 'active' : ''} onClick={() => showPanelTab('outline')}>
-                  Mục lục
-                </button>
-                <button role="tab" aria-selected={panelTab === 'notes'} className={panelTab === 'notes' ? 'active' : ''} onClick={() => showPanelTab('notes')}>
-                  Ghi chú{annotations.length > 0 && ` (${annotations.length})`}
+                <button role="tab" aria-selected={panelTab === 'outline'} className={panelTab === 'outline' ? 'active' : ''} onClick={() => showPanelTab('outline')}>{t('Mục lục')}</button>
+                <button role="tab" aria-selected={panelTab === 'notes'} className={panelTab === 'notes' ? 'active' : ''} onClick={() => showPanelTab('notes')}>{t('Ghi chú')}{annotations.length > 0 && ` (${annotations.length})`}
                 </button>
               </div>
               {panelTab === 'notes' && (
@@ -398,7 +390,7 @@ export default function DocView(props: Props) {
                   }}
                 />
               )}
-              {panelTab === 'outline' && outline.length === 0 && <div className="empty">Bài này không có tiêu đề nào.</div>}
+              {panelTab === 'outline' && outline.length === 0 && <div className="empty">{t('Bài này không có tiêu đề nào.')}</div>}
               {panelTab === 'outline' && outline.map((item, i) => (
                 <button
                   key={i}
@@ -455,23 +447,19 @@ function MoreMenu({ doc, onError, onExport, hasNotes, exporting }: MoreMenuProps
   }, [open])
   return (
     <div className="more" ref={ref}>
-      <button className="btn" aria-label="Thêm" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {exporting ? 'Đang xuất PDF…' : '⋯'}
+      <button className="btn" aria-label={t('Thêm')} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {exporting ? t('Đang xuất PDF…') : '⋯'}
       </button>
       {open && (
         <div className="popover menu">
           {onExport && (
-            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(false))}>
-              Xuất PDF…
-            </button>
+            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(false))}>{t('Xuất PDF…')}</button>
           )}
           {onExport && hasNotes && (
-            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(true))}>
-              Xuất PDF kèm highlight và ghi chú…
-            </button>
+            <button disabled={exporting} onClick={() => (setOpen(false), void onExport(true))}>{t('Xuất PDF kèm highlight và ghi chú…')}</button>
           )}
-          <button onClick={() => (setOpen(false), window.api.openPath(doc.path).catch(onError))}>Mở bằng app mặc định</button>
-          <button onClick={() => (setOpen(false), window.api.revealInFolder(doc.path).catch(onError))}>Hiện trong thư mục</button>
+          <button onClick={() => (setOpen(false), window.api.openPath(doc.path).catch(onError))}>{t('Mở bằng app mặc định')}</button>
+          <button onClick={() => (setOpen(false), window.api.revealInFolder(doc.path).catch(onError))}>{t('Hiện trong thư mục')}</button>
         </div>
       )}
     </div>
@@ -487,10 +475,10 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
   }
   return (
     <div className="tag-editor">
-      {tags.map((t) => (
-        <span key={t} className="tag">
-          #{t}
-          <button aria-label={`Xoá tag ${t}`} onClick={() => onChange(tags.filter((x) => x !== t))}>
+      {tags.map((tag) => (
+        <span key={tag} className="tag">
+          #{tag}
+          <button aria-label={t('Xoá tag {0}', { 0: tag })} onClick={() => onChange(tags.filter((x) => x !== tag))}>
             ×
           </button>
         </span>

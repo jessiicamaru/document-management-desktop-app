@@ -7,6 +7,7 @@
 
 import { createHash } from 'node:crypto'
 import path from 'node:path'
+import { t } from '../shared/i18n'
 
 const caseInsensitive = process.platform === 'win32'
 
@@ -46,9 +47,9 @@ export function isSameOrInside(inner: string, outer: string): boolean {
  */
 export function rootConflict(existing: string[], candidate: string): string | null {
   for (const root of existing) {
-    if (pathKey(root) === pathKey(candidate)) return `${candidate} đã có trong workspace.`
-    if (isSameOrInside(candidate, root)) return `${candidate} nằm bên trong ${root}, vốn đã có trong workspace.`
-    if (isSameOrInside(root, candidate)) return `${candidate} chứa ${root}, vốn đã có trong workspace. Hãy bỏ ${root} trước.`
+    if (pathKey(root) === pathKey(candidate)) return t('{0} đã có trong workspace.', { 0: candidate })
+    if (isSameOrInside(candidate, root)) return t('{0} nằm bên trong {1}, vốn đã có trong workspace.', { 0: candidate, 1: root })
+    if (isSameOrInside(root, candidate)) return t('{0} chứa {1}, vốn đã có trong workspace. Hãy bỏ {2} trước.', { 0: candidate, 1: root, 2: root })
   }
   return null
 }

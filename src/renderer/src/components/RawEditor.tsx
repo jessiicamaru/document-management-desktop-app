@@ -7,6 +7,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
 import type { DocEntry } from '../../../shared/types'
 import { detectEol, fromLf, toLf, type Eol } from '../lib/eol'
+import { t } from '../../../shared/i18n'
 
 interface Props {
   doc: DocEntry
@@ -127,20 +128,18 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
       <div className="raw-toolbar">
         <span className="raw-title">
           Raw · {doc.name}
-          {dirty && <span className="dirty-dot" title="Chưa lưu" />}
+          {dirty && <span className="dirty-dot" title={t('Chưa lưu')} />}
         </span>
         <button className="btn primary small" disabled={!dirty || saving} onClick={() => void save()}>
-          {saving ? 'Đang lưu…' : 'Lưu (Ctrl+S)'}
+          {saving ? t('Đang lưu…') : t('Lưu (Ctrl+S)')}
         </button>
         <button
           className="btn small"
           onClick={() => {
-            if (dirty && !window.confirm('Đóng raw và bỏ các thay đổi chưa lưu?')) return
+            if (dirty && !window.confirm(t('Đóng raw và bỏ các thay đổi chưa lưu?'))) return
             onClose()
           }}
-        >
-          Đóng raw
-        </button>
+        >{t('Đóng raw')}</button>
       </div>
       <div ref={hostRef} className="raw-host" />
     </div>

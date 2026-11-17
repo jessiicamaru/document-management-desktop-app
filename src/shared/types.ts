@@ -138,6 +138,8 @@ export interface UiSettings {
   epubSpread: 'single' | 'auto'
   /** List image files (.png, .jpg...) in the sidebar. Off for folders full of pictures used by notes. */
   showImages: boolean
+  /** Interface language (see shared/i18n.ts). */
+  language: 'vi' | 'en'
 }
 
 export const DEFAULT_UI: UiSettings = {
@@ -148,7 +150,8 @@ export const DEFAULT_UI: UiSettings = {
   readingWidth: 'normal',
   sidebarSort: 'name',
   epubSpread: 'auto',
-  showImages: true
+  showImages: true,
+  language: 'vi'
 }
 
 /** One edited block of an HTML document: which element (by position) and its new inner HTML. */

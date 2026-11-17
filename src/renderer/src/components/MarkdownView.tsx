@@ -12,6 +12,7 @@ import type { ScrollTarget } from '../App'
 import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
 import type { Annotation } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
+import { t } from '../../../shared/i18n'
 
 const anchoring = createAnchoring()
 
@@ -304,7 +305,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     const after = editableBlocks(check).map((e) => plainText(e).trim())
     const expected = blocks.current.map((b) => plainText(b.el).trim())
     if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {
-      throw new MdEditError('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.')
+      throw new MdEditError(t('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.'))
     }
     return next
   }
@@ -374,7 +375,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     else window.api.openPath(target.path).catch(onError)
   }
 
-  if (error) return <div className="md-error">Không đọc được file: {error}</div>
+  if (error) return <div className="md-error">{t('Không đọc được file:')}{' '}{error}</div>
   return (
     <div className="md-scroll" ref={scrollRef}>
       <article

@@ -34,7 +34,7 @@ export interface Anchoring {
   /** What is selected inside root, or null. */
   selectionInfo(root: Element, selection: Selection | null): SelectionInfo | null
   /** For export: numbers the notes (¹ ² ³) after their highlight and lists them at the end of root. */
-  printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string): void
+  printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string, missingLabel?: string): void
   /** Ctrl+F: every place `query` occurs in root's text (accent- and case-insensitive). */
   findAll(root: Element, query: string): Range[]
   /** Shows find matches with the CSS Custom Highlight API (no change to the page's DOM). */
@@ -177,7 +177,8 @@ export function createAnchoring(): Anchoring {
     return { ...q, start: at.start, end: at.end, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }
   }
 
-  function printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string) {
+  /** heading / missingLabel come in the interface language (this code also runs inside pages, without t()). */
+  function printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string, missingLabel?: string) {
     const doc = root.ownerDocument
     const missing = apply(root, annotations)
     const text = textIndex(root).text
@@ -240,7 +241,7 @@ export function createAnchoring(): Anchoring {
         note.append(back)
       } else {
         const gone = doc.createElement('div')
-        gone.textContent = '(đoạn trích này không còn trong bài)'
+        gone.textContent = missingLabel || '(đoạn trích này không còn trong bài)'
         gone.style.cssText = 'color:#999;font-size:0.9em'
         li.append(gone)
       }

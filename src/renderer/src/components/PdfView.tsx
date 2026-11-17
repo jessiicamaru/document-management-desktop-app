@@ -14,6 +14,7 @@ import type { Annotation, DocEntry } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 import { loadLocal, saveLocal } from '../lib/docs'
 import type { FindResult, OutlineItem, ReaderCallbacks, ReaderHandle } from './reader'
+import { t } from '../../../shared/i18n'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -483,17 +484,15 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
       <div className="pdf-scroll" ref={scrollRef} tabIndex={0}>
         <div className="pdf-pages" ref={pagesRef} />
       </div>
-      <div className="pdf-zoom" role="toolbar" aria-label="Thu phóng">
-        <button className="icon-btn" title="Thu nhỏ" onClick={() => zoomStep(-1)}>
+      <div className="pdf-zoom" role="toolbar" aria-label={t('Thu phóng')}>
+        <button className="icon-btn" title={t('Thu nhỏ')} onClick={() => zoomStep(-1)}>
           −
         </button>
         <span className="pdf-zoom-value">{Math.round(shownScale * 100)}%</span>
-        <button className="icon-btn" title="Phóng to" onClick={() => zoomStep(1)}>
+        <button className="icon-btn" title={t('Phóng to')} onClick={() => zoomStep(1)}>
           +
         </button>
-        <button className={`btn small ${zoom === 'fit' ? 'active' : ''}`} title="Vừa chiều ngang" onClick={() => setZoom('fit')}>
-          Vừa khung
-        </button>
+        <button className={`btn small ${zoom === 'fit' ? 'active' : ''}`} title={t('Vừa chiều ngang')} onClick={() => setZoom('fit')}>{t('Vừa khung')}</button>
       </div>
     </div>
   )

@@ -10,6 +10,7 @@
 
 import { createAnchoring } from '../shared/anchor'
 import type { Annotation } from '../shared/types'
+import { t } from '../shared/i18n'
 
 /** Source of createAnchoring, run inside the page. It is self-contained by design. */
 const anchoringSource = (): string => `(${createAnchoring.toString()})()`
@@ -156,7 +157,7 @@ export function printNotesInjection(annotations: Annotation[], docNote = ''): st
 <script data-studydocs>
 (() => {
   const anchoring = ${anchoringSource()}
-  anchoring.printNotes(document.body, ${scriptJson(annotations)}, 'Ghi chú', ${scriptJson(docNote)})
+  anchoring.printNotes(document.body, ${scriptJson(annotations)}, ${scriptJson(t('Ghi chú'))}, ${scriptJson(docNote)}, ${scriptJson(t('(đoạn trích này không còn trong bài)'))})
 })()
 </script>`
 }

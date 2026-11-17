@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { FindResult, ReaderHandle } from './reader'
+import { t } from '../../../shared/i18n'
 
 interface Props {
   reader: React.RefObject<ReaderHandle | null>
@@ -56,7 +57,7 @@ export default function FindBar({ reader, focusKey, onClose }: Props) {
       <input
         ref={input}
         value={query}
-        placeholder="Tìm trong bài…"
+        placeholder={t('Tìm trong bài…')}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
@@ -67,15 +68,15 @@ export default function FindBar({ reader, focusKey, onClose }: Props) {
         }}
       />
       <span className="find-count">
-        {busy ? '…' : result ? (result.total ? `${result.index + 1}/${result.total}` : 'Không thấy') : ''}
+        {busy ? '…' : result ? (result.total ? `${result.index + 1}/${result.total}` : t('Không thấy')) : ''}
       </span>
-      <button className="icon-btn" title="Kết quả trước (Shift+Enter)" onClick={() => void step(-1)} disabled={!result?.total}>
+      <button className="icon-btn" title={t('Kết quả trước (Shift+Enter)')} onClick={() => void step(-1)} disabled={!result?.total}>
         ↑
       </button>
-      <button className="icon-btn" title="Kết quả sau (Enter)" onClick={() => void step(1)} disabled={!result?.total}>
+      <button className="icon-btn" title={t('Kết quả sau (Enter)')} onClick={() => void step(1)} disabled={!result?.total}>
         ↓
       </button>
-      <button className="icon-btn" title="Đóng (Esc)" onClick={onClose}>
+      <button className="icon-btn" title={t('Đóng (Esc)')} onClick={onClose}>
         ×
       </button>
     </div>

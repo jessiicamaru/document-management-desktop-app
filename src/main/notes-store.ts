@@ -5,6 +5,7 @@
 
 import type { Annotation, DocEntry, HighlightColor } from '../shared/types'
 import { DocStore, type DocKeyed } from './doc-store'
+import { t } from '../shared/i18n'
 
 export const NOTES_FILE = 'notes.json'
 
@@ -21,9 +22,9 @@ const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.sli
 
 /** Keeps only known fields with sane sizes; anything coming from the UI goes through here. */
 export function sanitizeAnnotation(input: Partial<Annotation>, now = Date.now()): Annotation {
-  if (typeof input.id !== 'string' || !/^[\w-]{6,64}$/.test(input.id)) throw new Error('Ghi chú không hợp lệ (id)')
+  if (typeof input.id !== 'string' || !/^[\w-]{6,64}$/.test(input.id)) throw new Error(t('Ghi chú không hợp lệ (id)'))
   const quote = text(input.quote, 5000)
-  if (!quote.trim()) throw new Error('Ghi chú không hợp lệ (đoạn trích trống)')
+  if (!quote.trim()) throw new Error(t('Ghi chú không hợp lệ (đoạn trích trống)'))
   return {
     id: input.id,
     color: COLORS.includes(input.color as HighlightColor) ? (input.color as HighlightColor) : 'yellow',
@@ -40,7 +41,7 @@ export function sanitizeAnnotation(input: Partial<Annotation>, now = Date.now())
 
 export class NotesStore extends DocStore<DocNotes> {
   private constructor(root: string) {
-    super(root, NOTES_FILE, 'highlight và ghi chú')
+    super(root, NOTES_FILE, t('highlight và ghi chú'))
   }
 
   static async open(root: string): Promise<NotesStore> {

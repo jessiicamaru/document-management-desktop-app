@@ -10,6 +10,7 @@
 
 import JSZip from 'jszip'
 import { MOBI, type MobiTocItem } from '../../../vendor/foliate/mobi.js'
+import { t } from '../../../shared/i18n'
 
 /** Fonts inside Kindle books are zlib-compressed. */
 async function unzlib(data: Uint8Array): Promise<Uint8Array> {
@@ -30,7 +31,7 @@ export async function mobiToEpub(bytes: Uint8Array): Promise<ConvertedBook> {
   const inner = (book as unknown as { mobi?: { headers?: { palmdoc?: { encryption?: number } } } }).mobi
   if (inner?.headers?.palmdoc?.encryption) {
     book.destroy()
-    throw new Error('Sách này có DRM (mua trên Kindle) nên không mở được.')
+    throw new Error(t('Sách này có DRM (mua trên Kindle) nên không mở được.'))
   }
   try {
     // 1. Chapters, as documents (so the table of contents can point inside them).
@@ -42,7 +43,7 @@ export async function mobiToEpub(bytes: Uint8Array): Promise<ConvertedBook> {
       if (doc.querySelector('parsererror')) doc = new DOMParser().parseFromString(text, 'text/html')
       chapters.push({ index, file: `text/c${index}.xhtml`, doc })
     }
-    if (!chapters.length) throw new Error('Không đọc được nội dung cuốn sách này.')
+    if (!chapters.length) throw new Error(t('Không đọc được nội dung cuốn sách này.'))
 
     // 2. Table of contents: each entry becomes a link to its chapter (and the place inside it).
     let ids = 0
@@ -68,10 +69,10 @@ export async function mobiToEpub(bytes: Uint8Array): Promise<ConvertedBook> {
     }
     let nav = ''
     for (const item of book.toc ?? []) nav += await navItem(item)
-    if (!nav) nav = chapters.map((c, i) => `<li><a href="${c.file}">Phần ${i + 1}</a></li>`).join('')
+    if (!nav) nav = chapters.map((c, i) => t('<li><a href="{0}">Phần {1}</a></li>', { 0: c.file, 1: i + 1 })).join('')
 
     // 3. The EPUB itself.
-    const title = book.metadata.title?.trim() || 'Sách'
+    const title = book.metadata.title?.trim() || t('Sách')
     const lang = book.metadata.language || 'und'
     const zip = new JSZip()
     zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' })

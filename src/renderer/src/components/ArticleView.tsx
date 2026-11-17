@@ -8,6 +8,7 @@ import type { Annotation, DocEntry } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 import { decodeText } from '../../../shared/text'
 import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
+import { t } from '../../../shared/i18n'
 
 const anchoring = createAnchoring()
 
@@ -29,7 +30,7 @@ async function loadHtml(doc: DocEntry): Promise<{ html: string; note?: string }>
     const text = decodeText(cut ? bytes.subarray(0, MAX_TEXT_BYTES) : bytes)
     return {
       html: `<pre class="plain-text">${escapeHtml(text)}</pre>`,
-      note: cut ? `File lớn: chỉ hiện ${MAX_TEXT_BYTES / 1024 / 1024} MB đầu. Mở bằng app mặc định để xem hết.` : undefined
+      note: cut ? t('File lớn: chỉ hiện {0} MB đầu. Mở bằng app mặc định để xem hết.', { 0: MAX_TEXT_BYTES / 1024 / 1024 }) : undefined
     }
   }
   // Word: headings, lists, tables, bold/italic, links and images (embedded as data: URLs).

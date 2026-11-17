@@ -19,6 +19,7 @@
     "make-icon": "electron scripts/make-icon.cjs"
   },
   "devDependencies": {
+    "@babel/parser": "^7.29.14",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/theme-one-dark": "^6.1.3",

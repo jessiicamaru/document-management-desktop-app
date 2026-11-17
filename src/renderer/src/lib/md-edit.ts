@@ -10,6 +10,7 @@
 // The caller re-renders the result and checks the text matches before writing anything.
 
 import type MarkdownItModule from 'markdown-it'
+import { t } from '../../../shared/i18n'
 
 type MarkdownIt = InstanceType<typeof MarkdownItModule>
 
@@ -209,7 +210,7 @@ export function applyMarkdownEdits(source: string, edits: MdBlockEdit[]): string
   for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
     const segment = out.slice(edit.start, edit.end)
     const map = alignText(segment, edit.oldText)
-    if (!map) throw new MdEditError('Không khớp được đoạn văn với file Markdown. Hãy sửa đoạn này trong raw.')
+    if (!map) throw new MdEditError(t('Không khớp được đoạn văn với file Markdown. Hãy sửa đoạn này trong raw.'))
     let next = segment
     for (const h of diffWords(edit.oldText, edit.newText).reverse()) {
       let from: number

@@ -3,6 +3,7 @@ import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo, SearchResult, Search
 import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
+import { t } from '../../../shared/i18n'
 
 export interface SearchHit {
   doc: DocEntry
@@ -42,7 +43,7 @@ export default function Sidebar(props: Props) {
   // Workspace folders; the folders of loose files only show in the "File lẻ" group.
   const roots = (lib?.roots ?? []).filter((r) => !r.loose)
   const workspaceName =
-    roots.length === 0 ? 'Chưa có thư mục' : roots.length === 1 ? roots[0].name : `Workspace · ${roots.length} thư mục`
+    roots.length === 0 ? t('Chưa có thư mục') : roots.length === 1 ? roots[0].name : t('Workspace · {0} thư mục', { 0: roots.length })
   const rootNames = Object.fromEntries((lib?.roots ?? []).map((r) => [r.key, r.name]))
   const looseFiles = lib?.looseFiles ?? []
   const listRef = useRef<HTMLDivElement>(null)
@@ -68,21 +69,21 @@ export default function Sidebar(props: Props) {
         <div className="library-name" title={roots.map((r) => r.path).join('\n')}>
           {workspaceName}
         </div>
-        <button className="icon-btn" title="Mở file… (Ctrl+O)" onClick={props.onOpenFiles}>
+        <button className="icon-btn" title={t('Mở file… (Ctrl+O)')} onClick={props.onOpenFiles}>
           <FilePlusIcon />
         </button>
-        <button className="icon-btn" title="Thêm thư mục vào workspace" onClick={props.onAddFolders}>
+        <button className="icon-btn" title={t('Thêm thư mục vào workspace')} onClick={props.onAddFolders}>
           <FolderPlusIcon />
         </button>
         <button
           className={`icon-btn ${props.recentOpen ? 'active' : ''}`}
-          title="Mở gần đây (Ctrl+E)"
+          title={t('Mở gần đây (Ctrl+E)')}
           aria-expanded={props.recentOpen}
           onClick={() => props.onRecentOpen(!props.recentOpen)}
         >
           <ClockIcon />
         </button>
-        <button className="icon-btn" title="Cài đặt" onClick={props.onOpenSettings}>
+        <button className="icon-btn" title={t('Cài đặt')} onClick={props.onOpenSettings}>
           <GearIcon />
         </button>
         {props.recentOpen && (
@@ -94,7 +95,7 @@ export default function Sidebar(props: Props) {
         <input
           ref={props.searchRef}
           value={query}
-          placeholder="Tìm tài liệu…  (Ctrl+K)"
+          placeholder={t('Tìm tài liệu…  (Ctrl+K)')}
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') onQuery('')
@@ -109,8 +110,7 @@ export default function Sidebar(props: Props) {
       </div>
 
       <div className="filters">
-        <Chip active={props.statusFilter === 'all'} onClick={() => props.onStatusFilter('all')}>
-          Tất cả <span className="count">{statusCounts.all ?? 0}</span>
+        <Chip active={props.statusFilter === 'all'} onClick={() => props.onStatusFilter('all')}>{t('Tất cả')}{' '}<span className="count">{statusCounts.all ?? 0}</span>
         </Chip>
         {STATUSES.map((s) => (
           <Chip
@@ -119,7 +119,7 @@ export default function Sidebar(props: Props) {
             active={props.statusFilter === s.id}
             onClick={() => props.onStatusFilter(props.statusFilter === s.id ? 'all' : s.id)}
           >
-            {s.label} <span className="count">{statusCounts[s.id] ?? 0}</span>
+            {t(s.label)} <span className="count">{statusCounts[s.id] ?? 0}</span>
           </Chip>
         ))}
       </div>
@@ -140,7 +140,7 @@ export default function Sidebar(props: Props) {
         ) : (
           <div className="group">
             <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} />
-            {docs.length === 0 && roots.length > 0 && <div className="empty">Không có tài liệu nào khớp.</div>}
+            {docs.length === 0 && roots.length > 0 && <div className="empty">{t('Không có tài liệu nào khớp.')}</div>}
             {looseFiles.length > 0 && (
               <LooseFiles files={looseFiles} docs={docs} selected={selected} onOpen={onOpen} onRemove={props.onRemoveLoose} />
             )}
@@ -151,15 +151,13 @@ export default function Sidebar(props: Props) {
       {props.appInfo && (
         <div className="sidebar-foot">
           <span>Study Docs v{props.appInfo.version}</span>
-          {lib?.scanning && <span className="update-progress">Đang quét thư mục…</span>}
+          {lib?.scanning && <span className="update-progress">{t('Đang quét thư mục…')}</span>}
           {!lib?.scanning && props.searchStatus && props.searchStatus.done < props.searchStatus.total && (
-            <span className="update-progress" title="Đọc nội dung tài liệu để tìm kiếm; tìm theo tên vẫn dùng được ngay">
-              Đang lập chỉ mục {props.searchStatus.done}/{props.searchStatus.total}
+            <span className="update-progress" title={t('Đọc nội dung tài liệu để tìm kiếm; tìm theo tên vẫn dùng được ngay')}>{t('Đang lập chỉ mục')}{' '}{props.searchStatus.done}/{props.searchStatus.total}
             </span>
           )}
           {props.appInfo.update.state === 'downloading' && (
-            <span className="update-progress">
-              Đang tải bản {props.appInfo.update.version}… {props.appInfo.update.percent ?? 0}%
+            <span className="update-progress">{t('Đang tải bản')}{' '}{props.appInfo.update.version}… {props.appInfo.update.percent ?? 0}%
             </span>
           )}
         </div>
@@ -289,21 +287,21 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
               >
                 <span className={`chevron ${open ? 'open' : ''}`}>▸</span>
                 <span className="row-title">{root.name}</span>
-                {!root.available && <span className="root-missing">không tìm thấy</span>}
+                {!root.available && <span className="root-missing">{t('không tìm thấy')}</span>}
               </button>
               <button
                 className="icon-btn small root-remove"
-                title="Bỏ thư mục này khỏi workspace (không xoá file)"
-                aria-label={`Bỏ ${root.name} khỏi workspace`}
+                title={t('Bỏ thư mục này khỏi workspace (không xoá file)')}
+                aria-label={t('Bỏ {0} khỏi workspace', { 0: root.name })}
                 onClick={() => {
-                  if (window.confirm(`Bỏ thư mục "${root.name}" khỏi workspace?\n\n${root.path}\n\nFile trên ổ đĩa không bị xoá.`)) onRemoveRoot(root.key)
+                  if (window.confirm(t('Bỏ thư mục "{0}" khỏi workspace?\n\n{1}\n\nFile trên ổ đĩa không bị xoá.', { 0: root.name, 1: root.path }))) onRemoveRoot(root.key)
                 }}
               >
                 ×
               </button>
             </div>
             {open && renderFolder(tree, 1)}
-            {open && empty && root.available && <div className="empty indent">Không có tài liệu nào khớp.</div>}
+            {open && empty && root.available && <div className="empty indent">{t('Không có tài liệu nào khớp.')}</div>}
           </div>
         )
       })}
@@ -332,7 +330,7 @@ function LooseFiles({
   const name = (p: string): string => p.split(/[\\/]/).pop() ?? p
   return (
     <div className="loose-group">
-      <div className="group-title">File lẻ</div>
+      <div className="group-title">{t('File lẻ')}</div>
       {rows.map((f) => {
         const doc = f.id ? byId.get(f.id) : undefined
         return (
@@ -342,10 +340,10 @@ function LooseFiles({
             ) : (
               <div className="row doc missing" title={f.path}>
                 <span className="row-title">{name(f.path)}</span>
-                <span className="root-missing">không tìm thấy</span>
+                <span className="root-missing">{t('không tìm thấy')}</span>
               </div>
             )}
-            <button className="icon-btn small root-remove" title="Bỏ khỏi danh sách (không xoá file)" aria-label={`Bỏ ${name(f.path)} khỏi danh sách`} onClick={() => onRemove(f.path)}>
+            <button className="icon-btn small root-remove" title={t('Bỏ khỏi danh sách (không xoá file)')} aria-label={t('Bỏ {0} khỏi danh sách', { 0: name(f.path) })} onClick={() => onRemove(f.path)}>
               ×
             </button>
           </div>
@@ -380,10 +378,10 @@ interface SearchResultsProps {
 }
 
 function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResultsProps) {
-  if (hits.length === 0) return <div className="empty">Không tìm thấy kết quả.</div>
+  if (hits.length === 0) return <div className="empty">{t('Không tìm thấy kết quả.')}</div>
   return (
     <div className="group">
-      <div className="group-title">{hits.length} kết quả</div>
+      <div className="group-title">{hits.length}{' '}{t('kết quả')}</div>
       {hits.map(({ doc, snippet }) => {
         const inside = doc.rel.includes('/') ? doc.rel.slice(0, doc.rel.lastIndexOf('/')) : ''
         const folder = rootNames ? [rootNames[doc.root], inside].filter(Boolean).join(' / ') : inside
@@ -434,9 +432,9 @@ function RecentPopover({ lib, selected, onOpen, onClose }: { lib: LibrarySnapsho
   }, [onClose])
 
   return (
-    <div ref={ref} className="popover recent-popover" role="dialog" aria-label="Mở gần đây">
-      <div className="group-title">Mở gần đây</div>
-      {recent.length === 0 && <div className="empty">Chưa mở bài nào.</div>}
+    <div ref={ref} className="popover recent-popover" role="dialog" aria-label={t('Mở gần đây')}>
+      <div className="group-title">{t('Mở gần đây')}</div>
+      {recent.length === 0 && <div className="empty">{t('Chưa mở bài nào.')}</div>}
       {recent.map((d) => (
         <button
           key={d.path}

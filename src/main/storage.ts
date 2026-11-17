@@ -9,6 +9,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { DEFAULT_UI, type UiSettings } from '../shared/types'
 import { pathKey } from './workspace'
+import { languageForLocale } from '../shared/i18n'
 
 interface Settings {
   /** Folders in the workspace. */
@@ -76,7 +77,8 @@ const HEX = /^#[0-9a-f]{6}$/i
 
 /** Reads appearance settings, replacing anything missing or invalid with the default. */
 export async function loadUiSettings(): Promise<UiSettings> {
-  const ui = { ...DEFAULT_UI, ...(await loadSettings()).ui }
+  // A new install starts in the language of Windows (Vietnamese or English).
+  const ui = { ...DEFAULT_UI, language: languageForLocale(app.getLocale()), ...(await loadSettings()).ui }
   return sanitizeUi(ui)
 }
 
@@ -90,7 +92,8 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
     readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth),
     sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort),
     epubSpread: pick(ui.epubSpread, ['single', 'auto'] as const, DEFAULT_UI.epubSpread),
-    showImages: typeof ui.showImages === 'boolean' ? ui.showImages : DEFAULT_UI.showImages
+    showImages: typeof ui.showImages === 'boolean' ? ui.showImages : DEFAULT_UI.showImages,
+    language: pick(ui.language, ['vi', 'en'] as const, DEFAULT_UI.language)
   }
 }
 

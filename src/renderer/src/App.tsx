@@ -5,7 +5,8 @@ import { applyUiSettings, timeAgo } from './lib/ui'
 import { pruneReadingPositions } from './lib/positions'
 import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
-import SettingsDialog from './components/SettingsDialog'
+import SettingsDialog, { type SettingsTab } from './components/SettingsDialog'
+import { setLanguage, t } from '../../shared/i18n'
 
 export type StatusFilter = StudyStatus | 'all'
 
@@ -37,6 +38,7 @@ export default function App() {
   const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null)
   const [ui, setUi] = useState<UiSettings>(DEFAULT_UI)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined)
   const [recentOpen, setRecentOpen] = useState(false)
   // True while the open document has unsaved edits (text edit or raw editor).
   const dirtyRef = useRef(false)
@@ -112,6 +114,8 @@ export default function App() {
     window.api.getUiSettings().then(setUi).catch(notify)
   }, [notify])
   useEffect(() => applyUiSettings(ui), [ui])
+  // Before drawing anything, so every t() below uses the chosen language.
+  setLanguage(ui.language)
   const saveUiTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const changeUi = useCallback(
     (next: UiSettings) => {
@@ -141,7 +145,7 @@ export default function App() {
   const openDoc = useCallback(
     (path: string, hash = '', fromHistory = false): boolean => {
       if (dirtyRef.current && path !== selected) {
-        if (!window.confirm('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?')) return false
+        if (!window.confirm(t('Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?'))) return false
         setDirty(false)
       }
       if (!fromHistory) {
@@ -208,7 +212,7 @@ export default function App() {
       const paths = [...e.dataTransfer!.files].map((f) => window.api.pathForFile(f)).filter(Boolean)
       window.api
         .addFiles(paths)
-        .then(([first]) => (first ? openDoc(first) : notify(new Error('Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.'))))
+        .then(([first]) => (first ? openDoc(first) : notify(new Error(t('Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.')))))
         .catch(notify)
     }
     window.addEventListener('dragover', onDragOver)
@@ -265,7 +269,7 @@ export default function App() {
   const removeFolder = useCallback(
     async (key: string) => {
       if (dirtyRef.current && selected?.startsWith(`${key}/`)) {
-        if (!window.confirm('Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?')) return
+        if (!window.confirm(t('Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?'))) return
         setDirty(false)
       }
       try {
@@ -331,7 +335,8 @@ export default function App() {
   const warnings = (lib?.warnings ?? []).filter((w) => !dismissed.includes(w))
 
   return (
-    <div className="app">
+    // The whole window is drawn again when the language changes (texts come from t()).
+    <div className="app" key={ui.language}>
       <Sidebar
         lib={lib}
         docs={visibleDocs}
@@ -359,24 +364,28 @@ export default function App() {
       <main className="content">
         {appInfo?.update.state === 'ready' && (
           <div className="banner update" role="status">
-            <span>Đã tải xong bản {appInfo.update.version}. Bản mới sẽ được cài khi bạn tắt app, hoặc cập nhật ngay:</span>
-            <button className="btn primary small" onClick={() => window.api.installUpdate().catch(notify)}>
-              Khởi động lại để cập nhật
-            </button>
+            <span>{t('Đã tải xong bản')}{' '}{appInfo.update.version}{t('. Bản mới sẽ được cài khi bạn tắt app, hoặc cập nhật ngay:')}</span>
+            <button className="btn primary small" onClick={() => window.api.installUpdate().catch(notify)}>{t('Khởi động lại để cập nhật')}</button>
           </div>
         )}
         {lib && lib.recovery.length > 0 && (
           <div className="banner" role="alert">
-            <span>Có {lib.recovery.length} bản sao lưu dữ liệu bị hỏng chưa được gộp lại.</span>
-            <button className="btn small" onClick={() => setSettingsOpen(true)}>
-              Khôi phục…
+            <span>{t('Có {0} bản sao lưu dữ liệu bị hỏng chưa được gộp lại.', { 0: lib.recovery.length })}</span>
+            <button
+              className="btn small"
+              onClick={() => {
+                setSettingsTab('data')
+                setSettingsOpen(true)
+              }}
+            >
+              {t('Khôi phục…')}
             </button>
           </div>
         )}
         {warnings.map((w) => (
           <div key={w} className="banner" role="alert">
             <span>{w}</span>
-            <button aria-label="Ẩn cảnh báo" onClick={() => setDismissed((d) => [...d, w])}>
+            <button aria-label={t('Ẩn cảnh báo')} onClick={() => setDismissed((d) => [...d, w])}>
               ×
             </button>
           </div>
@@ -408,9 +417,13 @@ export default function App() {
       </main>
       {settingsOpen && (
         <SettingsDialog
+          startTab={settingsTab}
           ui={ui}
           onChange={changeUi}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false)
+            setSettingsTab(undefined)
+          }}
           roots={lib?.roots ?? []}
           onAddFolders={addFolders}
           onRemoveFolder={removeFolder}
@@ -447,31 +460,21 @@ function Welcome({ hasLibrary, docs, recent, onChoose, onOpenFiles, onOpen }: We
     return (
       <div className="welcome">
         <h1>Study Docs</h1>
-        <p>
-          Thêm một hoặc nhiều thư mục chứa tài liệu học của bạn, ở bất kỳ ổ đĩa nào, hoặc mở từng file (Markdown, HTML, PDF, EPUB, Kindle). Có thể
-          kéo thả file vào cửa sổ. App không sửa file nếu bạn không bấm Sửa chữ hoặc Raw.
-        </p>
+        <p>{t('Thêm một hoặc nhiều thư mục chứa tài liệu học của bạn, ở bất kỳ ổ đĩa nào, hoặc mở từng file (Markdown, HTML, PDF, EPUB, Kindle). Có thể kéo thả file vào cửa sổ. App không sửa file nếu bạn không bấm Sửa chữ hoặc Raw.')}</p>
         <div className="welcome-actions">
-          <button className="btn primary" onClick={onChoose}>
-            Thêm thư mục tài liệu
-          </button>
-          <button className="btn" onClick={onOpenFiles}>
-            Mở file… (Ctrl+O)
-          </button>
+          <button className="btn primary" onClick={onChoose}>{t('Thêm thư mục tài liệu')}</button>
+          <button className="btn" onClick={onOpenFiles}>{t('Mở file… (Ctrl+O)')}</button>
         </div>
       </div>
     )
   }
   return (
     <div className="welcome">
-      <h1>{docs.length} tài liệu</h1>
-      <p>
-        Chọn một bài ở thanh bên trái, hoặc nhấn <kbd>Ctrl</kbd> + <kbd>K</kbd> để tìm kiếm. Tìm không cần gõ dấu:
-        "su kien" vẫn ra "sự kiện".
-      </p>
+      <h1>{docs.length}{' '}{t('tài liệu')}</h1>
+      <p>{t('Chọn một bài ở thanh bên trái, hoặc nhấn')}{' '}<kbd>Ctrl</kbd> + <kbd>K</kbd>{' '}{t('để tìm kiếm. Tìm không cần gõ dấu: "su kien" vẫn ra "sự kiện".')}</p>
       {recentDocs.length > 0 && (
         <div className="welcome-recent">
-          <div className="group-title">Mở gần đây</div>
+          <div className="group-title">{t('Mở gần đây')}</div>
           {recentDocs.map((d) => (
             <button key={d.path} className="row doc" onClick={() => onOpen(d.path)} title={d.rel}>
               <span className={`kind kind-${d.kind}`}>{kindLabel(d.kind)}</span>

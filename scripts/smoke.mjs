@@ -94,6 +94,9 @@ function check(ok, label) {
 }
 
 // Start from a corrupt meta file, like after a bad sync conflict.
+// The checks below read the Vietnamese texts; a new install would follow the language of Windows.
+mkdirSync(userData, { recursive: true })
+writeFileSync(path.join(userData, 'settings.json'), JSON.stringify({ ui: { language: 'vi' } }))
 mkdirSync(dataDir(library), { recursive: true })
 writeFileSync(metaFile, '{ "version": 1, "docs": { <<<<<<< HEAD')
 
@@ -226,7 +229,7 @@ try {
   step("8. Settings: dark mode, accent colour, reading size; saved to the settings file.")
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await page.waitForSelector('dialog.settings[open]')
-  await settingsTab('Giao diện') // opens on Dữ liệu while a backup waits to be merged
+  await settingsTab('Giao diện')
   await page.click('dialog.settings >> text=Tối')
   await page.click('dialog.settings .swatch[title="Xanh ngọc"]')
   await settingsTab('Đọc')
@@ -248,6 +251,25 @@ try {
   await page.click('dialog.settings >> text=Xong')
   await page.waitForTimeout(400)
   check((await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)) === 'system', 'settings reset to default')
+
+  // English interface, then back to Vietnamese.
+  step('8b. Language')
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Giao diện')
+  await page.click('dialog.settings >> text=English')
+  await page.waitForSelector('dialog.settings .settings-tabs >> text=Appearance')
+  const english = await page.evaluate(() => ({
+    search: document.querySelector('.search input')?.getAttribute('placeholder'),
+    status: [...document.querySelectorAll('.filters .chip')].map((c) => c.textContent.replace(/\d+/g, '').trim()).slice(0, 2),
+    lang: document.documentElement.lang
+  }))
+  check(english.search?.startsWith('Search documents') && english.status.join('|') === 'All|Not started' && english.lang === 'en', `the interface switches to English (${english.search}; ${english.status.join(', ')})`)
+  await page.waitForTimeout(600) // settings are saved a moment after the last change
+  check(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).ui?.language === 'en', 'the language is saved')
+  await page.screenshot({ path: shot('3b-english') })
+  await page.click('dialog.settings >> text=Tiếng Việt')
+  await page.waitForSelector('dialog.settings .settings-tabs >> text=Giao diện')
+  await page.click('dialog.settings >> text=Xong')
 
   // 9. Inline text edit in Markdown: only the typed text changes in the file.
   step("9. Inline text edit in Markdown: only the typed text changes in the file.")

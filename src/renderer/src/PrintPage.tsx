@@ -8,6 +8,7 @@ import { applyUiSettings } from './lib/ui'
 import { loadMermaid } from './lib/mermaid'
 import { renderMarkdown } from './components/MarkdownView'
 import { createAnchoring } from '../../shared/anchor'
+import { setLanguage, t } from '../../shared/i18n'
 
 /** withNotes: also print the highlights, numbered note marks and a "Ghi chú" list at the end. */
 export default function PrintPage({ id, withNotes }: { id: string; withNotes: boolean }) {
@@ -19,6 +20,7 @@ export default function PrintPage({ id, withNotes }: { id: string; withNotes: bo
       try {
         const [lib, source, ui] = await Promise.all([window.api.getLibrary(), window.api.readDoc(id), window.api.getUiSettings()])
         applyUiSettings(ui) // same reading font and size as on screen
+        setLanguage(ui.language)
         document.title = lib.docs.find((d) => d.path === id)?.title ?? 'Study Docs' // becomes the PDF title
         const el = ref.current!
         el.innerHTML = renderMarkdown(source)
@@ -32,7 +34,7 @@ export default function PrintPage({ id, withNotes }: { id: string; withNotes: bo
           mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
           await mermaid.run({ nodes: diagrams }).catch((e: unknown) => console.error('Mermaid error', e))
         }
-        if (withNotes) createAnchoring().printNotes(el, lib.notes[id] ?? [], 'Ghi chú', lib.docNotes[id] ?? '')
+        if (withNotes) createAnchoring().printNotes(el, lib.notes[id] ?? [], t('Ghi chú'), lib.docNotes[id] ?? '', t('(đoạn trích này không còn trong bài)'))
       } finally {
         window.__studydocsPrintDone?.() // see main.tsx
       }

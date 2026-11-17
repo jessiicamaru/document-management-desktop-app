@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Annotation, HighlightColor } from '../../../shared/types'
 import type { ScreenRect } from './reader'
 import { renderNote } from '../lib/note-md'
+import { t } from '../../../shared/i18n'
 
 /** A note shown as Markdown. */
 function NoteText({ text, className }: { text: string; className: string }) {
@@ -43,12 +44,10 @@ export function HighlightToolbar({
   return (
     <div className="hl-toolbar" style={pos} role="toolbar" aria-label="Highlight" onMouseDown={(e) => e.preventDefault()}>
       {HIGHLIGHT_COLORS.map((c) => (
-        <button key={c.id} className="hl-swatch" style={{ background: c.css }} title={`Highlight ${c.label.toLowerCase()}`} onClick={() => onPick(c.id)} />
+        <button key={c.id} className="hl-swatch" style={{ background: c.css }} title={t('Highlight {0}', { 0: t(c.label).toLowerCase() })} onClick={() => onPick(c.id)} />
       ))}
       <span className="hl-sep" />
-      <button className="hl-note-btn" onClick={onNote}>
-        ✎ Ghi chú
-      </button>
+      <button className="hl-note-btn" onClick={onNote}>{t('✎ Ghi chú')}</button>
     </div>
   )
 }
@@ -97,15 +96,15 @@ export function NotePopover({
   }, [annotation, onSave, onClose])
 
   return (
-    <div ref={ref} className="note-popover" style={pos} role="dialog" aria-label="Ghi chú">
+    <div ref={ref} className="note-popover" style={pos} role="dialog" aria-label={t('Ghi chú')}>
       <div className="note-quote" style={{ borderColor: colorCss(color) }}>
         {annotation.quote}
       </div>
-      {missing && <div className="note-missing">Đoạn này không còn trong bài (có thể đã bị sửa).</div>}
+      {missing && <div className="note-missing">{t('Đoạn này không còn trong bài (có thể đã bị sửa).')}</div>}
       <textarea
         autoFocus
         value={note}
-        placeholder="Viết ghi chú… Hỗ trợ Markdown: **đậm**, - danh sách, `code`. (Ctrl+Enter để lưu)"
+        placeholder={t('Viết ghi chú… Hỗ trợ Markdown: **đậm**, - danh sách, `code`. (Ctrl+Enter để lưu)')}
         onChange={(e) => setNote(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -120,7 +119,7 @@ export function NotePopover({
             key={c.id}
             className={`hl-swatch small ${color === c.id ? 'active' : ''}`}
             style={{ background: c.css }}
-            title={c.label}
+            title={t(c.label)}
             onClick={() => setColor(c.id)}
           />
         ))}
@@ -128,20 +127,16 @@ export function NotePopover({
         <button
           className="btn small danger"
           onClick={() => {
-            if (!annotation.note.trim() || window.confirm('Xoá highlight và ghi chú này?')) onDelete()
+            if (!annotation.note.trim() || window.confirm(t('Xoá highlight và ghi chú này?'))) onDelete()
           }}
-        >
-          Xoá
-        </button>
+        >{t('Xoá')}</button>
         <button
           className="btn primary small"
           onClick={() => {
             onSave({ note, color })
             onClose()
           }}
-        >
-          Lưu
-        </button>
+        >{t('Lưu')}</button>
       </div>
     </div>
   )
@@ -170,7 +165,7 @@ function DocNoteCard({ text, onSave }: { text: string; onSave: (text: string) =>
         <textarea
           autoFocus
           value={draft}
-          placeholder="Ghi chú chung cho cả bài: tóm tắt, câu hỏi, việc cần ôn… Hỗ trợ Markdown."
+          placeholder={t('Ghi chú chung cho cả bài: tóm tắt, câu hỏi, việc cần ôn… Hỗ trợ Markdown.')}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void save()
@@ -181,7 +176,7 @@ function DocNoteCard({ text, onSave }: { text: string; onSave: (text: string) =>
           }}
         />
         <div className="note-actions">
-          <span className="hint">Ctrl+Enter để lưu</span>
+          <span className="hint">{t('Ctrl+Enter để lưu')}</span>
           <div className="spacer" />
           <button
             className="btn small"
@@ -189,12 +184,8 @@ function DocNoteCard({ text, onSave }: { text: string; onSave: (text: string) =>
               setDraft(text)
               setEditing(false)
             }}
-          >
-            Huỷ
-          </button>
-          <button className="btn primary small" disabled={saving} onClick={() => void save()}>
-            Lưu
-          </button>
+          >{t('Huỷ')}</button>
+          <button className="btn primary small" disabled={saving} onClick={() => void save()}>{t('Lưu')}</button>
         </div>
       </div>
     )
@@ -202,7 +193,7 @@ function DocNoteCard({ text, onSave }: { text: string; onSave: (text: string) =>
   return (
     <div className="doc-note">
       <div className="doc-note-head">
-        <span>Ghi chú chung</span>
+        <span>{t('Ghi chú chung')}</span>
         <button
           className="note-card-edit"
           onClick={() => {
@@ -210,7 +201,7 @@ function DocNoteCard({ text, onSave }: { text: string; onSave: (text: string) =>
             setEditing(true)
           }}
         >
-          {text ? 'Sửa' : '+ Viết'}
+          {text ? t('Sửa') : t('+ Viết')}
         </button>
       </div>
       {text && <NoteText text={text} className="doc-note-text" />}
@@ -236,19 +227,19 @@ export function NotesPanel({
   return (
     <>
       <DocNoteCard key={docNote} text={docNote} onSave={onSaveDocNote} />
-      {!annotations.length && <div className="empty">Bôi đen một đoạn trong bài để highlight hoặc ghi chú.</div>}
+      {!annotations.length && <div className="empty">{t('Bôi đen một đoạn trong bài để highlight hoặc ghi chú.')}</div>}
       {annotations.map((a) => (
         <div key={a.id} className={`note-card ${missing.includes(a.id) ? 'missing' : ''}`} style={{ borderLeftColor: colorCss(a.color) }}>
-          <button className="note-card-quote" onClick={() => onGoto(a)} title="Đi tới đoạn này">
+          <button className="note-card-quote" onClick={() => onGoto(a)} title={t('Đi tới đoạn này')}>
             {a.quote}
           </button>
           {a.note && <NoteText text={a.note} className="note-card-text" />}
-          {missing.includes(a.id) && <div className="note-missing">Không còn tìm thấy đoạn này trong bài.</div>}
+          {missing.includes(a.id) && <div className="note-missing">{t('Không còn tìm thấy đoạn này trong bài.')}</div>}
           <button
             className="note-card-edit"
             onClick={(e) => onEdit(a, (e.currentTarget as HTMLElement).closest('.note-card')!.getBoundingClientRect())}
           >
-            {a.note ? 'Sửa' : '+ Ghi chú'}
+            {a.note ? t('Sửa') : t('+ Ghi chú')}
           </button>
         </div>
       ))}
