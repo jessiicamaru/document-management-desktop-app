@@ -21,7 +21,7 @@ export interface ScreenRect {
 }
 
 /** Text you selected, ready to become a highlight. `rect` is in app window coordinates. */
-export type TextSelection = Omit<SelectionInfo, 'start' | 'end'> & { rect: ScreenRect; cfi?: string }
+export type TextSelection = Omit<SelectionInfo, 'start' | 'end'> & { rect: ScreenRect; cfi?: string; page?: number }
 
 export interface ReaderHandle {
   /** Scrolls to the n-th outline entry. */

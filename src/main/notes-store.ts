@@ -31,6 +31,7 @@ export function sanitizeAnnotation(input: Partial<Annotation>, now = Date.now())
     prefix: text(input.prefix, 64),
     suffix: text(input.suffix, 64),
     ...(typeof input.cfi === 'string' ? { cfi: input.cfi.slice(0, 2000) } : {}),
+    ...(Number.isInteger(input.page) && input.page! > 0 && input.page! < 1e6 ? { page: input.page } : {}),
     created: typeof input.created === 'number' ? input.created : now,
     updated: now
   }

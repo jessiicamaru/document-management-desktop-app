@@ -493,7 +493,8 @@ async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): 
       printBackground: true,
       pageSize: 'A4',
       margins: { top: 0.55, bottom: 0.6, left: 0.5, right: 0.5 },
-      generateDocumentOutline: true, // PDF bookmarks from the headings
+      generateDocumentOutline: true, // PDF bookmarks from the headings...
+      generateTaggedPDF: true, // ...which Chromium builds from the tagged structure
       displayHeaderFooter: true,
       headerTemplate: '<div></div>',
       footerTemplate:

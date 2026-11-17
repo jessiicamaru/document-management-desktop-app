@@ -394,13 +394,16 @@ try {
   }
   // The exported PDFs land in the library, so they show up in the tree.
   await page.waitForFunction(() => document.querySelectorAll('.doc-list .row.doc .kind-pdf').length === 2, null, { timeout: 5000 })
+  // Issue #19: PDFs are shown with pdf.js (pages drawn on canvas + a text layer).
   await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=React useEffect')
-  await page.waitForSelector('iframe.html-frame.pdf')
-  await page.waitForTimeout(2500)
-  check(page.frames().some((fr) => fr.url().startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')), 'PDF opens in the built-in viewer')
+  await page.waitForSelector('.pdf-page canvas')
+  await page.waitForSelector('.pdf-page .textLayer span')
+  check((await page.textContent('.pdf-page .textLayer')).includes('useEffect'), 'PDF opens in the app with pdf.js, with selectable text')
   await page.screenshot({ path: shot('9-pdf-viewer-md') })
   await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=Event Sourcing')
-  await page.waitForTimeout(2500)
+  await page.waitForSelector('.pdf-page canvas')
+  await page.waitForFunction(() => document.querySelectorAll('.outline .outline-item').length > 3, null, { timeout: 10000 })
+  check(true, 'PDF bookmarks are shown in the outline')
   await page.screenshot({ path: shot('10-pdf-viewer-html') })
 
   // 18a. Highlights + notes in Markdown: stored next to the doc, the doc itself untouched.
@@ -492,8 +495,33 @@ try {
   check(notesBytes.subarray(0, 5).toString() === '%PDF-', `PDF with notes exported (${Math.round(notesBytes.length / 1024)} KB)`)
   await page.waitForFunction(() => document.querySelectorAll('.doc-list .row.doc .kind-pdf').length === 3, null, { timeout: 5000 })
   await page.click('.doc-list .row.doc:has(.kind-pdf) >> text=React useEffect (ghi chú)')
-  await page.waitForTimeout(2500)
+  await page.waitForSelector('.pdf-page .textLayer span')
+  await page.waitForTimeout(500)
   await page.screenshot({ path: shot('13-pdf-with-notes') })
+
+  // 18f. Issue #19: highlight, note, Ctrl+F and full-text search in a PDF.
+  step('18f. PDF highlights, find and search')
+  // A word as pdf.js laid it out (the PDF decides how text is split into pieces).
+  const pdfWord = await page.evaluate(() => {
+    const span = [...document.querySelectorAll('.pdf-page[data-page="1"] .textLayer span')].find((s) => /^\p{L}{6,}$/u.test(s.textContent.trim().split(/\s+/)[0] ?? ''))
+    return span.textContent.trim().split(/\s+/)[0]
+  })
+  await selectText(page, '.pdf-page[data-page="1"] .textLayer span', pdfWord)
+  await page.waitForSelector('.hl-toolbar')
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight xanh lá"]')
+  await page.waitForSelector('.textLayer mark[data-sd-ann]')
+  const pdfNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['frontend/React useEffect (ghi chú).pdf']?.items ?? []
+  check(pdfNotes.length === 1 && pdfNotes[0].page === 1 && pdfNotes[0].quote === pdfWord, `PDF: highlight saved with its page ("${pdfWord}")`)
+  await page.keyboard.press('Control+F')
+  await page.fill('.find-bar input', 'phu thuoc')
+  await page.waitForFunction(() => /^\d+\/\d+$/.test(document.querySelector('.find-count')?.textContent ?? ''), null, { timeout: 15000 })
+  const pdfFind = await page.textContent('.find-count')
+  check(/^1\/\d+$/.test(pdfFind) && (await page.evaluate(() => CSS.highlights.get('sd-find')?.size ?? 0)) > 0, `PDF: Ctrl+F finds text in the PDF (${pdfFind})`)
+  await page.press('.find-bar input', 'Escape')
+  await page.fill('.search input', 'React vẽ xong')
+  await page.waitForFunction(() => [...document.querySelectorAll('.hit')].some((h) => h.querySelector('.kind-pdf') && h.querySelector('.hit-snippet')), null, { timeout: 30000 })
+  check(true, 'search finds text inside PDFs, with a snippet')
+  await page.fill('.search input', '')
 
   // 18e. EPUB books: chapters in the outline, search inside the book, highlights.
   step('18e. EPUB')

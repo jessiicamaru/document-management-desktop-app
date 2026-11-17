@@ -49,7 +49,6 @@ const titles = new MiniSearch<{ id: string; title: string; name: string; rel: st
 })
 
 const send = (msg: FromWorker): void => parentPort!.postMessage(msg)
-const hasText = (d: WorkerDoc): boolean => d.kind !== 'pdf'
 const cacheFile = (d: WorkerDoc): string =>
   path.join(textCacheDir, createHash('sha1').update(`${d.abs.toLowerCase()}|${d.size}|${d.mtime}`).digest('hex') + '.u8')
 
@@ -74,11 +73,11 @@ function updateDocs(list: WorkerDoc[]): void {
     docs.set(d.id, d)
     titles.add({ id: d.id, title: d.title, name: d.name, rel: d.rel })
   }
-  // Notes and web pages first (small, quick), books after. The queue holds ids: the list may
+  // Notes and web pages first (small, quick), books and PDFs after. The queue holds ids: the list may
   // be sent again while we work, and each id is looked up again when its turn comes.
   queue = [...docs.values()]
-    .filter((d) => hasText(d) && !folded.has(d.id))
-    .sort((a, b) => Number(a.kind === 'epub') - Number(b.kind === 'epub'))
+    .filter((d) => !folded.has(d.id))
+    .sort((a, b) => Number(a.kind === 'epub' || a.kind === 'pdf') - Number(b.kind === 'epub' || b.kind === 'pdf'))
     .map((d) => d.id)
   void work()
 }
@@ -87,7 +86,7 @@ async function work(): Promise<void> {
   if (working) return
   working = true
   await fs.mkdir(textCacheDir, { recursive: true })
-  const total = (): number => [...docs.values()].filter(hasText).length
+  const total = (): number => docs.size
   while (queue.length) {
     const id = queue.shift()!
     const d = docs.get(id)
@@ -108,7 +107,7 @@ async function work(): Promise<void> {
 
 /** Deletes cached texts of files that are no longer in the workspace (or changed since). */
 async function pruneCache(): Promise<void> {
-  const keep = new Set([...docs.values()].filter(hasText).map((d) => path.basename(cacheFile(d))))
+  const keep = new Set([...docs.values()].map((d) => path.basename(cacheFile(d))))
   for (const name of await fs.readdir(textCacheDir).catch(() => [] as string[])) {
     // .txt: the old UTF-16 format, replaced by .u8 (issue #12).
     if ((name.endsWith('.u8') || name.endsWith('.txt')) && !keep.has(name)) await fs.rm(path.join(textCacheDir, name), { force: true })

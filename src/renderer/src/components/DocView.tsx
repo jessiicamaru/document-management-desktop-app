@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Annotation, DocEntry, DocMeta, HighlightColor } from '../../../shared/types'
-import { docUrl, loadLocal, saveLocal, STATUSES } from '../lib/docs'
+import { loadLocal, saveLocal, STATUSES } from '../lib/docs'
 import type { ScrollTarget } from '../App'
 import HtmlView from './HtmlView'
 import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
 import EpubView from './EpubView'
+import PdfView from './PdfView'
 import FindBar from './FindBar'
 import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
@@ -58,7 +59,6 @@ export default function DocView(props: Props) {
   const [missing, setMissing] = useState<string[]>([])
   const [panelTab, setPanelTab] = useState<'outline' | 'notes'>(() => loadLocal('panel-tab', 'outline'))
   const { annotations, onAnnotationsChange } = props
-  const isPdf = doc.kind === 'pdf'
   /** md and html can be edited and exported; pdf and epub are read-only. */
   const canEdit = doc.kind === 'md' || doc.kind === 'html'
 
@@ -190,6 +190,7 @@ export default function DocView(props: Props) {
       prefix: selection.prefix,
       suffix: selection.suffix,
       ...(selection.cfi ? { cfi: selection.cfi } : {}),
+      ...(selection.page ? { page: selection.page } : {}),
       created: now,
       updated: now
     }
@@ -248,9 +249,7 @@ export default function DocView(props: Props) {
   }
   const preview =
     doc.kind === 'pdf' ? (
-      // The built-in Chromium PDF viewer (zoom, search, print...). PDFs can't run page scripts
-      // like HTML can, so this frame needs no sandbox (the viewer refuses to run in one).
-      <iframe className="html-frame pdf" src={`${docUrl(doc.path)}?v=${doc.mtime}`} title={doc.title} />
+      <PdfView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'epub' ? (
       <EpubView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'html' ? (
@@ -278,7 +277,7 @@ export default function DocView(props: Props) {
       />
     )
 
-  const showOutline = !isPdf && mode === 'view' && outlineOpen
+  const showOutline = mode === 'view' && outlineOpen
 
   return (
     <div className="doc-view">
@@ -334,11 +333,9 @@ export default function DocView(props: Props) {
             </div>
             <TagEditor tags={meta.tags} onChange={(tags) => onUpdateMeta({ tags })} />
             <div className="spacer" />
-            {!isPdf && (
-              <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục và ghi chú">
-                Mục lục{annotations.length > 0 && ` · ${annotations.length} ghi chú`}
-              </button>
-            )}
+            <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title="Hiện/ẩn mục lục và ghi chú">
+              Mục lục{annotations.length > 0 && ` · ${annotations.length} ghi chú`}
+            </button>
             {canEdit && (
               <>
                 <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title="Sửa chữ ngay trên bài">
@@ -411,7 +408,7 @@ export default function DocView(props: Props) {
         </div>
       )}
 
-      {findOpen && mode === 'view' && <FindBar reader={readerRef} focusKey={findFocus} pdf={isPdf} onClose={() => setFindOpen(false)} />}
+      {findOpen && mode === 'view' && <FindBar reader={readerRef} focusKey={findFocus} onClose={() => setFindOpen(false)} />}
       {selection && mode === 'view' && (
         <HighlightToolbar rect={selection.rect} onPick={(c) => void createHighlight(c, false)} onNote={() => void createHighlight('yellow', true)} />
       )}

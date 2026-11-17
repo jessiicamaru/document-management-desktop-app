@@ -112,6 +112,8 @@ export interface Annotation extends TextQuote {
   note: string
   /** EPUB only: exact position in the book (an EPUB CFI range). */
   cfi?: string
+  /** PDF only: the page (1-based) the quote is on. */
+  page?: number
   created: number
   updated: number
 }

@@ -377,7 +377,22 @@ dialog.settings section.recovery { background: color-mix(in srgb, var(--accent) 
 .outline-item.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 
 .kind-pdf { background: color-mix(in srgb, #b03a3a 16%, transparent); color: #c24a4a; }
-.html-frame.pdf { background: #525659; }
+/* PDF (pdf.js, issue #19) */
+.pdf-view { position: absolute; inset: 0; background: #525659; }
+.pdf-scroll { position: absolute; inset: 0; overflow: auto; outline: none; }
+.pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px 24px 64px; width: max-content; min-width: 100%; box-sizing: border-box; }
+.pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .35); --user-unit: 1; --scale-round-x: 1px; --scale-round-y: 1px; }
+.pdf-page .pdf-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pdf-zoom { position: absolute; right: 18px; bottom: 14px; display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
+.pdf-zoom-value { min-width: 46px; text-align: center; font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+/* pdf.js text layer (from pdf_viewer.css): invisible text over the page, for selecting. */
+.textLayer { position: absolute; text-align: initial; inset: 0; overflow: clip; opacity: 1; line-height: 1; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; z-index: 0; }
+.textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; }
+.textLayer > :not(.markedContent), .textLayer .markedContent span:not(.markedContent) { z-index: 1; }
+.textLayer span.markedContent { top: 0; height: 0; }
+.textLayer ::selection { background: rgba(0, 90, 255, .28); }
+.textLayer br::selection { background: transparent; }
+.textLayer mark[data-sd-ann] { color: transparent; mix-blend-mode: multiply; padding: 0; }
 .toast.info { border-left-color: var(--st-done); }
 .popover.menu button:disabled { opacity: .5; }
 

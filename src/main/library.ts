@@ -139,7 +139,7 @@ async function readEntry(
 /** Searchable plain text of a document (used by the search worker). PDFs have none. */
 export async function extractText(abs: string, kind: DocKind): Promise<string> {
   if (kind === 'epub') return epubText(abs)
-  if (kind === 'pdf') return ''
+  if (kind === 'pdf') return (await import('./pdf-text')).pdfText(abs, MAX_BOOK_TEXT)
   const stat = await fs.stat(abs)
   if (stat.size > MAX_HASH_BYTES) return ''
   const source = await fs.readFile(abs, 'utf8')
