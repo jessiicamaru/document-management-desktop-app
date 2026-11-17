@@ -1,126 +1,139 @@
 # Study Docs
 
-App Windows để quản lý tài liệu học dạng `.md` và `.html`: Electron + React + TypeScript, build bằng electron-vite.
+A Windows app for reading and organising study documents: Markdown, HTML, PDF, Word, plain text, EPUB and Kindle books, and pictures. Tags, study status, highlights and notes for every document; full-text search that ignores Vietnamese accents. The interface is in English or Vietnamese.
 
-## Chạy
+Built with Electron + React + TypeScript (electron-vite).
+
+## Run
 
 ```bash
 npm install
-npm run dev        # chạy app ở chế độ dev (sửa code là tự reload)
-npm run typecheck  # kiểm tra kiểu TypeScript
-npm test           # unit test (Vitest)
-npm run smoke      # build rồi tự bấm thử app trên bản sao của sample-library/, fail nếu có lỗi; ảnh lưu vào scripts/
-npm run dist       # đóng gói ra release/Study Docs Setup x.y.z.exe (chỉ trên máy, không phát hành)
-npm run release    # đóng gói + phát hành lên GitHub Releases để các máy tự cập nhật
-npm run make-icon  # vẽ lại build/icon.png + icon.ico từ build/icon.svg
-node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ bản.epub
+npm run dev        # run the app in development mode (reloads when you change code)
+npm run typecheck  # TypeScript type check
+npm test           # unit tests (Vitest)
+npm run smoke      # build, then click through the app on a copy of sample-library/; fails on any problem; screenshots go to scripts/
+npm run dist       # package release/Study Docs Setup x.y.z.exe (local only, not published)
+npm run release    # package and publish to GitHub Releases, so installed apps update themselves
+npm run make-icon  # redraw build/icon.png + icon.ico from build/icon.svg
+node scripts/make-sample-epub.mjs  # rebuild sample-library/sach/Git cơ bản.epub
+node scripts/make-sample-mobi.mjs  # rebuild sample-library/sach/Docker nhanh.mobi
+node scripts/make-sample-docx.mjs  # rebuild sample-library/frontend/CSS Flexbox.docx
 ```
 
-## Dùng app
+## Using the app
 
-| Phím / nút | Làm gì |
+| Key / button | What it does |
 |---|---|
-| Icon tờ giấy có dấu +, `Ctrl+O`, kéo thả file vào cửa sổ | Mở từng file ở bất kỳ đâu, giống mở file trong Word. File ngoài workspace hiện ở nhóm **File lẻ** dưới cây thư mục; di chuột vào rồi bấm × để bỏ khỏi danh sách. |
-| Icon thư mục có dấu + | Thêm một hoặc nhiều thư mục vào workspace, ở ổ nào cũng được (C:, D:, USB...). Mỗi thư mục là một nhánh trên cây; di chuột vào tên thư mục rồi bấm × để bỏ nó khỏi workspace (file không bị xoá). |
-| `Ctrl+K` | Tìm kiếm trong mọi thư mục (không cần gõ dấu) |
-| `Ctrl+F` | Tìm trong bài đang mở (Markdown, HTML, cả cuốn EPUB), không cần gõ dấu. `Enter` / `Shift+Enter` sang kết quả sau / trước, `Esc` để đóng. |
-| `Ctrl+E` hoặc icon đồng hồ | Danh sách bài mở gần đây |
-| `↑` `↓` `Enter` `←` `→` trong danh sách bài | Chọn bài, mở bài, thu/mở thư mục. Cài đặt có tuỳ chọn xếp bài theo tên hoặc mới sửa trước. |
-| `Alt+←` / `Alt+→`, nút ‹ ›, nút lùi/tiến trên chuột | Quay lại / tiến tới giữa các bài đã mở |
-| **Mục lục** | Danh sách tiêu đề bên phải; bấm để nhảy tới, mục đang đọc được tô sáng. App nhớ vị trí đang đọc của từng bài. |
-| **Bôi đen chữ** | Hiện thanh highlight: 4 màu hoặc **✎ Ghi chú**. Bấm vào chỗ đã highlight để sửa ghi chú, đổi màu, xoá. Tab **Ghi chú** ở bảng bên phải liệt kê mọi highlight của bài, và có ô **Ghi chú chung** cho cả bài. Ghi chú viết được Markdown (`**đậm**`, danh sách, `code`, link). Dùng được cho Markdown, HTML và EPUB. |
-| **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
-| **⋯ → Xuất PDF kèm highlight và ghi chú…** | Như trên, nhưng in cả highlight theo màu, số chú thích ¹ ² ³ sau đoạn có ghi chú, và mục **Ghi chú** ở cuối file |
-| File `.epub` | Đọc sách EPUB **từng trang** như sách thật: nút ‹ ›, phím ← → / PageUp PageDown, hoặc lăn chuột để lật trang; cửa sổ rộng thì hiện 2 trang. Thanh dưới cùng cho biết chương và % đã đọc. Mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
-| File `.mobi` / `.azw3` | Sách Kindle, đọc như EPUB (lật trang, mục lục, highlight, `Ctrl+F`, tìm kiếm). App chuyển sách sang EPUB trong bộ nhớ khi mở, không sửa file. Sách có DRM không mở được. |
-| File `.docx` / `.txt` / ảnh | Word (.docx) hiện như một bài: tiêu đề vào mục lục, đậm/nghiêng, danh sách, bảng, ảnh; .txt hiện nguyên văn (tự nhận UTF-8, UTF-16, Windows-1258). Highlight, ghi chú, `Ctrl+F`, tìm kiếm dùng được; file không bao giờ bị sửa. Ảnh (.png, .jpg, .svg...) xem được, phóng to bằng nút hoặc `Ctrl` + lăn chuột; có thể ẩn ảnh khỏi danh sách trong Cài đặt. |
-| File `.pdf` | Mở trong app bằng pdf.js: cuộn từng trang, phóng to/thu nhỏ (nút góc dưới), mục lục theo bookmark của PDF, nhớ vị trí đọc. Highlight, ghi chú và `Ctrl+F` dùng được như bài Markdown; ô tìm kiếm tìm cả chữ bên trong PDF. PDF chỉ là ảnh scan (không có chữ) thì không tìm/highlight được. |
-| `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown, sách hiện 1 trang hay 2 trang, đổi tên / xoá tag trên mọi bài, dọn dữ liệu của file đã xoá |
-| Markdown | Code block được tô màu theo ngôn ngữ (` ```js `, ` ```python `...), công thức `$...$` và `$$...$$` hiển thị bằng KaTeX, sơ đồ ` ```mermaid `. |
-| **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown), kể cả chữ trong sơ đồ SVG của bài HTML (bấm vào chữ để hiện ô sửa). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
-| **Raw** | Mở mã nguồn bên cạnh bài để sửa bố cục, sơ đồ, thẻ HTML... Markdown được xem trước trực tiếp khi gõ; HTML cập nhật sau khi lưu (`Ctrl+S`). |
+| Page icon with +, `Ctrl+O`, or drop files on the window | Open single files from anywhere, like opening a file in Word. Files outside the workspace are listed under **Single files** below the folder tree; hover and click × to remove one from the list. |
+| Folder icon with + | Add one or more folders to the workspace, on any drive (C:, D:, USB…). Each folder is a branch of the tree; hover its name and click × to remove it from the workspace (no files are deleted). |
+| `Ctrl+K` | Search every folder (accents are optional: "su kien" finds "sự kiện") |
+| `Ctrl+F` | Find in the open document (Markdown, HTML, PDF, Word, text, a whole EPUB/Kindle book), accents optional. `Enter` / `Shift+Enter` for next / previous, `Esc` to close. |
+| `Ctrl+E` or the clock icon | Recently opened documents |
+| `↑` `↓` `Enter` `←` `→` in the document list | Move, open, fold/unfold folders. Settings can order documents by name or by last change. |
+| `Alt+←` / `Alt+→`, the ‹ › buttons, mouse back/forward buttons | Go back / forward between documents |
+| **Outline** | Headings on the right; click to jump, the section being read is highlighted. The reading position of every document is remembered. |
+| **Select text** | Shows the highlight bar: 4 colours or **✎ Note**. Click a highlight to edit its note, change its colour or delete it. The **Notes** tab on the right lists every highlight, plus a **Document note** for the whole document. Notes are Markdown (`**bold**`, lists, `code`, links). |
+| **⋯ → Export PDF…** | Export a .md / .html document to PDF (A4, page numbers, bookmarks from the headings, always light) |
+| **⋯ → Export PDF with highlights and notes…** | The same, with highlights in their colours, note numbers ¹ ² ³ after the passages, and a **Notes** section at the end |
+| `.epub` files | Read books **page by page**: ‹ › buttons, ← → / PageUp PageDown, or the mouse wheel. One page, or two side by side on a wide window (Settings → Reading). The bottom bar shows the chapter and % read. Books with DRM (bought on Kindle, Google Play…) can't be opened. |
+| `.mobi` / `.azw3` files | Kindle books, read like EPUB (pages, outline, highlights, `Ctrl+F`, search). The book is turned into an EPUB in memory when opened; the file is not changed. Books with DRM can't be opened. |
+| `.pdf` files | Shown with pdf.js: scroll through the pages, zoom (buttons at the bottom right), outline from the PDF's bookmarks, reading position remembered. Highlights, notes and `Ctrl+F` work as in Markdown; search finds text inside PDFs. Scanned PDFs (pictures without text) can't be searched or highlighted. |
+| `.docx` / `.txt` / pictures | Word documents are shown as a page: headings in the outline, bold/italic, lists, tables, images. Text files are shown as they are (UTF-8, UTF-16 or Windows-1258). Highlights, notes, `Ctrl+F` and search work; these files are never changed. Pictures (.png, .jpg, .svg…) can be zoomed with the buttons or `Ctrl` + mouse wheel; Settings can hide them from the list. |
+| Markdown | Code blocks coloured by language (` ```js `, ` ```python `…), formulas `$...$` and `$$...$$` drawn with KaTeX, ` ```mermaid ` diagrams. |
+| **Edit text** | Edit text right on the page (HTML and Markdown), including text in SVG diagrams of HTML pages (click it to get a text box). Only text: Enter, formatting and drag & drop are off. `Ctrl+S` saves, `Esc` cancels. |
+| **Raw** | Open the source next to the document to change layout, diagrams, HTML tags… Markdown previews as you type; HTML updates when you save (`Ctrl+S`). |
+| `Ctrl+,` or the gear icon | Settings, in tabs: **Appearance** (language, light/dark, accent colour), **Reading** (Markdown text size, font and width; one or two book pages), **Library** (folders, sidebar order, pictures), **Data** (backup and restore, tags across the workspace, clean-up, recovery), **Updates**. |
 
-Khi sửa chữ, app chỉ thay đúng phần chữ bạn đổi trong file, phần còn lại giữ nguyên từng ký tự. Nếu không đảm bảo được điều đó (ví dụ thẻ HTML không có thẻ đóng, hoặc chữ bạn gõ sẽ bị Markdown hiểu thành định dạng) thì app không lưu và báo bạn dùng Raw. Nếu file bị sửa ở app khác trong lúc bạn đang sửa, app cũng không ghi đè.
+When editing text, the app replaces exactly the text you changed in the file and keeps every other character. If it can't be sure of that (an HTML tag without its closing tag, or text that Markdown would read as formatting), it doesn't save and tells you to use Raw. If the file is changed by another app while you edit, it isn't overwritten either.
 
-## Cập nhật app
+## Updates
 
-App đã cài **tự cập nhật** từ [GitHub Releases](https://github.com/jessiicamaru/document-management-desktop-app/releases):
+The installed app **updates itself** from [GitHub Releases](https://github.com/jessiicamaru/study-docs/releases):
 
-- Mỗi lần mở app (và cứ 4 giờ một lần), app kiểm tra bản mới rồi tải ngầm.
-- Tải xong sẽ có thanh thông báo "Khởi động lại để cập nhật". Nếu bạn không bấm, bản mới sẽ được cài vào lần tắt app tiếp theo.
-- Tài liệu, tag, trạng thái và settings đều được giữ nguyên.
+- Every time it starts (and every 4 hours), it checks for a new version and downloads it in the background.
+- When it's ready, a bar says "Restart to update". If you don't click it, the new version is installed the next time you close the app.
+- Documents, tags, status, notes and settings are kept.
 
-Phát hành một bản mới:
+Publishing a new version:
 
 ```bash
-npm version patch --no-git-tag-version   # 0.2.0 -> 0.2.1 (tính năng lớn thì dùng minor)
-git commit -am "Release v0.2.1"
+npm version patch --no-git-tag-version   # 0.9.1 -> 0.9.2 (use minor for bigger features)
+git commit -am "Release v0.9.2"
 git push
 npm run release
 ```
 
-`npm run release` từ chối chạy nếu còn thay đổi chưa commit/push, hoặc nếu version đó đã được phát hành. Việc tải lên dùng GitHub CLI (`gh`) đã đăng nhập sẵn, không lưu token vào file nào. Nếu lần chạy trước dừng giữa chừng, chạy lại sẽ tải tiếp phần còn thiếu.
+`npm run release` refuses to run with uncommitted or unpushed changes, or if that version was already published. It runs the type check and unit tests first. Uploading uses the GitHub CLI (`gh`), already logged in; no token is stored in any file. If an earlier run stopped half-way, running it again uploads what is missing.
 
-Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồi hỏi có xoá settings trong `%APPDATA%\Study Docs` không. Thư mục tài liệu không bị đụng tới.
+Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, then asks whether to delete the app's data in `%APPDATA%\Study Docs` (settings, tags, notes; back them up first in Settings → Data). Your document folders are never touched.
 
-## Đọc code theo thứ tự này
+## Where things are stored
 
-| File | Làm gì |
+- **Documents are only changed when you use Edit text or save in Raw.** Then only the part you changed is replaced, the file's line endings are kept, files that are not UTF-8 are never edited, and a file changed elsewhere in the meantime is not overwritten. Reading, highlighting, tagging and exporting never touch the documents.
+- **Tags, study status, highlights and notes** are kept in the app's own data, **never in your documents' folders**. Like Claude Code keeps one folder per project, every workspace folder (and every folder of single files) gets a sub-folder:
+  ```
+  %APPDATA%\Study Docs\data\<folder key>\
+    info.json    the real path of the folder
+    meta.json    tags, status
+    notes.json   highlights, notes
+  ```
+  - The key is a short hash of the path, so removing a folder from the workspace and adding it again keeps its data.
+  - **Settings → Data → Back up to a file…** saves everything to one `.json` file; **Restore from a file…** merges it back (nothing is deleted). Use it when moving to another PC or reinstalling Windows.
+  - If a data file is broken, the app first copies it to `meta.corrupt-<time>.json` and shows **Recover…**: fix the backup by hand, then click **Merge**; the current data is kept.
+  - Renaming or moving a file inside a workspace folder keeps its tags: the file is recognised by identical content, or by the same file name (moved and edited). If several files match, the app doesn't guess.
+- **Single files** (`Ctrl+O`, drag and drop, double-click in Explorer): only the path is remembered, the file isn't copied. A moved or deleted file shows "not found"; click × to remove it from the list (the file and its notes are kept).
+- **Highlights** are never written into the document. Each one keeps the selected text with a few words before and after, so it is found again after the document is edited; if the passage is gone, the note is kept and marked "no longer found". In EPUB books the exact position is kept as an EPUB CFI; in PDFs, the page.
+- **Settings and "recently opened"** are in `%APPDATA%\Study Docs`.
+- **Caches for speed** are there too: `scan-cache.json` (document names) and `text-cache` (text read out for search, stored as UTF-8). Deleting them loses nothing; the app reads the files again. Text of files that left the workspace is cleaned up automatically.
+
+## Security
+
+- HTML documents open in a `sandbox` iframe: their own CSS/JS runs, but they can't reach the app or the disk.
+- Links in documents: other documents open in the app; web links open in the browser. Other files are only opened with their default app if they are on the safe list (pdf, pictures, csv, Office without macros, audio/video; see `src/main/open-policy.ts`), and the app asks first when the request comes from inside a document. Anything else (programs, scripts, `.py`, `.url`, Office files with macros…) is only shown in Explorer, never run.
+- When exporting to PDF, the page can't read other files or open connections (CSP). Hidden files and folders (names starting with a dot) are never served to a page, and the app's data is outside the documents' folders, out of reach of pages.
+- SVG pictures are shown with `<img>`, where their scripts never run. Kindle books are decoded by a copy of foliate-js's `mobi.js` taken unchanged from its author's repository (see `src/vendor/foliate/README.md`).
+
+## Reading the code
+
+| File | What it does |
 |---|---|
-| `src/shared/types.ts` | Kiểu dữ liệu dùng chung: DocEntry, DocMeta, DocsApi |
-| `src/main/index.ts` | Process chính: cửa sổ, giao thức `doc://`, IPC, theo dõi thư mục, chặn link |
-| `src/main/library.ts` | Quét thư mục (có cache), lấy tiêu đề + chữ để tìm kiếm từ md/html |
-| `src/main/html-edit.ts` | Sửa chữ trên bài HTML: script chèn vào trang khi sửa, và ghi lại đúng chỗ trong file (parse5) |
-| `src/main/view-helper.ts` | Script nhỏ chèn vào bài HTML khi đọc: mục lục, vị trí đọc, phím tắt |
-| `src/main/updater.ts` | Tự cập nhật từ GitHub Releases |
-| `src/main/workspace.ts` | Workspace nhiều thư mục: id của thư mục, chống thêm trùng/lồng nhau, tên hiển thị |
-| `src/shared/anchor.ts` | Tìm lại và vẽ highlight (dùng chung cho Markdown, trang HTML và lúc xuất PDF) |
-| `src/main/doc-store.ts` | File JSON theo từng bài của một thư mục (trong `%APPDATA%\Study Docs\data`): hàng đợi ghi, sao lưu file hỏng, đi theo file khi đổi tên |
-| `src/main/notes-store.ts` | `notes.json`: highlight và ghi chú |
-| `src/main/zip.ts` | Đọc từng file trong file zip/EPUB mà không phải tải cả file |
-| `src/main/scan-cache.ts` | Nhớ tên + hash của file giữa các lần mở app, để thư mục lớn mở nhanh |
-| `src/main/search-worker.ts` | Tìm kiếm chạy ở luồng riêng: đọc chữ của tài liệu ở chế độ nền, tìm không dấu |
-| `src/main/search.ts` | Phía main process của luồng tìm kiếm |
-| `src/shared/text.ts` | Bỏ dấu tiếng Việt, cắt đoạn trích quanh chỗ tìm thấy |
-| `src/main/meta-store.ts` | `meta.json`: tag và trạng thái, đổi tên/xoá tag trên mọi bài |
-| `src/main/storage.ts` | Settings và danh sách "mở gần đây" trong `%APPDATA%\Study Docs` |
-| `src/preload/index.ts` | Cầu nối duy nhất UI ↔ Node, lộ ra `window.api` |
-| `src/renderer/src/App.tsx` | State chính: thư viện, bài đang mở, bộ lọc, tìm kiếm, thông báo lỗi |
-| `src/renderer/src/components/Sidebar.tsx` | Cây thư mục, kết quả tìm kiếm, bộ lọc |
-| `src/renderer/src/components/DocView.tsx` | Thanh tiêu đề (trạng thái, tag), chế độ xem / sửa chữ / raw |
-| `src/renderer/src/components/MarkdownView.tsx` | Render Markdown + Mermaid, xử lý link, sửa chữ trên bài |
-| `src/renderer/src/components/HtmlView.tsx` | iframe cho bài HTML, nói chuyện với script sửa chữ |
-| `src/renderer/src/components/Annotations.tsx` | Thanh highlight, ô ghi chú, danh sách ghi chú |
-| `src/renderer/src/components/EpubView.tsx` | Đọc sách EPUB (epub.js) |
-| `src/renderer/src/components/RawEditor.tsx` | Trình sửa mã nguồn (CodeMirror) |
-| `src/renderer/src/components/reader.ts` | Giao diện chung của HtmlView/MarkdownView (mục lục, vị trí đọc, sửa chữ) |
-| `src/renderer/src/PrintPage.tsx` | Trang dùng khi xuất Markdown ra PDF |
-| `src/renderer/src/components/SettingsDialog.tsx` | Cửa sổ Cài đặt |
-| `src/renderer/src/lib/md-edit.ts` | Ánh xạ chữ đã sửa về đúng vị trí trong file Markdown |
-| `src/renderer/src/lib/docs.ts` | Tìm kiếm không dấu, cây thư mục, tiện ích |
-| `tests/` | Unit test cho các hàm trên |
-
-## Dữ liệu nằm ở đâu
-
-- **File bài chỉ bị sửa khi bạn bấm Sửa chữ hoặc lưu trong Raw.** Khi đó app chỉ thay đúng phần bạn đổi, giữ nguyên kiểu xuống dòng của file, không sửa file không phải UTF-8, và từ chối ghi đè nếu file vừa bị sửa ở nơi khác. Đọc, highlight, gắn tag, xuất PDF không bao giờ đụng vào file bài.
-- **Tag, trạng thái học, highlight và ghi chú** nằm trong dữ liệu của app, **không ghi gì vào thư mục tài liệu**. Giống cách Claude Code lưu mỗi project một thư mục, mỗi thư mục trong workspace (và mỗi thư mục có file lẻ) có một thư mục con:
-  ```
-  %APPDATA%\Study Docs\data\<mã thư mục>\
-    info.json    đường dẫn thật của thư mục
-    meta.json    tag, trạng thái
-    notes.json   highlight, ghi chú
-  ```
-  - Mã là một chuỗi ngắn tính từ đường dẫn, nên bỏ thư mục khỏi workspace rồi thêm lại thì dữ liệu vẫn còn.
-  - **Cài đặt → Sao lưu ra file…** xuất toàn bộ ra một file `.json`; **Khôi phục từ file…** gộp lại (không xoá gì). Dùng khi đổi máy hoặc cài lại Windows.
-  - Nếu file dữ liệu bị hỏng, app sao lưu nó thành `meta.corrupt-<thời gian>.json` trước và hiện nút **Khôi phục…**: sửa bản sao lưu bằng tay rồi bấm **Gộp lại**, dữ liệu hiện tại không bị mất.
-  - Đổi tên hoặc di chuyển file trong một thư mục của workspace thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
-- **File lẻ** (mở bằng `Ctrl+O`, kéo thả vào cửa sổ, hoặc bấm đúp từ Explorer): app chỉ nhớ đường dẫn, không chép file. File bị chuyển chỗ hay xoá thì hiện "không tìm thấy"; bấm × để bỏ khỏi danh sách (file và ghi chú của nó không bị xoá).
-- **Highlight** không bao giờ ghi vào file bài. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
-- **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.
-- **Bộ nhớ đệm cho tốc độ** cũng ở đó: `scan-cache.json` (tên các tài liệu) và thư mục `text-cache` (chữ đã đọc ra để tìm kiếm, lưu UTF-8 nên chỉ cỡ dung lượng chữ của mỗi cuốn sách). Xoá đi cũng không mất gì, app sẽ đọc lại. Chữ của file đã bị bỏ khỏi workspace được tự dọn.
-
-## Bảo mật
-
-- HTML mở trong iframe `sandbox`: chạy được CSS/JS riêng của bài nhưng không chạm được vào app hay ổ đĩa.
-- Link trong bài: sang bài khác thì mở trong app; link web mở bằng trình duyệt. File khác chỉ được mở bằng app mặc định nếu thuộc danh sách an toàn (pdf, ảnh, txt, Office không macro, audio/video, xem `src/main/open-policy.ts`), và app hỏi trước khi mở nếu lệnh đến từ bên trong bài. Mọi loại khác (chương trình, script, `.py`, `.url`, file Office có macro...) chỉ hiện trong Explorer, không bao giờ tự chạy.
-- Khi xuất PDF, trang không đọc được file nào khác và không mở được kết nối (CSP). File và thư mục ẩn (tên bắt đầu bằng dấu chấm) không bao giờ được trả cho trang nào; dữ liệu của app nằm ngoài thư mục tài liệu nên trang không với tới được.
+| `src/shared/types.ts` | Shared data types: DocEntry, DocMeta, Annotation, DocsApi |
+| `src/shared/i18n.ts`, `src/shared/locales/en.ts` | Interface language: `t('Vietnamese text')`, English translations keyed by that text |
+| `src/main/index.ts` | Main process: window, `doc://` protocol, IPC, folder watching, single files, backup, link handling |
+| `src/main/library.ts` | Folder scanning (cached), titles and searchable text of every document type |
+| `src/main/doc-store.ts` | One JSON file per workspace folder (in `%APPDATA%\Study Docs\data`): write queue, backup of broken files, following renamed files |
+| `src/main/meta-store.ts` | `meta.json`: tags and status, renaming/removing a tag everywhere |
+| `src/main/notes-store.ts` | `notes.json`: highlights, notes, document notes |
+| `src/main/storage.ts` | Settings and "recently opened" in `%APPDATA%\Study Docs` |
+| `src/main/workspace.ts` | Multi-folder workspace: folder keys, no duplicate/nested folders, display names |
+| `src/main/search-worker.ts`, `search.ts` | Full-text search in a background thread (accent-insensitive), and its main-process side |
+| `src/main/text-cache.ts` | Compact on-disk text cache for search snippets |
+| `src/main/pdf-text.ts`, `mobi-text.ts` | Text of PDFs (pdf.js) and Kindle books for search, in the search thread |
+| `src/main/zip.ts` | Reads single files out of a zip/EPUB/docx without loading all of it |
+| `src/main/scan-cache.ts` | Remembers names + hashes between runs, so big folders open fast |
+| `src/main/html-edit.ts` | Editing HTML text: script added to the page while editing, and writing back in place (parse5) |
+| `src/main/view-helper.ts` | Small script added to HTML pages while reading: outline, reading position, shortcuts, find |
+| `src/main/open-policy.ts` | Which files may be opened with their default app |
+| `src/main/updater.ts` | Self-update from GitHub Releases |
+| `src/shared/anchor.ts` | Finding and drawing highlights and find results (Markdown, HTML pages, PDF export) |
+| `src/shared/text.ts` | Removing Vietnamese accents, snippets, text decoding |
+| `src/preload/index.ts` | The only bridge between the window and Node, exposed as `window.api` |
+| `src/renderer/src/App.tsx` | Main state: library, open document, filters, search, shortcuts, drag & drop |
+| `src/renderer/src/components/Sidebar.tsx` | Folder tree, single files, search results, filters, arrow keys |
+| `src/renderer/src/components/DocView.tsx` | Header (status, tags), view / edit text / raw modes, outline and notes panel |
+| `src/renderer/src/components/reader.ts` | What every document view provides (outline, position, highlights, find) |
+| `src/renderer/src/components/MarkdownView.tsx` | Markdown + Mermaid + code colours + KaTeX, links, editing text |
+| `src/renderer/src/components/HtmlView.tsx` | Iframe for HTML documents, talks to the page scripts |
+| `src/renderer/src/components/PdfView.tsx` | PDFs with pdf.js: pages drawn on demand, text layer, zoom |
+| `src/renderer/src/components/EpubView.tsx` | EPUB (and converted Kindle) books with epub.js |
+| `src/renderer/src/components/ArticleView.tsx` | Word (mammoth) and plain text documents |
+| `src/renderer/src/components/ImageView.tsx` | Pictures with zoom |
+| `src/renderer/src/components/Annotations.tsx` | Highlight bar, note editor, notes list |
+| `src/renderer/src/components/FindBar.tsx` | Ctrl+F bar |
+| `src/renderer/src/components/RawEditor.tsx` | Source editor (CodeMirror) |
+| `src/renderer/src/components/SettingsDialog.tsx` | Settings window (tabs) |
+| `src/renderer/src/lib/md-edit.ts` | Maps edited text back to its place in the Markdown file |
+| `src/renderer/src/lib/mobi-to-epub.ts` | Kindle book → EPUB in memory |
+| `src/renderer/src/lib/epub-locations.ts` | "% read" positions of a book, computed without freezing the window |
+| `src/renderer/src/PrintPage.tsx` | Page used to export Markdown to PDF |
+| `tests/` | Unit tests |
