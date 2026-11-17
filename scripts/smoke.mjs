@@ -254,6 +254,26 @@ try {
 
   // English interface, then back to Vietnamese.
   step('8b. Language')
+  // With text being edited, switching asks first (it redraws the window); "no" keeps everything.
+  await page.click('.doc-controls >> text=Sửa chữ')
+  await page.waitForSelector('.markdown p.editable')
+  await page.click('.markdown p.editable >> nth=0')
+  await page.keyboard.press('End')
+  await page.keyboard.type(' (dở)')
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Giao diện')
+  dialogAnswer = 'dismiss'
+  await page.click('dialog.settings >> text=English')
+  await page.waitForTimeout(500)
+  check(
+    (await page.locator('dialog.settings .settings-tabs >> text=Giao diện').count()) === 1 && (await page.locator('.edit-bar').count()) === 1,
+    'switching language while editing asks first ("no" keeps the language and the edit)'
+  )
+  await page.click('dialog.settings >> text=Xong')
+  dialogAnswer = 'accept'
+  await page.click('.edit-bar >> text=Huỷ (Esc)')
+  await editBarGone()
+  dialogAnswer = 'dismiss'
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await settingsTab('Giao diện')
   await page.click('dialog.settings >> text=English')
@@ -1009,6 +1029,33 @@ try {
   await page.waitForSelector('dialog.settings .dialog-msg >> text=Đã khôi phục')
   check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[REACT]?.tags?.includes('react'), 'restoring a backup brings the data back (merged)')
   await page.click('dialog.settings >> text=Xong')
+
+  // A folder added later takes over the loose files inside it, with their tags and notes,
+  // also from a sub-folder (their paths get the sub-folder in front).
+  step('26. Adding a folder takes over its loose files')
+  const sub = path.join(extra, 'con')
+  mkdirSync(sub)
+  writeFileSync(path.join(sub, 'Trong thư mục con.md'), '# Trong thư mục con\n\nGhi chú phải đi theo.')
+  const [subId] = await page.evaluate((f) => window.api.addFiles([f]), path.join(sub, 'Trong thư mục con.md'))
+  await page.waitForSelector('.loose-group .row.doc >> text=Trong thư mục con')
+  await page.click('.loose-group .row.doc >> text=Trong thư mục con')
+  await page.fill('.tag-editor input', 'theo')
+  await page.press('.tag-editor input', 'Enter')
+  await page.waitForTimeout(300)
+  check(!!subId && JSON.parse(readFileSync(path.join(dataDir(sub), 'meta.json'), 'utf8')).docs['Trong thư mục con.md']?.tags?.[0] === 'theo', 'a loose file in a sub-folder gets its own data folder')
+  await app.evaluate(({ dialog }, folder) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+  }, extra)
+  await page.click('.sidebar-head .icon-btn[title="Thêm thư mục vào workspace"]')
+  await page.waitForFunction(() => document.querySelectorAll('.loose-group').length === 0, null, { timeout: 15000 })
+  const extraMeta = JSON.parse(readFileSync(path.join(dataDir(extra), 'meta.json'), 'utf8')).docs
+  check(
+    extraMeta['con/Trong thư mục con.md']?.tags?.[0] === 'theo' && extraMeta['Ngoài workspace.md']?.tags?.[0] === 'le',
+    'the added folder takes over its loose files and their tags (also from a sub-folder)'
+  )
+  check((await page.locator('.root-row').count()) === 2 && (await page.locator('.doc-list .row.doc >> text=Trong thư mục con').count()) === 1, 'they now show in the folder tree')
+  check(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).looseFiles?.length === 0, 'the list of loose files is updated')
+
   await app.evaluate(({ dialog }) => {
     dialog.showOpenDialog = globalThis.__realOpen
     dialog.showSaveDialog = globalThis.__realSave

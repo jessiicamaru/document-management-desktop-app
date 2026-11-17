@@ -54,6 +54,7 @@ export const EN: Record<string, string> = {
   'Chỉ mở được tài liệu (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) và ảnh.': 'Only documents (.md, .html, .pdf, .docx, .txt, .epub, .mobi, .azw3) and pictures can be opened.',
   'Bài đang mở trong thư mục này có thay đổi chưa lưu. Vẫn bỏ thư mục?': 'The open document in this folder has unsaved changes. Remove the folder anyway?',
   'Bài đang mở có thay đổi chưa lưu. Chuyển bài và bỏ các thay đổi đó?': 'The open document has unsaved changes. Switch and discard them?',
+  'Đổi ngôn ngữ sẽ vẽ lại cửa sổ và bỏ các thay đổi chưa lưu của bài đang sửa. Vẫn đổi?': 'Changing the language redraws the window and discards the unsaved changes of the document being edited. Change anyway?',
 
   // ---------- document view ----------
   'Quay lại (Alt+←)': 'Back (Alt+←)',

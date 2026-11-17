@@ -117,15 +117,6 @@ export default function App() {
   // Before drawing anything, so every t() below uses the chosen language.
   setLanguage(ui.language)
   const saveUiTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const changeUi = useCallback(
-    (next: UiSettings) => {
-      setUi(next)
-      clearTimeout(saveUiTimer.current)
-      saveUiTimer.current = setTimeout(() => window.api.setUiSettings(next).catch(notify), 250)
-    },
-    [notify]
-  )
-
   // Closing the window with unsaved edits: the main process asks what to do.
   const setDirty = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty
@@ -136,6 +127,22 @@ export default function App() {
         }
       : null
   }, [])
+
+  const languageRef = useRef(ui.language)
+  languageRef.current = ui.language
+  const changeUi = useCallback(
+    (next: UiSettings) => {
+      // A new language draws the whole window again, which drops text being edited: ask first.
+      if (next.language !== languageRef.current && dirtyRef.current) {
+        if (!window.confirm(t('Đổi ngôn ngữ sẽ vẽ lại cửa sổ và bỏ các thay đổi chưa lưu của bài đang sửa. Vẫn đổi?'))) return
+        setDirty(false)
+      }
+      setUi(next)
+      clearTimeout(saveUiTimer.current)
+      saveUiTimer.current = setTimeout(() => window.api.setUiSettings(next).catch(notify), 250)
+    },
+    [notify, setDirty]
+  )
 
   // Settings > Thanh bên can hide pictures (folders of notes often have many).
   const docs = useMemo(() => (lib?.docs ?? []).filter((d) => ui.showImages || d.kind !== 'image'), [lib?.docs, ui.showImages])
