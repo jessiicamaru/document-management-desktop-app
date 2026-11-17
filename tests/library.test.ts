@@ -52,7 +52,7 @@ describe('scanLibrary', () => {
     await mkdir(path.join(dir, 'node_modules'))
     await writeFile(path.join(dir, 'a.md'), '# A')
     await writeFile(path.join(dir, 'sub', 'b.html'), '<title>B</title>')
-    await writeFile(path.join(dir, 'sub', 'notes.txt'), 'ignored')
+    await writeFile(path.join(dir, 'sub', 'notes.log'), 'ignored') // not a document type
     await writeFile(path.join(dir, '.hidden', 'c.md'), '# hidden')
     await writeFile(path.join(dir, 'node_modules', 'd.md'), '# dep')
   })
