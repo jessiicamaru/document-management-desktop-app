@@ -11,6 +11,8 @@ npm run smoke    # build rồi tự bấm thử app trên sample-library/, lưu 
 npm run dist     # đóng gói ra release/Study Docs Setup x.y.z.exe
 ```
 
+Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồi hỏi có xoá settings trong `%APPDATA%\Study Docs` không. Thư mục tài liệu không bị đụng tới.
+
 ## Đọc code theo thứ tự này
 
 | File | Làm gì |
