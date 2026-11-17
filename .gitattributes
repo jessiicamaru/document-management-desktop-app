@@ -1,1 +1,4 @@
+# Store text files with LF line endings in Git (no more "LF will be replaced by CRLF" warnings).
+* text=auto eol=lf
+# Windows batch files must keep CRLF to run correctly.
 *.bat text eol=crlf
