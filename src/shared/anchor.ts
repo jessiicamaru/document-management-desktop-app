@@ -35,6 +35,10 @@ export interface Anchoring {
   selectionInfo(root: Element, selection: Selection | null): SelectionInfo | null
   /** For export: numbers the notes (¹ ² ³) after their highlight and lists them at the end of root. */
   printNotes(root: Element, annotations: Annotation[], heading: string): void
+  /** Ctrl+F: every place `query` occurs in root's text (accent- and case-insensitive). */
+  findAll(root: Element, query: string): Range[]
+  /** Shows find matches with the CSS Custom Highlight API (no change to the page's DOM). */
+  showFind(doc: Document, ranges: Range[], current: number): void
 }
 
 export function createAnchoring(): Anchoring {
@@ -235,5 +239,63 @@ export function createAnchoring(): Anchoring {
     root.append(section)
   }
 
-  return { textIndex, findQuote, describe, offsetsOf, wrap, clear, apply, selectionInfo, printNotes }
+  /** Lowercase, accents removed, one character for one character (so positions still match). */
+  function fold(text: string): string {
+    let out = ''
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]
+      if (ch.charCodeAt(0) < 0x80) {
+        out += ch.toLowerCase()
+        continue
+      }
+      const f = ch.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase()
+      out += f.length === 1 ? f : f.length === 0 ? ' ' : ch
+    }
+    return out
+  }
+
+  function findAll(root: Element, query: string) {
+    const q = fold(query.trim())
+    if (!q) return []
+    const { text, nodes } = textIndex(root)
+    const haystack = fold(text)
+    const at = (offset: number, end: boolean): [Text, number] => {
+      // The text node holding this offset (an end offset may sit at the very end of a node).
+      let lo = 0
+      let hi = nodes.length - 1
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1
+        if (nodes[mid].start < offset || (!end && nodes[mid].start === offset)) lo = mid
+        else hi = mid - 1
+      }
+      return [nodes[lo].node, offset - nodes[lo].start]
+    }
+    const ranges: Range[] = []
+    for (let i = haystack.indexOf(q); i >= 0 && ranges.length < 5000; i = haystack.indexOf(q, i + q.length)) {
+      const range = root.ownerDocument.createRange()
+      range.setStart(...at(i, false))
+      range.setEnd(...at(i + q.length, true))
+      ranges.push(range)
+    }
+    return ranges
+  }
+
+  function showFind(doc: Document, ranges: Range[], current: number) {
+    const win = doc.defaultView as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown }
+    const registry = win?.CSS?.highlights
+    if (!registry || !win.Highlight) return
+    if (!doc.getElementById('sd-find-style')) {
+      const style = doc.createElement('style')
+      style.id = 'sd-find-style'
+      style.setAttribute('data-studydocs', '')
+      style.textContent =
+        '::highlight(sd-find){background-color:rgba(250,204,21,.45);color:inherit}' +
+        '::highlight(sd-find-current){background-color:rgba(249,115,22,.85);color:#000}'
+      ;(doc.head || doc.documentElement).appendChild(style)
+    }
+    registry.set('sd-find', new win.Highlight(...ranges))
+    registry.set('sd-find-current', new win.Highlight(...(ranges[current] ? [ranges[current]] : [])))
+  }
+
+  return { textIndex, findQuote, describe, offsetsOf, wrap, clear, apply, selectionInfo, printNotes, findAll, showFind }
 }

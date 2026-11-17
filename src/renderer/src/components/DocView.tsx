@@ -6,6 +6,7 @@ import HtmlView from './HtmlView'
 import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
 import EpubView from './EpubView'
+import FindBar from './FindBar'
 import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
 
@@ -113,6 +114,21 @@ export default function DocView(props: Props) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [mode, saveEdit, cancelEdit])
+
+  // ---------- find (Ctrl+F) ----------
+
+  const [findOpen, setFindOpen] = useState(false)
+  const [findFocus, setFindFocus] = useState(0)
+  useEffect(() => {
+    // App sends this for Ctrl+F (typed in the app, an HTML page or a book).
+    const open = (): void => {
+      if (mode !== 'view') return
+      setFindOpen(true)
+      setFindFocus((n) => n + 1)
+    }
+    window.addEventListener('studydocs:find', open)
+    return () => window.removeEventListener('studydocs:find', open)
+  }, [mode])
 
   // ---------- outline + reading position ----------
 
@@ -383,6 +399,7 @@ export default function DocView(props: Props) {
         </div>
       )}
 
+      {findOpen && mode === 'view' && <FindBar reader={readerRef} focusKey={findFocus} pdf={isPdf} onClose={() => setFindOpen(false)} />}
       {selection && mode === 'view' && (
         <HighlightToolbar rect={selection.rect} onPick={(c) => void createHighlight(c, false)} onNote={() => void createHighlight('yellow', true)} />
       )}

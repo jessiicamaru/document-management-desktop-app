@@ -6,7 +6,7 @@ import { docUrl, parseDocUrl } from '../lib/docs'
 import { loadMermaid } from '../lib/mermaid'
 import { applyMarkdownEdits, lineStartsOf, MdEditError, sourceRangesPlugin } from '../lib/md-edit'
 import type { ScrollTarget } from '../App'
-import type { ReaderCallbacks, ReaderHandle } from './reader'
+import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
 import type { Annotation } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 
@@ -155,6 +155,23 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
     }
   }, [html, doc.path, renderKey])
 
+  // ---------- find (Ctrl+F) ----------
+
+  const found = useRef<Range[]>([])
+  const foundIndex = useRef(0)
+  /** Highlights the matches, scrolls the current one into view, returns where we are. */
+  function showFound(): FindResult {
+    anchoring.showFind(document, found.current, foundIndex.current)
+    const current = found.current[foundIndex.current]
+    const scroller = scrollRef.current
+    if (current && scroller) {
+      const r = current.getBoundingClientRect()
+      const box = scroller.getBoundingClientRect()
+      if (r.top < box.top + 40 || r.bottom > box.bottom - 40) scroller.scrollTop += r.top - box.top - scroller.clientHeight / 3
+    }
+    return { index: foundIndex.current, total: found.current.length }
+  }
+
   // ---------- highlights ----------
 
   const annotations = useRef<Annotation[]>([])
@@ -286,7 +303,21 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
       mark.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
     },
-    clearSelection: () => getSelection()?.removeAllRanges()
+    clearSelection: () => getSelection()?.removeAllRanges(),
+    find: async (query) => {
+      found.current = ref_.current ? anchoring.findAll(ref_.current, query) : []
+      foundIndex.current = 0
+      return showFound()
+    },
+    findStep: async (dir) => {
+      const n = found.current.length
+      if (n) foundIndex.current = (foundIndex.current + dir + n) % n
+      return showFound()
+    },
+    clearFind: () => {
+      found.current = []
+      anchoring.showFind(document, [], 0)
+    }
   }))
 
   const scrollTo = (id: string, smooth: boolean): void => {

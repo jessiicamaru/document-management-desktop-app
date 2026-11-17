@@ -51,6 +51,19 @@ export function viewModeInjection(): string {
   }
   addEventListener('scroll', report, { passive: true })
 
+  // ---------- find (Ctrl+F) ----------
+  let found = []
+  let foundIndex = 0
+  const showFound = () => {
+    anchoring.showFind(document, found, foundIndex)
+    const current = found[foundIndex]
+    if (current) {
+      const r = current.getBoundingClientRect()
+      if (r.top < 60 || r.bottom > innerHeight - 40) scrollBy({ top: r.top - innerHeight / 3, behavior: 'instant' })
+    }
+    send({ type: 'find-result', index: foundIndex, total: found.length })
+  }
+
   // ---------- highlights ----------
   const drawHighlights = () => {
     const missing = anchoring.apply(document.body, annotations)
@@ -89,6 +102,20 @@ export function viewModeInjection(): string {
       }
     }
     if (msg.type === 'clear-selection') getSelection()?.removeAllRanges()
+    // Ctrl+F: find in this page.
+    if (msg.type === 'find') {
+      found = anchoring.findAll(document.body, msg.query)
+      foundIndex = 0
+      showFound()
+    }
+    if (msg.type === 'find-step' && found.length) {
+      foundIndex = (foundIndex + msg.dir + found.length) % found.length
+      showFound()
+    }
+    if (msg.type === 'find-clear') {
+      found = []
+      anchoring.showFind(document, [], 0)
+    }
   })
 
   // ---------- shortcuts ----------
@@ -103,7 +130,7 @@ export function viewModeInjection(): string {
     const key = e.key.toLowerCase()
     if (isHistoryKey(e)) {
       e.preventDefault()
-    } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ','].includes(key)) {
+    } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f'].includes(key)) {
       e.preventDefault()
       send({ type: 'key', key: 'ctrl+' + key })
     } else if (e.key === 'Escape') {

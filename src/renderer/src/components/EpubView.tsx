@@ -11,10 +11,16 @@ import ePub from 'epubjs'
 import type { Annotation, DocEntry } from '../../../shared/types'
 import { loadLocal, saveLocal } from '../lib/docs'
 import { HIGHLIGHT_COLORS } from './Annotations'
-import type { ReaderCallbacks, ReaderHandle } from './reader'
+import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
 
 type Book = ReturnType<typeof ePub>
 type Rendition = ReturnType<Book['renderTo']>
+/** The part of epub.js's spine item (Section) used for searching the book. */
+interface SpineItem {
+  load(request: unknown): Promise<unknown>
+  unload(): void
+  find(query: string): { cfi: string; excerpt: string }[]
+}
 
 interface TocEntry {
   href: string
@@ -95,6 +101,25 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
   const [progress, setProgress] = useState<{ chapter: string; percent: number | null }>({ chapter: '', percent: null })
   const cb = useRef(props)
   cb.current = props
+
+  // Ctrl+F results: positions (CFI) of every match in the book; the current one is marked.
+  const found = useRef<string[]>([])
+  const foundIndex = useRef(0)
+  const foundMark = useRef<string | null>(null)
+  const clearFoundMark = (): void => {
+    if (foundMark.current) rendition.current?.annotations.remove(foundMark.current, 'highlight')
+    foundMark.current = null
+  }
+  const gotoFound = async (): Promise<FindResult> => {
+    clearFoundMark()
+    const cfi = found.current[foundIndex.current]
+    if (cfi && rendition.current) {
+      await rendition.current.display(cfi)
+      rendition.current.annotations.highlight(cfi, {}, () => {}, 'sd-epub-find', { fill: '#f97316', 'fill-opacity': '0.5' })
+      foundMark.current = cfi
+    }
+    return { index: foundIndex.current, total: found.current.length }
+  }
 
   const next = (): void => void rendition.current?.next()
   const prev = (): void => void rendition.current?.prev()
@@ -177,7 +202,9 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     // Re-layout the pages when the window or the side panel changes size.
     const resize = new ResizeObserver(() => {
       const host = hostRef.current
-      if (host && rendition.current) rendition.current.resize(host.clientWidth, host.clientHeight)
+      // The view manager only exists once the book has opened; earlier size changes are picked up by display().
+      const r = rendition.current as unknown as { manager?: unknown; resize: (w: number, h: number) => void } | null
+      if (host && r?.manager) r.resize(host.clientWidth, host.clientHeight)
     })
     resize.observe(hostRef.current!)
 
@@ -254,6 +281,13 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
         contents.document.addEventListener('mousedown', () => cb.current.onSelection(null))
         contents.document.addEventListener('scroll', () => cb.current.onSelection(null), true)
         contents.document.addEventListener('wheel', onWheel, { passive: true })
+        // Ctrl+F inside the book opens the app's find bar.
+        contents.document.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+            e.preventDefault()
+            window.dispatchEvent(new Event('studydocs:find'))
+          }
+        })
       })
       r.on('rendered', () => draw())
 
@@ -306,6 +340,30 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     clearSelection: () => {
       const contents = rendition.current?.getContents() as unknown as { window: Window }[] | undefined
       for (const c of contents ?? []) c.window.getSelection()?.removeAllRanges()
+    },
+    // Ctrl+F searches the whole book, chapter by chapter (epub.js Section.find).
+    find: async (query) => {
+      clearFoundMark()
+      found.current = []
+      const book = bookRef.current
+      if (!book || !query.trim()) return { index: 0, total: 0 }
+      const spine = book.spine as unknown as { spineItems: SpineItem[] }
+      for (const item of spine.spineItems) {
+        await item.load(book.load.bind(book))
+        found.current.push(...item.find(query.trim()).map((m) => m.cfi))
+        item.unload()
+      }
+      foundIndex.current = 0
+      return gotoFound()
+    },
+    findStep: async (dir) => {
+      const n = found.current.length
+      if (n) foundIndex.current = (foundIndex.current + dir + n) % n
+      return gotoFound()
+    },
+    clearFind: () => {
+      clearFoundMark()
+      found.current = []
     }
   }))
 

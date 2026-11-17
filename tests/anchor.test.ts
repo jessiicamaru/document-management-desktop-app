@@ -107,3 +107,15 @@ describe('printNotes', () => {
     expect(root.querySelector('mark[data-sd-ann="c"]')).not.toBeNull() // highlight without note: drawn, not numbered
   })
 })
+
+describe('findAll (Ctrl+F, issue #17)', () => {
+  it('finds every match, accent- and case-insensitive, across inline tags', () => {
+    document.body.innerHTML = `<article id="f"><p>Sự kiện là <strong>sự</strong> kiện. SU KIEN!</p><script>sự kiện</script></article>`
+    const root = document.getElementById('f')!
+    const ranges = A.findAll(root, 'su kien')
+    expect(ranges.map((r) => r.toString())).toEqual(['Sự kiện', 'sự kiện', 'SU KIEN'])
+  })
+  it('returns nothing for an empty query', () => {
+    expect(A.findAll(document.body, '   ')).toEqual([])
+  })
+})

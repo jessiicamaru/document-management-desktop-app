@@ -195,6 +195,8 @@ export default function App() {
         searchRef.current?.select()
       } else if (key === 'ctrl+e') setRecentOpen((o) => !o)
       else if (key === 'ctrl+,') setSettingsOpen(true)
+      // Ctrl+F: the open document shows its find bar (DocView listens for this event).
+      else if (key === 'ctrl+f') window.dispatchEvent(new Event('studydocs:find'))
       else if (key === 'back' || key === 'forward') goHistory(key)
     },
     [goHistory]
@@ -202,7 +204,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       let key: string | null = null
-      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ','].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
+      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f'].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
       if (e.altKey && e.key === 'ArrowLeft') key = 'back'
       if (e.altKey && e.key === 'ArrowRight') key = 'forward'
       if (!key) return

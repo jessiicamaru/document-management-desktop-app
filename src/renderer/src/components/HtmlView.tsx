@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { DocEntry, HtmlBlockEdit } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
-import type { ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
+import type { FindResult, ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -39,6 +39,19 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
   }
   // Highlights to draw once the page is ready (the page may load after they are set).
   const annotations = useRef<object[]>([])
+  /** Find requests: the page answers with a "find-result" message. */
+  const findReply = useRef<((r: FindResult) => void) | null>(null)
+  const askPage = (msg: object): Promise<FindResult> =>
+    new Promise((resolve) => {
+      findReply.current = resolve
+      post(msg)
+      setTimeout(() => {
+        if (findReply.current === resolve) {
+          findReply.current = null
+          resolve({ index: 0, total: 0 }) // page not ready
+        }
+      }, 2000)
+    })
 
   useEffect(() => {
     const onMessage = (e: MessageEvent): void => {
@@ -64,6 +77,10 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
           break
         case 'anchored':
           p.onAnchored(msg.missing)
+          break
+        case 'find-result':
+          findReply.current?.({ index: msg.index, total: msg.total })
+          findReply.current = null
           break
         case 'key':
           // Take the focus back from the page first, and act on the next turn: the shortcut
@@ -105,6 +122,9 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
     },
     gotoAnnotation: (id) => post({ type: 'goto-annotation', id }),
     clearSelection: () => post({ type: 'clear-selection' }),
+    find: (query) => askPage({ type: 'find', query }),
+    findStep: (dir) => askPage({ type: 'find-step', dir }),
+    clearFind: () => post({ type: 'find-clear' }),
     collectChanges: () =>
       new Promise((resolve, reject) => {
         const win = frameRef.current?.contentWindow

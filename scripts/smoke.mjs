@@ -587,6 +587,47 @@ try {
   )
   await page.click('.raw-toolbar >> text=Đóng raw')
 
+  // 22. Issue #17: Ctrl+F in Markdown, HTML (inside the page) and EPUB (whole book).
+  step('22. Find in document')
+  const findCount = async () => (await page.textContent('.find-count'))?.trim()
+  const typeFind = async (q) => {
+    await page.keyboard.press('Control+F')
+    await page.waitForSelector('.find-bar input')
+    await page.fill('.find-bar input', q)
+    await page.waitForFunction(() => /\d+\/\d+|Không thấy/.test(document.querySelector('.find-count')?.textContent ?? ''), null, { timeout: 15000 })
+  }
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.waitForSelector('.markdown h2')
+  await page.click('.doc-heading h1')
+  await typeFind('effect')
+  const mdCount = await findCount()
+  await page.press('.find-bar input', 'Enter')
+  check(/^1\/[2-9]/.test(mdCount) && (await findCount()) === '2/' + mdCount.split('/')[1], `Markdown: Ctrl+F finds and steps through matches (${mdCount})`)
+  await page.press('.find-bar input', 'Escape')
+  check((await page.locator('.find-bar').count()) === 0, 'Escape closes the find bar')
+
+  await openDoc('Event Sourcing — Bài học để chép vào vở')
+  await page.frameLocator('iframe.html-frame').locator('h1').waitFor()
+  await page.waitForTimeout(500)
+  await page.frameLocator('iframe.html-frame').locator('h1').click()
+  await typeFind('su kien') // accent-insensitive, Ctrl+F typed inside the page
+  const htmlCount = await findCount()
+  const marked = await page
+    .frames()
+    .find((fr) => fr.url().includes('Event%20Sourcing.html'))
+    .evaluate(() => CSS.highlights.get('sd-find')?.size ?? 0)
+  check(/^1\/\d+/.test(htmlCount) && marked > 0, `HTML: Ctrl+F inside the page finds "sự kiện" (${htmlCount}, ${marked} marked)`)
+  await page.press('.find-bar input', 'Escape')
+
+  await openDoc('Git cơ bản')
+  await page.waitForTimeout(2000)
+  await typeFind('remote')
+  const bookCount = await findCount()
+  await page.waitForTimeout(800)
+  const bookText = await page.frames().find((fr) => fr.url() === 'about:srcdoc')?.evaluate(() => document.body.textContent)
+  check(/^1\/\d+/.test(bookCount) && bookText?.includes('Làm việc với remote'), `EPUB: Ctrl+F searches the whole book and opens the chapter (${bookCount})`)
+  await page.press('.find-bar input', 'Escape')
+
   // 18. Removing a folder from the workspace keeps its files.
   step("18. Remove folder")
   dialogAnswer = 'accept'

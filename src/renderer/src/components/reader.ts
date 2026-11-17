@@ -35,6 +35,17 @@ export interface ReaderHandle {
   /** Scrolls to a highlight and makes it blink. */
   gotoAnnotation(id: string): void
   clearSelection(): void
+  /** Ctrl+F: finds every match and shows the first. */
+  find(query: string): Promise<FindResult>
+  /** Next (+1) or previous (-1) match. */
+  findStep(dir: 1 | -1): Promise<FindResult>
+  clearFind(): void
+}
+
+/** Where we are in the find results: `index` is 0-based; total 0 = nothing found. */
+export interface FindResult {
+  index: number
+  total: number
 }
 
 /** Props every document view takes for the outline, reading position and highlights. */
