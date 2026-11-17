@@ -32,8 +32,6 @@ export interface DocEntry {
   name: string
   kind: DocKind
   title: string
-  /** Plain text (tags stripped) used for full-text search. */
-  text: string
   size: number
   mtime: number
   /** SHA-1 of the file content; used to keep tags when a file is renamed. Missing for very large files. */
@@ -49,7 +47,24 @@ export interface DocMeta {
   name?: string
 }
 
+/** One search result. Searching runs in a background worker in the main process. */
+export interface SearchResult {
+  /** Document id. */
+  path: string
+  /** Text around the first match; empty when only the title/name matched. */
+  snippet: { before: string; match: string; after: string } | null
+}
+
+/** Background indexing of book text for search (shown in the sidebar footer). */
+export interface SearchStatus {
+  /** Documents whose text is indexed / all documents with text. */
+  done: number
+  total: number
+}
+
 export interface LibrarySnapshot {
+  /** True while folders are still being scanned (the list may be incomplete). */
+  scanning: boolean
   /** Folders in the workspace, in the order you added them. */
   roots: RootInfo[]
   docs: DocEntry[]
@@ -162,6 +177,9 @@ export interface DocsApi {
   deleteAnnotation(path: string, id: string): Promise<Annotation[]>
   /** Raw bytes of a document (used for EPUB books). */
   readBinary(path: string): Promise<Uint8Array>
+  /** Full-text search over all documents (accent-insensitive). */
+  search(query: string): Promise<SearchResult[]>
+  onSearchStatus(cb: (status: SearchStatus) => void): () => void
   getAppInfo(): Promise<AppInfo>
   onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
   /** Restarts the app into the downloaded update. */

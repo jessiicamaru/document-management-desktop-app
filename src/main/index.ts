@@ -10,6 +10,8 @@ import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
 import { printNotesInjection, viewModeInjection } from './view-helper'
 import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { META_FILE, MetaStore } from './meta-store'
+import { ScanCache } from './scan-cache'
+import { SearchService } from './search'
 import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
 import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
@@ -50,6 +52,12 @@ interface Root {
 }
 
 let roots: Root[] = []
+/** True while folders are being scanned (the UI shows "Đang quét…"). */
+let scanning = false
+/** Titles/hashes of files seen before, so unchanged files aren't read again. Set at startup. */
+let scanCache: ScanCache | undefined
+/** Full-text search in a background thread. Set at startup. */
+let search: SearchService | undefined
 
 // ---------- workspace ----------
 
@@ -106,6 +114,7 @@ async function snapshot(): Promise<LibrarySnapshot> {
     for (const w of [r.meta?.warning, r.notes?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
   }
   return {
+    scanning,
     roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta })),
     docs,
     meta,
@@ -133,7 +142,7 @@ async function openRoot(root: Root): Promise<void> {
     root.warning = 'Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.'
     return
   }
-  root.docs = await scanLibrary(root.path)
+  root.docs = await scanLibrary(root.path, [], scanCache)
   await reconcileStores(root)
   watchRoot(root)
 }
@@ -148,6 +157,40 @@ function closeRoot(root: Root): void {
   root.watcher = null
 }
 
+/** Tells the search worker about the current documents; it indexes new/changed ones in the background. */
+function syncSearch(): void {
+  search?.update(
+    roots.flatMap((r) =>
+      r.docs.map((d) => ({
+        id: `${r.key}/${d.path}`,
+        abs: path.join(r.path, d.path),
+        kind: d.kind,
+        title: d.title,
+        name: d.name,
+        rel: d.path,
+        size: d.size,
+        mtime: d.mtime
+      }))
+    ),
+    !scanning
+  )
+}
+
+/** Opens folders one by one, showing each in the UI as soon as it is scanned. */
+async function openRoots(list: Root[]): Promise<void> {
+  scanning = true
+  await pushSnapshot()
+  for (const root of list) {
+    await openRoot(root)
+    syncSearch()
+    await pushSnapshot()
+  }
+  scanning = false
+  syncSearch() // the full list now: lets the worker clean up texts of files that are gone
+  await scanCache?.save()
+  await pushSnapshot()
+}
+
 /** Replaces the whole workspace (at startup). Duplicate or nested folders are skipped. */
 async function openWorkspace(paths: string[]): Promise<void> {
   roots.forEach(closeRoot)
@@ -157,7 +200,7 @@ async function openWorkspace(paths: string[]): Promise<void> {
     if (!rootConflict(roots.map((r) => r.path), norm)) roots.push(newRoot(norm))
   }
   relabel()
-  await Promise.all(roots.map(openRoot))
+  await openRoots(roots)
 }
 
 /** Adds folders; returns a message for each folder that was refused. */
@@ -173,7 +216,7 @@ async function addRoots(paths: string[]): Promise<string[]> {
   roots.push(...added)
   relabel()
   await saveWorkspacePaths(roots.map((r) => r.path))
-  await Promise.all(added.map(openRoot))
+  await openRoots(added)
   return refused
 }
 
@@ -184,6 +227,7 @@ async function removeRoot(key: string): Promise<void> {
   roots = roots.filter((r) => r !== root)
   relabel()
   await saveWorkspacePaths(roots.map((r) => r.path))
+  syncSearch()
 }
 
 function watchRoot(root: Root): void {
@@ -193,8 +237,9 @@ function watchRoot(root: Root): void {
 
   const rescan = async (): Promise<void> => {
     if (!stillOpen()) return
-    root.docs = await scanLibrary(root.path, root.docs)
+    root.docs = await scanLibrary(root.path, root.docs, scanCache)
     await reconcileStores(root)
+    syncSearch()
     await pushSnapshot()
   }
   const reloadStores = async (): Promise<void> => {
@@ -408,6 +453,8 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('doc:openPath', (_e, rel: string) => openLibraryFile(rel))
+
+  ipcMain.handle('search', (_e, query: string) => search?.search(String(query)) ?? [])
 
   ipcMain.handle('doc:readBinary', async (_e, id: string) => {
     const abs = inLibrary(id)
@@ -629,13 +676,22 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc()
     nativeTheme.themeSource = (await loadUiSettings()).theme
 
+    scanCache = new ScanCache(path.join(app.getPath('userData'), 'scan-cache.json'))
+    await scanCache.load()
+    search = new SearchService(path.join(app.getPath('userData'), 'text-cache'), (status) =>
+      win?.webContents.send('search:status', status)
+    )
+
+    // Show the window right away; folders are scanned in the background and appear as they finish.
+    createWindow()
+    startAutoUpdate(() => win)
+
     // DOCS_LIBRARY lets you (or the smoke test) open folders directly, separated by ";".
     const fromEnv = (process.env.DOCS_LIBRARY ?? '').split(path.delimiter).filter(Boolean)
     await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths())
-
-    createWindow()
-    startAutoUpdate(() => win)
   })
 
   app.on('window-all-closed', () => app.quit())
+  // Keep what was learned about the files for the next start.
+  app.on('before-quit', () => void scanCache?.save())
 }

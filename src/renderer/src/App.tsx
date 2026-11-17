@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type StudyStatus, type UiSettings } from '../../shared/types'
-import { buildIndex, errorMessage, loadLocal, metaOf, saveLocal } from './lib/docs'
+import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type SearchStatus, type StudyStatus, type UiSettings } from '../../shared/types'
+import { errorMessage, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
 import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
@@ -33,6 +33,7 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [dismissed, setDismissed] = useState<string[]>([])
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null)
   const [ui, setUi] = useState<UiSettings>(DEFAULT_UI)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [recentOpen, setRecentOpen] = useState(false)
@@ -68,6 +69,9 @@ export default function App() {
       .catch(notify)
     return window.api.onLibraryChanged(setLib)
   }, [notify])
+
+  // Background indexing of document text for search.
+  useEffect(() => window.api.onSearchStatus(setSearchStatus), [])
 
   // App version + auto-update progress.
   useEffect(() => {
@@ -217,8 +221,6 @@ export default function App() {
     [notify]
   )
 
-  const index = useMemo(() => buildIndex(docs, meta), [docs, meta])
-
   const visibleDocs = useMemo(
     () =>
       docs.filter((d) => {
@@ -228,16 +230,36 @@ export default function App() {
     [docs, meta, statusFilter, tagFilter]
   )
 
-  const hits: SearchHit[] | null = useMemo(() => {
-    if (!query.trim()) return null
-    const visible = new Set(visibleDocs.map((d) => d.path))
-    const byPath = new Map(docs.map((d) => [d.path, d]))
-    return index
-      .search(query)
-      .filter((r) => visible.has(r.id as string))
-      .slice(0, 100)
-      .map((r) => ({ doc: byPath.get(r.id as string)!, terms: r.terms }))
-  }, [query, index, visibleDocs, docs])
+  // Search runs in a background worker in the main process (window.api.search), so even
+  // a big library never freezes the window. Tags are matched here (they change often).
+  const [hits, setHits] = useState<SearchHit[] | null>(null)
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) {
+      setHits(null)
+      return
+    }
+    let alive = true
+    const timer = setTimeout(async () => {
+      const results = await window.api.search(q).catch(() => [])
+      if (!alive) return
+      const visible = new Map(visibleDocs.map((d) => [d.path, d]))
+      const nq = normalize(q)
+      const out: SearchHit[] = visibleDocs
+        .filter((d) => metaOf(meta, d.path).tags.some((t) => normalize(t).includes(nq)))
+        .map((doc) => ({ doc, snippet: null }))
+      const seen = new Set(out.map((h) => h.doc.path))
+      for (const r of results) {
+        const doc = visible.get(r.path)
+        if (doc && !seen.has(r.path)) out.push({ doc, snippet: r.snippet })
+      }
+      setHits(out.slice(0, 100))
+    }, 150)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [query, visibleDocs, meta, searchStatus]) // searchStatus: results improve while texts are being indexed
 
   const current = docs.find((d) => d.path === selected) ?? null
   const warnings = (lib?.warnings ?? []).filter((w) => !dismissed.includes(w))
@@ -258,6 +280,7 @@ export default function App() {
         selected={selected}
         onOpen={openDoc}
         appInfo={appInfo}
+        searchStatus={searchStatus}
         recentOpen={recentOpen}
         onRecentOpen={setRecentOpen}
         onAddFolders={addFolders}

@@ -21,7 +21,6 @@ const doc = (p: string, hash: string): DocEntry => ({
   name: p.split('/').pop()!,
   kind: 'md',
   title: p,
-  text: '',
   size: 1,
   mtime: 1,
   hash

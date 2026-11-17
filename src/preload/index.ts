@@ -2,7 +2,7 @@
 // and nothing else, so a document can never reach the file system on its own.
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DocsApi, LibrarySnapshot, UpdateStatus } from '../shared/types'
+import type { DocsApi, LibrarySnapshot, SearchStatus, UpdateStatus } from '../shared/types'
 
 /** Subscribes to a main-process event and returns an unsubscribe function. */
 function listen<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -27,6 +27,8 @@ const api: DocsApi = {
   saveAnnotation: (path, annotation) => ipcRenderer.invoke('notes:save', path, annotation),
   deleteAnnotation: (path, id) => ipcRenderer.invoke('notes:delete', path, id),
   readBinary: (path) => ipcRenderer.invoke('doc:readBinary', path),
+  search: (query) => ipcRenderer.invoke('search', query),
+  onSearchStatus: (cb) => listen<[SearchStatus]>('search:status', cb),
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   onUpdateStatus: (cb) => listen<[UpdateStatus]>('update:status', cb),
   installUpdate: () => ipcRenderer.invoke('update:install'),

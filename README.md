@@ -28,7 +28,7 @@ node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ b�
 | **Bôi đen chữ** | Hiện thanh highlight: 4 màu hoặc **✎ Ghi chú**. Bấm vào chỗ đã highlight để sửa ghi chú, đổi màu, xoá. Tab **Ghi chú** ở bảng bên phải liệt kê mọi highlight của bài. Dùng được cho Markdown, HTML và EPUB. |
 | **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
 | **⋯ → Xuất PDF kèm highlight và ghi chú…** | Như trên, nhưng in cả highlight theo màu, số chú thích ¹ ² ³ sau đoạn có ghi chú, và mục **Ghi chú** ở cuối file |
-| File `.epub` | Đọc sách EPUB: mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
+| File `.epub` | Đọc sách EPUB **từng trang** như sách thật: nút ‹ ›, phím ← → / PageUp PageDown, hoặc lăn chuột để lật trang; cửa sổ rộng thì hiện 2 trang. Thanh dưới cùng cho biết chương và % đã đọc. Mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
 | File `.pdf` | Mở ngay trong app bằng trình xem PDF có sẵn (phóng to, tìm chữ, in). PDF được tìm theo tên file, chưa tìm theo nội dung. |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown |
 | **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
@@ -71,6 +71,11 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 | `src/shared/anchor.ts` | Tìm lại và vẽ highlight (dùng chung cho Markdown, trang HTML và lúc xuất PDF) |
 | `src/main/doc-store.ts` | File JSON theo từng bài trong thư mục: hàng đợi ghi, sao lưu file hỏng, đi theo file khi đổi tên |
 | `src/main/notes-store.ts` | `.docs-notes.json`: highlight và ghi chú |
+| `src/main/zip.ts` | Đọc từng file trong file zip/EPUB mà không phải tải cả file |
+| `src/main/scan-cache.ts` | Nhớ tên + hash của file giữa các lần mở app, để thư mục lớn mở nhanh |
+| `src/main/search-worker.ts` | Tìm kiếm chạy ở luồng riêng: đọc chữ của tài liệu ở chế độ nền, tìm không dấu |
+| `src/main/search.ts` | Phía main process của luồng tìm kiếm |
+| `src/shared/text.ts` | Bỏ dấu tiếng Việt, cắt đoạn trích quanh chỗ tìm thấy |
 | `src/main/meta-store.ts` | `.docs-meta.json`: hàng đợi ghi, sao lưu file hỏng, giữ tag khi đổi tên file |
 | `src/main/storage.ts` | Settings và danh sách "mở gần đây" trong `%APPDATA%\Study Docs` |
 | `src/preload/index.ts` | Cầu nối duy nhất UI ↔ Node, lộ ra `window.api` |
@@ -97,6 +102,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
 - **Highlight và ghi chú** nằm trong `.docs-notes.json` của từng thư mục, **không ghi vào file bài**. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.
+- **Bộ nhớ đệm cho tốc độ** cũng ở đó: `scan-cache.json` (tên các tài liệu) và thư mục `text-cache` (chữ đã đọc ra để tìm kiếm, khoảng 2 lần dung lượng chữ của mỗi cuốn sách). Xoá đi cũng không mất gì, app sẽ đọc lại. Chữ của file đã bị bỏ khỏi workspace được tự dọn.
 
 ## Bảo mật
 

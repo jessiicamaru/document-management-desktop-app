@@ -9,7 +9,6 @@ const doc = (path: string, title = path): DocEntry => ({
   name: path.split('/').pop()!,
   kind: path.endsWith('.md') ? 'md' : 'html',
   title,
-  text: '',
   size: 0,
   mtime: 0
 })

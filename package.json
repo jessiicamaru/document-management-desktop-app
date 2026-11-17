@@ -1,7 +1,7 @@
 {
   "name": "study-docs",
   "productName": "Study Docs",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Quản lý tài liệu học (Markdown + HTML) trên Windows",
   "author": "",
   "license": "MIT",
@@ -77,6 +77,10 @@
         "repo": "document-management-desktop-app",
         "releaseType": "release"
       }
+    ],
+    "asarUnpack": [
+      "out/main/search-worker.js",
+      "out/main/chunks/**"
     ]
   },
   "dependencies": {

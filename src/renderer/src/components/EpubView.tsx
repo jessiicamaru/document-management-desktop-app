@@ -2,10 +2,11 @@
 //
 // The book is read as bytes through window.api (no network), unzipped in memory by epub.js,
 // and each chapter is shown in an iframe. Book scripts never run (the app's CSP blocks them).
-// Chapters scroll vertically like the other documents. The reading position is remembered
-// as an EPUB CFI (an exact position in the book), highlights too.
+// Books are read page by page, like a real book: buttons, ←/→, PageUp/PageDown or the
+// mouse wheel turn the page; a wide window shows two pages side by side. The reading
+// position is remembered as an EPUB CFI (an exact position in the book), highlights too.
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import ePub from 'epubjs'
 import type { Annotation, DocEntry } from '../../../shared/types'
 import { loadLocal, saveLocal } from '../lib/docs'
@@ -27,6 +28,17 @@ interface Props extends ReaderCallbacks {
 }
 
 const positionKey = (path: string): string => `epubpos:${path}`
+const locationsKey = (doc: DocEntry): string => `epubloc:${doc.path}:${doc.mtime}`
+
+/** Joins a path relative to `base` (a file path inside the book), handling "../". */
+function resolveIn(base: string, href: string): string {
+  const parts = base.split('/').slice(0, -1)
+  for (const p of href.split('/')) {
+    if (p === '..') parts.pop()
+    else if (p !== '.' && p !== '') parts.push(p)
+  }
+  return parts.join('/')
+}
 
 /**
  * epub.js turns a range that starts or ends on an element (double-clicking a bold word,
@@ -79,8 +91,34 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
   const toc = useRef<TocEntry[]>([])
   const annotations = useRef<Annotation[]>([])
   const drawn = useRef<string[]>([])
+  const bookRef = useRef<Book | null>(null)
+  const [progress, setProgress] = useState<{ chapter: string; percent: number | null }>({ chapter: '', percent: null })
   const cb = useRef(props)
   cb.current = props
+
+  const next = (): void => void rendition.current?.next()
+  const prev = (): void => void rendition.current?.prev()
+
+  /**
+   * Outline links are written relative to the book's navigation file, which is often in
+   * its own folder (e.g. Nav/toc.xhtml -> "../Text/ch5.xhtml"); epub.js expects them
+   * relative to the package. Find the chapter it means.
+   */
+  const chapterHref = (href: string): string => {
+    const book = bookRef.current
+    if (!book) return href
+    const [file, hash] = href.split('#')
+    const navFile = (book.packaging as unknown as { navPath?: string; ncxPath?: string }).navPath ||
+      (book.packaging as unknown as { ncxPath?: string }).ncxPath || ''
+    const spine = book.spine as unknown as { get(target: string): { href: string } | null; spineItems: { href: string }[] }
+    const candidates = [file, resolveIn(navFile, file)]
+    let item = candidates.map((c) => spine.get(c)).find(Boolean) ?? null
+    if (!item) {
+      const name = file.split('/').pop()!
+      item = spine.spineItems.find((it) => it.href === resolveIn(navFile, file) || it.href.split('/').pop() === name) ?? null
+    }
+    return item ? item.href + (hash ? `#${hash}` : '') : href
+  }
 
   /** Replaces the highlights drawn in the book. */
   const draw = (): void => {
@@ -119,11 +157,43 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       if (rendition.current) applyTheme(rendition.current)
     }
 
+    // Mouse wheel turns the page (at most one page per 350 ms, so one flick = one page).
+    let lastWheel = 0
+    const onWheel = (e: WheelEvent): void => {
+      if (Math.abs(e.deltaY) < 4 || Date.now() - lastWheel < 350) return
+      lastWheel = Date.now()
+      if (e.deltaY > 0) next()
+      else prev()
+    }
+    hostRef.current!.addEventListener('wheel', onWheel, { passive: true })
+    // Keys when the focus is in the app rather than in the book.
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement
+      if (e.altKey || e.ctrlKey || e.metaKey || t.closest('input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]')) return
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') next()
+      if (e.key === 'ArrowLeft' || e.key === 'PageUp') prev()
+    }
+    window.addEventListener('keydown', onKey)
+    // Re-layout the pages when the window or the side panel changes size.
+    const resize = new ResizeObserver(() => {
+      const host = hostRef.current
+      if (host && rendition.current) rendition.current.resize(host.clientWidth, host.clientHeight)
+    })
+    resize.observe(hostRef.current!)
+
     void (async () => {
       const bytes = await window.api.readBinary(doc.path)
       if (cancelled) return
       book = ePub(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
-      const r = book.renderTo(hostRef.current!, { width: '100%', height: '100%', flow: 'scrolled-doc', allowScriptedContent: false })
+      bookRef.current = book
+      const r = book.renderTo(hostRef.current!, {
+        width: '100%',
+        height: '100%',
+        flow: 'paginated',
+        spread: 'auto',
+        minSpreadWidth: 1100, // two pages side by side when there is room
+        allowScriptedContent: false
+      })
       rendition.current = r
       applyTheme(r)
       darkQuery.addEventListener('change', onScheme)
@@ -135,14 +205,29 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
           { href: it.href, label: it.label.trim(), level },
           ...flatten((it.subitems ?? []) as { href: string; label: string }[], level + 1)
         ])
-      toc.current = flatten(nav.toc, 1)
+      toc.current = flatten(nav.toc, 1).map((t) => ({ ...t, href: chapterHref(t.href) }))
       cb.current.onOutline(toc.current.map((t) => ({ level: Math.min(t.level, 3), text: t.label })))
 
       // Where you are: remember the position, highlight the current chapter in the outline.
-      r.on('relocated', (location: { start: { cfi: string; href: string } }) => {
+      r.on('relocated', (location: { start: { cfi: string; href: string; percentage?: number } }) => {
         saveLocal(positionKey(doc.path), location.start.cfi)
-        const active = toc.current.findIndex((t) => t.href.split('#')[0] === location.start.href)
+        // The last outline entry in this chapter that starts at or before here.
+        let active = -1
+        toc.current.forEach((t, i) => {
+          if (t.href.split('#')[0] === location.start.href) active = active < 0 ? i : active
+        })
         cb.current.onReading(0, active)
+        const ready = (book?.locations as unknown as { length(): number } | undefined)?.length() ?? 0
+        setProgress({
+          chapter: active >= 0 ? toc.current[active].label : '',
+          percent: ready ? Math.round((book!.locations.percentageFromCfi(location.start.cfi) ?? 0) * 100) : null
+        })
+      })
+      // Turning pages with the keyboard / mouse wheel while the book has the focus.
+      r.on('keyup', (e: KeyboardEvent) => {
+        if (e.altKey || e.ctrlKey || e.metaKey) return
+        if (e.key === 'ArrowRight' || e.key === 'PageDown') next()
+        if (e.key === 'ArrowLeft' || e.key === 'PageUp') prev()
       })
       // Selecting text -> highlight toolbar.
       r.on('selected', (_cfi: string, contents: { window: Window; document: Document; cfiFromRange(range: Range): string }) => {
@@ -168,6 +253,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       r.hooks.content.register((contents: { document: Document }) => {
         contents.document.addEventListener('mousedown', () => cb.current.onSelection(null))
         contents.document.addEventListener('scroll', () => cb.current.onSelection(null), true)
+        contents.document.addEventListener('wheel', onWheel, { passive: true })
       })
       r.on('rendered', () => draw())
 
@@ -175,20 +261,38 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       if (cancelled) return
       draw()
       cb.current.onReady()
+
+      // "% read" needs the book split into locations: cached per book version, else computed
+      // in the background (a few seconds for a big book) without blocking reading.
+      const saved = loadLocal<string | null>(locationsKey(doc), null)
+      if (saved) book.locations.load(saved)
+      else {
+        await book.locations.generate(1600)
+        if (cancelled) return
+        saveLocal(locationsKey(doc), book.locations.save())
+      }
+      const loc = r.currentLocation() as unknown as { start?: { cfi: string } }
+      if (loc?.start) setProgress((p) => ({ ...p, percent: Math.round((book!.locations.percentageFromCfi(loc.start!.cfi) ?? 0) * 100) }))
     })().catch((err) => cb.current.onError(err))
 
     return () => {
       cancelled = true
+      window.removeEventListener('keydown', onKey)
+      resize.disconnect()
       darkQuery.removeEventListener('change', onScheme)
       rendition.current?.destroy()
       rendition.current = null
       drawn.current = []
+      bookRef.current = null
       book?.destroy()
     }
   }, [doc.path, doc.mtime])
 
   useImperativeHandle(ref, () => ({
-    gotoHeading: (index) => void rendition.current?.display(toc.current[index]?.href),
+    gotoHeading: (index) => {
+      const href = toc.current[index]?.href
+      if (href) rendition.current?.display(href).catch((err: unknown) => cb.current.onError(err))
+    },
     restoreScroll: () => {}, // the position is restored from the saved CFI when the book opens
     collectChanges: async () => ({ kind: 'none' }),
     setAnnotations: (items) => {
@@ -205,7 +309,23 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     }
   }))
 
-  return <div ref={hostRef} className="epub-host" />
+  return (
+    <div className="epub-view">
+      <div ref={hostRef} className="epub-host" />
+      <div className="epub-bar">
+        <button className="icon-btn" title="Trang trước (←)" onClick={prev}>
+          ‹
+        </button>
+        <span className="epub-progress" title={progress.chapter}>
+          {progress.chapter}
+          {progress.percent !== null && <b>{progress.percent}%</b>}
+        </span>
+        <button className="icon-btn" title="Trang sau (→)" onClick={next}>
+          ›
+        </button>
+      </div>
+    </div>
+  )
 })
 
 export default EpubView

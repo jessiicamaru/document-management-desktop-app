@@ -92,11 +92,17 @@ export function viewModeInjection(): string {
   })
 
   // ---------- shortcuts ----------
+  // Alt+←/→ make the app open another document, which removes this page. That must only
+  // happen once the key is released: removing the page while it is still handling the key
+  // press crashes the app's window. So: block the key on press, report it on release.
+  const isHistoryKey = (e) => e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+  addEventListener('keyup', (e) => {
+    if (isHistoryKey(e)) send({ type: 'key', key: e.key === 'ArrowLeft' ? 'back' : 'forward' })
+  }, true)
   addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase()
-    if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    if (isHistoryKey(e)) {
       e.preventDefault()
-      send({ type: 'key', key: e.key === 'ArrowLeft' ? 'back' : 'forward' })
     } else if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ','].includes(key)) {
       e.preventDefault()
       send({ type: 'key', key: 'ctrl+' + key })

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
-import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo } from '../../../shared/types'
-import { buildTree, loadLocal, makeSnippet, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
+import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo, SearchResult, SearchStatus } from '../../../shared/types'
+import { buildTree, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
 
 export interface SearchHit {
   doc: DocEntry
-  terms: string[]
+  /** Text around the match; null when only the title, file name or a tag matched. */
+  snippet: SearchResult['snippet']
 }
 
 interface Props {
@@ -23,6 +24,7 @@ interface Props {
   selected: string | null
   onOpen: (path: string) => void
   appInfo: AppInfo | null
+  searchStatus: SearchStatus | null
   recentOpen: boolean
   onRecentOpen: (open: boolean) => void
   onOpenSettings: () => void
@@ -132,6 +134,12 @@ export default function Sidebar(props: Props) {
       {props.appInfo && (
         <div className="sidebar-foot">
           <span>Study Docs v{props.appInfo.version}</span>
+          {lib?.scanning && <span className="update-progress">Đang quét thư mục…</span>}
+          {!lib?.scanning && props.searchStatus && props.searchStatus.done < props.searchStatus.total && (
+            <span className="update-progress" title="Đọc nội dung tài liệu để tìm kiếm; tìm theo tên vẫn dùng được ngay">
+              Đang lập chỉ mục {props.searchStatus.done}/{props.searchStatus.total}
+            </span>
+          )}
           {props.appInfo.update.state === 'downloading' && (
             <span className="update-progress">
               Đang tải bản {props.appInfo.update.version}… {props.appInfo.update.percent ?? 0}%
@@ -263,8 +271,7 @@ function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResul
   return (
     <div className="group">
       <div className="group-title">{hits.length} kết quả</div>
-      {hits.map(({ doc, terms }) => {
-        const snip = makeSnippet(doc.text, query, terms)
+      {hits.map(({ doc, snippet }) => {
         const inside = doc.rel.includes('/') ? doc.rel.slice(0, doc.rel.lastIndexOf('/')) : ''
         const folder = rootNames ? [rootNames[doc.root], inside].filter(Boolean).join(' / ') : inside
         return (
@@ -274,11 +281,13 @@ function SearchResults({ hits, query, selected, onOpen, rootNames }: SearchResul
               {doc.title}
             </div>
             {folder && <div className="hit-path">{folder}</div>}
-            <div className="hit-snippet">
-              {snip.before}
-              <mark>{snip.match}</mark>
-              {snip.after}
-            </div>
+            {snippet && (
+              <div className="hit-snippet">
+                {snippet.before}
+                <mark>{snippet.match}</mark>
+                {snippet.after}
+              </div>
+            )}
           </button>
         )
       })}

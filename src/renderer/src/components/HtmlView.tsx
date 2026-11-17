@@ -66,7 +66,11 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
           p.onAnchored(msg.missing)
           break
         case 'key':
-          p.onShortcut(msg.key)
+          // Take the focus back from the page first, and act on the next turn: the shortcut
+          // may switch documents, which removes this iframe.
+          frameRef.current?.blur()
+          window.focus()
+          setTimeout(() => p.onShortcut(msg.key), 0)
           break
         case 'dirty':
           p.onDirty(msg.count > 0)
