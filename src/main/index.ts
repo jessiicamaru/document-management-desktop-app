@@ -14,7 +14,7 @@ import { ScanCache } from './scan-cache'
 import { SearchService } from './search'
 import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
-import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
+import { isSameOrInside, labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { canOpenWithDefaultApp } from './open-policy'
 import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
@@ -147,6 +147,74 @@ const storeOfBackup = (file: string): 'meta' | 'notes' => (String(file).startsWi
 
 async function pushSnapshot(): Promise<void> {
   win?.webContents.send('library:changed', await snapshot())
+  openPendingFile()
+}
+
+// ---------- opening a file from Explorer (issue #24) ----------
+
+/** File types the installer associates with the app. */
+const OPENABLE = /\.(md|markdown|html?|pdf|epub)$/i
+/** A file to show once the UI is ready and its folder has been scanned. */
+let pendingFile: string | null = null
+/** True once the UI asked for the library, so it is listening for doc:navigate. */
+let uiReady = false
+
+/** Document files in a command line ("Study Docs.exe" "C:\notes\a.md"). */
+function filesInArgs(argv: string[], cwd = process.cwd()): string[] {
+  return argv
+    .slice(1)
+    .filter((a) => !a.startsWith('-') && OPENABLE.test(a))
+    .map((a) => path.resolve(cwd, a))
+}
+
+/** Opens a file given on the command line; files outside the workspace ask to add their folder. */
+async function openFromExplorer(abs: string): Promise<void> {
+  try {
+    if (!(await fs.stat(abs)).isFile()) return
+  } catch {
+    return
+  }
+  if (win?.isMinimized()) win.restore()
+  win?.focus()
+  if (!roots.some((r) => isSameOrInside(abs, r.path))) {
+    const folder = path.dirname(abs)
+    const { response } = await dialog.showMessageBox(win!, {
+      type: 'question',
+      buttons: ['Thêm thư mục và mở', 'Huỷ'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Mở file',
+      message: `"${path.basename(abs)}" không nằm trong workspace.`,
+      detail: `Study Docs chỉ mở file trong các thư mục của workspace (để lưu tag, ghi chú cạnh file).\n\nThêm thư mục này vào workspace?\n${folder}`
+    })
+    if (response !== 0) return
+    const refused = await addRoots([folder])
+    if (refused.length) {
+      void dialog.showMessageBox(win!, { type: 'warning', message: 'Không thêm được thư mục', detail: refused.join('\n') })
+      return
+    }
+  }
+  pendingFile = abs
+  openPendingFile()
+}
+
+/** Shows the pending file once its folder is scanned and the UI is listening. */
+function openPendingFile(): void {
+  if (!pendingFile || !uiReady || !win) return
+  const root = roots.find((r) => isSameOrInside(pendingFile!, r.path))
+  if (!root) {
+    pendingFile = null
+    return
+  }
+  const rel = path.relative(root.path, pendingFile).split(path.sep).join('/')
+  if (root.docs.some((d) => d.path === rel)) {
+    pendingFile = null
+    win.webContents.send('doc:navigate', `${root.key}/${rel}`, '')
+  } else if (!scanning) {
+    const name = path.basename(pendingFile)
+    pendingFile = null
+    void dialog.showMessageBox(win, { type: 'warning', message: `Không mở được "${name}"`, detail: 'File nằm trong thư mục ẩn (tên bắt đầu bằng dấu chấm) hoặc không còn tồn tại.' })
+  }
 }
 
 function relabel(): void {
@@ -448,7 +516,12 @@ function friendlyWriteError(err: unknown): Error {
 // ---------- IPC handlers (called through window.api in the UI) ----------
 
 function registerIpc(): void {
-  ipcMain.handle('library:get', () => snapshot())
+  ipcMain.handle('library:get', async () => {
+    const snap = await snapshot()
+    uiReady = true
+    setTimeout(openPendingFile, 0) // after the UI got the library, so the document is in its list
+    return snap
+  })
 
   ipcMain.handle('workspace:add', async () => {
     const result = await dialog.showOpenDialog(win!, {
@@ -742,9 +815,13 @@ function createWindow(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  // Opening another file from Explorer while the app runs starts a second copy, which quits
+  // at once and hands its command line over to this one.
+  app.on('second-instance', (_e, argv, cwd) => {
     if (win?.isMinimized()) win.restore()
     win?.focus()
+    const [file] = filesInArgs(argv, cwd)
+    if (file) void openFromExplorer(file)
   })
 
   app.whenReady().then(async () => {
@@ -806,6 +883,10 @@ if (!app.requestSingleInstanceLock()) {
     // DOCS_LIBRARY lets you (or the smoke test) open folders directly, separated by ";".
     const fromEnv = (process.env.DOCS_LIBRARY ?? '').split(path.delimiter).filter(Boolean)
     await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths())
+
+    // Started by double-clicking a document in Explorer.
+    const [file] = filesInArgs(process.argv)
+    if (file) await openFromExplorer(file)
   })
 
   app.on('window-all-closed', () => app.quit())

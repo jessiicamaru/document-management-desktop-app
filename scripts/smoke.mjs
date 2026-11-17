@@ -7,6 +7,7 @@ import electronPath from 'electron'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { spawn } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -728,6 +729,32 @@ try {
   check(existsSync(path.join(notes, 'devops', 'Docker cơ bản.md')), 'removing a folder does not delete its files')
   const ws = JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).libraryPaths
   check(Array.isArray(ws) && ws.length === 1, 'workspace folders saved in settings')
+
+  // 24. Issue #24: double-clicking a document in Explorer while the app runs starts a second
+  // copy with the file on its command line; it hands the file over to this window and quits.
+  step('24. Open a file from Explorer')
+  const openWithApp = (file) =>
+    new Promise((resolve) => {
+      const child = spawn(electronPath, [projectRoot, file], { env: { ...process.env, STUDYDOCS_USER_DATA: userData }, stdio: 'ignore' })
+      child.on('exit', resolve)
+      setTimeout(() => (child.kill(), resolve('timeout')), 20000)
+    })
+  const secondExit = await openWithApp(file(ES))
+  await docPathIs(ES)
+  check(secondExit !== 'timeout', 'a file opened from Explorer shows in the running app (second copy quits)')
+  const extra = path.join(workDir, 'extra')
+  mkdirSync(extra)
+  writeFileSync(path.join(extra, 'Ngoài workspace.md'), '# Ngoài workspace\n\nFile mở từ Explorer.')
+  await app.evaluate(({ dialog }) => {
+    globalThis.__realBox = dialog.showMessageBox
+    globalThis.__boxes = []
+    dialog.showMessageBox = async (_w, opts) => (globalThis.__boxes.push(opts.message), { response: 0 }) // "Thêm thư mục và mở"
+  })
+  await openWithApp(path.join(extra, 'Ngoài workspace.md'))
+  await docPathIs('Ngoài workspace.md')
+  const boxes = await app.evaluate(({ dialog }) => ((dialog.showMessageBox = globalThis.__realBox), globalThis.__boxes))
+  check(boxes.length === 1 && boxes[0].includes('không nằm trong workspace'), 'a file outside the workspace asks to add its folder, then opens')
+  check((await page.locator('.root-row').count()) === 2, 'its folder is added to the workspace')
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

@@ -68,6 +68,12 @@
       ],
       "icon": "build/icon.ico"
     },
+    "fileAssociations": [
+      { "ext": ["md", "markdown"], "name": "Markdown", "description": "Tài liệu Markdown", "role": "Viewer" },
+      { "ext": "epub", "name": "EPUB", "description": "Sách EPUB", "role": "Viewer" },
+      { "ext": ["html", "htm"], "name": "HTML", "description": "Trang HTML", "role": "Viewer" },
+      { "ext": "pdf", "name": "PDF", "description": "Tài liệu PDF", "role": "Viewer" }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
