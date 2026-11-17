@@ -1,0 +1,23 @@
+# Typecheck + unit tests on every push and pull request (issue #15).
+# The smoke test is not run here: it drives the real app window and is run locally
+# (npm run smoke) or before a release (npm run release -- --smoke).
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # --ignore-scripts: the unit tests don't need the Electron binary or installer tools.
+      - run: npm ci --ignore-scripts
+      - run: npm run typecheck
+      - run: npm test
