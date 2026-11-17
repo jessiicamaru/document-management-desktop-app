@@ -7,9 +7,11 @@
 import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { DEFAULT_UI, type UiSettings } from '../shared/types'
 
 interface Settings {
   libraryPath?: string
+  ui?: Partial<UiSettings>
 }
 
 type RecentFile = Record<string, Record<string, number>>
@@ -33,7 +35,30 @@ async function writeJson(name: string, data: unknown): Promise<void> {
 }
 
 export const loadSettings = (): Promise<Settings> => readJson<Settings>('settings.json', {})
-export const saveSettings = (s: Settings): Promise<void> => writeJson('settings.json', s)
+
+/** Merges `patch` into settings.json so library path and appearance don't overwrite each other. */
+export async function saveSettings(patch: Settings): Promise<void> {
+  await writeJson('settings.json', { ...(await loadSettings()), ...patch })
+}
+
+const HEX = /^#[0-9a-f]{6}$/i
+
+/** Reads appearance settings, replacing anything missing or invalid with the default. */
+export async function loadUiSettings(): Promise<UiSettings> {
+  const ui = { ...DEFAULT_UI, ...(await loadSettings()).ui }
+  return sanitizeUi(ui)
+}
+
+export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
+  const pick = <T>(value: unknown, allowed: readonly T[], fallback: T): T => (allowed.includes(value as T) ? (value as T) : fallback)
+  return {
+    theme: pick(ui.theme, ['system', 'light', 'dark'] as const, DEFAULT_UI.theme),
+    accent: typeof ui.accent === 'string' && HEX.test(ui.accent) ? ui.accent : DEFAULT_UI.accent,
+    readingSize: Math.min(24, Math.max(13, Math.round(Number(ui.readingSize) || DEFAULT_UI.readingSize))),
+    readingFont: pick(ui.readingFont, ['sans', 'serif'] as const, DEFAULT_UI.readingFont),
+    readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth)
+  }
+}
 
 // recent.json is written one call at a time, same idea as MetaStore.
 let recentQueue: Promise<unknown> = Promise.resolve()

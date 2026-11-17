@@ -1,14 +1,19 @@
 // Electron main process: owns the window, the file system and the `doc://` protocol.
 
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { DocEntry, DocMeta, LibrarySnapshot } from '../shared/types'
-import { resolveInLibrary, scanLibrary } from './library'
+import type { DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
+import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
+import { kindOf, resolveInLibrary, scanLibrary } from './library'
 import { META_FILE, MetaStore } from './meta-store'
-import { loadRecent, loadSettings, markOpened, saveSettings } from './storage'
-import { getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
+import { loadRecent, loadSettings, loadUiSettings, markOpened, sanitizeUi, saveSettings } from './storage'
+import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
+
+// Tests run with their own settings folder so they never touch your real settings.
+if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
 
 // Documents are served as doc://library/<relative path>. A "standard" scheme means
 // relative links inside an HTML document (images, other pages) resolve normally.
@@ -141,6 +146,30 @@ async function openLibraryFile(rel: string): Promise<void> {
   if (error) throw new Error(error)
 }
 
+/**
+ * Writes a document only if it still has the modified time the editor started from,
+ * so an edit never silently overwrites a change made in another program.
+ * Writes to a hidden temp file first, then renames it over the original.
+ */
+async function writeDocChecked(rel: string, build: (current: string) => string, expectedMtime: number): Promise<number> {
+  const abs = inLibrary(rel)
+  if (!abs || !kindOf(abs)) throw new Error('Chỉ sửa được file .md / .html trong thư mục tài liệu.')
+  const stat = await fs.stat(abs)
+  if (Math.abs(stat.mtimeMs - expectedMtime) > 1) {
+    throw new Error('File vừa bị thay đổi bên ngoài app. Bài đã được tải lại; hãy sửa lại thay đổi của bạn.')
+  }
+  const content = build(await fs.readFile(abs, 'utf8'))
+  const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.studydocs-tmp`)
+  try {
+    await fs.writeFile(tmp, content, 'utf8')
+    await fs.rename(tmp, abs)
+  } catch (err) {
+    await fs.rm(tmp, { force: true })
+    throw friendlyWriteError(err)
+  }
+  return (await fs.stat(abs)).mtimeMs
+}
+
 /** Turns low-level file errors into a message that makes sense in the UI. */
 function friendlyWriteError(err: unknown): Error {
   const code = (err as NodeJS.ErrnoException).code
@@ -202,6 +231,30 @@ function registerIpc(): void {
 
   ipcMain.handle('app:info', () => ({ version: app.getVersion(), update: getUpdateStatus() }))
   ipcMain.handle('update:install', () => installUpdateNow())
+  ipcMain.handle('update:check', () => checkForUpdatesNow())
+
+  ipcMain.handle('settings:get', () => loadUiSettings())
+  ipcMain.handle('settings:set', async (_e, ui: UiSettings) => {
+    const clean = sanitizeUi(ui)
+    await saveSettings({ ui: clean })
+    nativeTheme.themeSource = clean.theme // also switches prefers-color-scheme for the pages
+    return clean
+  })
+
+  ipcMain.handle('doc:write', (_e, rel: string, content: string, expectedMtime: number) => {
+    if (typeof content !== 'string') throw new Error('Nội dung không hợp lệ')
+    return writeDocChecked(rel, () => content, expectedMtime)
+  })
+
+  ipcMain.handle('doc:saveHtmlEdits', async (_e, rel: string, edits: HtmlBlockEdit[], expectedMtime: number) => {
+    if (kindOf(rel) !== 'html') throw new Error('Không phải file HTML')
+    try {
+      return await writeDocChecked(rel, (current) => applyHtmlEdits(current, edits), expectedMtime)
+    } catch (err) {
+      if (err instanceof HtmlEditError) throw new Error(err.message)
+      throw err
+    }
+  })
 }
 
 // ---------- window ----------
@@ -264,6 +317,20 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // The UI blocks closing while an edit is unsaved; ask what to do.
+  webContents.on('will-prevent-unload', (e) => {
+    const choice = dialog.showMessageBoxSync(win!, {
+      type: 'question',
+      title: 'Thay đổi chưa lưu',
+      message: 'Bạn đang có thay đổi chưa lưu.',
+      detail: 'Thoát bây giờ sẽ mất các thay đổi đó.',
+      buttons: ['Ở lại', 'Thoát, bỏ thay đổi'],
+      defaultId: 0,
+      cancelId: 0
+    })
+    if (choice === 1) e.preventDefault() // preventDefault here means "close anyway"
+  })
+
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -283,14 +350,28 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
-    protocol.handle('doc', (request) => {
+    protocol.handle('doc', async (request) => {
       const target = parseDocUrl(request.url) // null for malformed URLs such as a stray "%"
       const abs = target ? inLibrary(target.path) : null
       if (!abs) return new Response('Not found', { status: 404 })
+
+      // ?edit=1 on an HTML doc: serve it with the inline editor script, and switch off the
+      // page's own scripts (only the script with this nonce may run).
+      if (new URL(request.url).searchParams.get('edit') === '1' && kindOf(abs) === 'html') {
+        const nonce = randomBytes(16).toString('base64')
+        const source = await fs.readFile(abs, 'utf8')
+        return new Response(source + editModeInjection(nonce), {
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Content-Security-Policy': `script-src 'nonce-${nonce}'; object-src 'none'`
+          }
+        })
+      }
       return net.fetch(pathToFileURL(abs).toString())
     })
 
     registerIpc()
+    nativeTheme.themeSource = (await loadUiSettings()).theme
 
     // DOCS_LIBRARY lets you (or the smoke test) point the app at a folder directly.
     const settings = await loadSettings()

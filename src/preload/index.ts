@@ -23,7 +23,12 @@ const api: DocsApi = {
   onNavigate: (cb) => listen<[string, string]>('doc:navigate', cb),
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   onUpdateStatus: (cb) => listen<[UpdateStatus]>('update:status', cb),
-  installUpdate: () => ipcRenderer.invoke('update:install')
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  getUiSettings: () => ipcRenderer.invoke('settings:get'),
+  setUiSettings: (ui) => ipcRenderer.invoke('settings:set', ui),
+  writeDoc: (path, content, expectedMtime) => ipcRenderer.invoke('doc:write', path, content, expectedMtime),
+  saveHtmlEdits: (path, edits, expectedMtime) => ipcRenderer.invoke('doc:saveHtmlEdits', path, edits, expectedMtime)
 }
 
 contextBridge.exposeInMainWorld('api', api)

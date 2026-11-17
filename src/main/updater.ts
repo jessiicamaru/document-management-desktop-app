@@ -42,6 +42,12 @@ export function startAutoUpdate(getWindow: () => BrowserWindow | null): void {
   setInterval(check, CHECK_EVERY_MS)
 }
 
+/** "Kiểm tra cập nhật" button in Settings. */
+export async function checkForUpdatesNow(): Promise<void> {
+  if (!app.isPackaged) throw new Error('Đang chạy bản dev (npm run dev): không có cập nhật.')
+  await autoUpdater.checkForUpdates()
+}
+
 /** Closes the app, installs the downloaded update silently and starts the new version. */
 export function installUpdateNow(): void {
   if (status.state === 'ready') autoUpdater.quitAndInstall(true, true)

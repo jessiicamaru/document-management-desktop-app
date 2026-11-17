@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import type { DocEntry } from '../../../shared/types'
 import { docUrl, parseDocUrl } from '../lib/docs'
+import { applyMarkdownEdits, lineStartsOf, MdEditError, sourceRangesPlugin } from '../lib/md-edit'
 import type { ScrollTarget } from '../App'
 
 // html: true lets you mix raw HTML/SVG into Markdown. Everything is passed through
 // DOMPurify afterwards, which removes <script> and on*="" handlers.
 const md = new MarkdownIt({ html: true, linkify: true })
+md.use(sourceRangesPlugin) // data-src="start:end" on editable blocks, for inline editing
 
 // ```mermaid blocks become <pre class="mermaid"> and are drawn after rendering.
 const defaultFence = md.renderer.rules.fence!
@@ -37,25 +39,56 @@ md.core.ruler.push('heading_ids', (state) => {
   })
 })
 
-function stripFrontMatter(src: string): string {
-  return src.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+/** Renders a whole .md file (front matter skipped) to safe HTML with source ranges. */
+function renderMarkdown(source: string): string {
+  const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
+  const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length }
+  return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true } })
+}
+
+const plainText = (el: Element): string => (el.textContent ?? '').replace(/ /g, ' ')
+
+/** Text editing only: no new paragraphs, no formatting, no dropped content. */
+const ALLOWED_INPUT = /^(insertText|insertReplacementText|insertFromPaste|insertCompositionText|deleteContent|deleteWord|deleteSoftLine|deleteHardLine|deleteByCut|historyUndo|historyRedo)/
+
+export interface MarkdownViewHandle {
+  /** The new file content with your edits, or null if nothing changed. Throws if it can't be saved safely. */
+  collectSource(): string | null
 }
 
 interface Props {
   doc: DocEntry
   allDocs: DocEntry[]
   scrollTarget: ScrollTarget
+  editing: boolean
+  /** Unsaved text from the raw editor, shown as a live preview. */
+  sourceOverride: string | null
+  onDirty: (dirty: boolean) => void
   onOpenDoc: (path: string, hash?: string) => void
   onError: (err: unknown) => void
 }
 
-export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, onError }: Props) {
+interface EditBlock {
+  el: HTMLElement
+  start: number
+  end: number
+  oldText: string
+}
+
+const MarkdownView = forwardRef<MarkdownViewHandle, Props>(function MarkdownView(props, ref) {
+  const { doc, allDocs, scrollTarget, editing, sourceOverride, onDirty, onOpenDoc, onError } = props
   const [source, setSource] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
+  // Bumped when an edit session ends, so the article is rebuilt from the file (drops unsaved typing).
+  const [renderKey, setRenderKey] = useState(0)
+  const ref_ = useRef<HTMLDivElement>(null)
+  const blocks = useRef<EditBlock[]>([])
+  const onDirtyRef = useRef(onDirty)
+  onDirtyRef.current = onDirty
 
-  // Re-read whenever the file changes on disk (mtime changes).
+  // Re-read whenever the file changes on disk (mtime changes), except in the middle of an edit.
   useEffect(() => {
+    if (editing) return
     let alive = true
     window.api
       .readDoc(doc.path)
@@ -68,18 +101,14 @@ export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, on
     return () => {
       alive = false
     }
-  }, [doc.path, doc.mtime])
+  }, [doc.path, doc.mtime, editing])
 
-  const html = useMemo(() => {
-    if (source === null) return ''
-    return DOMPurify.sanitize(md.render(stripFrontMatter(source)), {
-      USE_PROFILES: { html: true, svg: true, svgFilters: true }
-    })
-  }, [source])
+  const shown = editing ? source : (sourceOverride ?? source)
+  const html = useMemo(() => (shown === null ? '' : renderMarkdown(shown)), [shown])
 
   // After rendering: fix relative image paths and draw Mermaid diagrams.
   useEffect(() => {
-    const el = ref.current
+    const el = ref_.current
     if (!el || !html) return
     const base = docUrl(doc.path)
     el.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
@@ -92,18 +121,78 @@ export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, on
       void import('mermaid').then(async ({ default: mermaid }) => {
         const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
         mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
+        // The live raw preview can re-render while Mermaid is still drawing: skip stale nodes.
+        const live = [...diagrams].filter((d) => d.isConnected)
+        if (!live.length) return
         try {
-          await mermaid.run({ nodes: diagrams })
+          await mermaid.run({ nodes: live })
         } catch (e) {
-          console.error('Mermaid error', e)
+          if (live.some((d) => d.isConnected)) console.error('Mermaid error', e)
         }
       })
     }
-  }, [html, doc.path])
+  }, [html, doc.path, renderKey])
+
+  // Edit mode: make every block with a known source range editable as plain text.
+  useEffect(() => {
+    const el = ref_.current
+    if (!editing || !el) return
+    blocks.current = [...el.querySelectorAll<HTMLElement>('[data-src]')].map((block) => {
+      const [start, end] = block.dataset.src!.split(':').map(Number)
+      block.contentEditable = 'plaintext-only'
+      block.spellcheck = false
+      block.classList.add('editable')
+      return { el: block, start, end, oldText: plainText(block) }
+    })
+    const changed = (): number => blocks.current.filter((b) => plainText(b.el) !== b.oldText).length
+    const onBeforeInput = (e: InputEvent): void => {
+      if (!ALLOWED_INPUT.test(e.inputType)) e.preventDefault()
+    }
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Enter') e.preventDefault()
+    }
+    const onInput = (e: Event): void => {
+      const block = (e.target as HTMLElement).closest('[data-src]')
+      const b = blocks.current.find((x) => x.el === block)
+      if (b) b.el.classList.toggle('dirty', plainText(b.el) !== b.oldText)
+      onDirtyRef.current(changed() > 0)
+    }
+    el.addEventListener('beforeinput', onBeforeInput)
+    el.addEventListener('keydown', onKeyDown)
+    el.addEventListener('input', onInput)
+    return () => {
+      el.removeEventListener('beforeinput', onBeforeInput)
+      el.removeEventListener('keydown', onKeyDown)
+      el.removeEventListener('input', onInput)
+      blocks.current = []
+      setRenderKey((k) => k + 1)
+    }
+  }, [editing, html])
+
+  useImperativeHandle(ref, () => ({
+    collectSource() {
+      if (source === null) return null
+      const edits = blocks.current
+        .filter((b) => plainText(b.el) !== b.oldText)
+        .map((b) => ({ start: b.start, end: b.end, oldText: b.oldText, newText: plainText(b.el) }))
+      if (!edits.length) return null
+      const next = applyMarkdownEdits(source, edits)
+
+      // Safety check: the new file must render to exactly the text you see now.
+      const check = document.createElement('div')
+      check.innerHTML = renderMarkdown(next)
+      const after = [...check.querySelectorAll('[data-src]')].map((e) => plainText(e).trim())
+      const expected = blocks.current.map((b) => plainText(b.el).trim())
+      if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {
+        throw new MdEditError('Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.')
+      }
+      return next
+    }
+  }))
 
   const scrollTo = (id: string, smooth: boolean): void => {
     if (!id) return
-    ref.current
+    ref_.current
       ?.querySelector(`[id="${CSS.escape(id)}"]`)
       ?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' })
   }
@@ -115,11 +204,16 @@ export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, on
 
   // Links: #anchors scroll, links to other library docs open in the app, other library
   // files (pdf, images...) open in their default app, web links go to the browser
-  // (handled by the main process).
+  // (handled by the main process). While editing, links do nothing.
   const onClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     const a = (e.target as HTMLElement).closest('a')
     const href = a?.getAttribute('href')
-    if (!a || !href || /^[a-z][a-z0-9+.-]*:/i.test(href)) return
+    if (!a || !href) return
+    if (editing) {
+      e.preventDefault()
+      return
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return
     e.preventDefault()
     const target = parseDocUrl(new URL(href, docUrl(doc.path)).href)
     if (!target) return
@@ -131,7 +225,15 @@ export default function MarkdownView({ doc, allDocs, scrollTarget, onOpenDoc, on
   if (error) return <div className="md-error">Không đọc được file: {error}</div>
   return (
     <div className="md-scroll">
-      <article ref={ref} className="markdown" onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
+      <article
+        key={renderKey}
+        ref={ref_}
+        className={`markdown ${editing ? 'editing' : ''}`}
+        onClick={onClick}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     </div>
   )
-}
+})
+
+export default MarkdownView
