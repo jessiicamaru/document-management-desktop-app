@@ -22,6 +22,40 @@ cpSync(path.join(projectRoot, 'sample-library'), library, {
 const notes = path.join(workDir, 'notes')
 mkdirSync(path.join(notes, 'devops'), { recursive: true })
 writeFileSync(path.join(notes, 'devops', 'Docker cơ bản.md'), '# Docker cơ bản\n\nContainer chạy một tiến trình cô lập.\n')
+// Files for the safety checks (issues #1, #2, #3).
+const ATTACK = 'backend/Tài liệu lạ.html'
+writeFileSync(
+  path.join(library, 'backend', 'Tài liệu lạ.html'),
+  `<!doctype html><html><head><meta charset="utf-8"><title>Tài liệu lạ</title></head><body><h1>Tài liệu lạ</h1>
+<p>Bài này thử làm những việc không được phép.</p>
+<script>
+  const params = new URLSearchParams(location.search)
+  // #2: try to read other files of the workspace
+  ;(async () => {
+    const out = []
+    for (const u of ['../.docs-meta.json', '../frontend/React%20useEffect.md']) {
+      try {
+        const r = await fetch(u)
+        out.push(r.ok ? 'READ' : 'status' + r.status)
+      } catch {
+        out.push('blocked')
+      }
+    }
+    document.body.dataset.result = out.join(',')
+  })()
+  // #1: open another file without anyone clicking
+  const act = () => {
+    if (location.hash === '#run-py') location = 'tool.py'
+    if (location.hash === '#run-txt') location = 'readme.txt'
+  }
+  act()
+  addEventListener('hashchange', act)
+</script></body></html>`
+)
+writeFileSync(path.join(library, 'backend', 'tool.py'), 'print("this must never run")\n')
+writeFileSync(path.join(library, 'backend', 'readme.txt'), 'plain text\n')
+const CRLF = 'frontend/Windows note.md'
+writeFileSync(path.join(library, 'frontend', 'Windows note.md'), '# Windows note\r\n\r\nDòng một.\r\nDòng hai.\r\n')
 const file = (rel) => path.join(library, rel)
 const read = (rel) => readFileSync(file(rel), 'utf8')
 const metaFile = file('.docs-meta.json')
@@ -45,7 +79,9 @@ writeFileSync(metaFile, '{ "version": 1, "docs": { <<<<<<< HEAD')
 
 const app = await electron.launch({
   executablePath: electronPath,
-  args: [projectRoot],
+  // Keep drawing even when the test window is covered by other windows: Windows/Chromium
+  // stop painting hidden windows, and screenshots then wait forever (issue #16).
+  args: ['--disable-features=CalculateNativeWinOcclusion', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', projectRoot],
   env: { ...process.env, STUDYDOCS_DEBUG: '1', DOCS_LIBRARY: [library, notes].join(path.delimiter), STUDYDOCS_USER_DATA: userData }
 })
 const errors = []
@@ -53,10 +89,13 @@ let mainLog = ''
 app.process().stdout?.on('data', (d) => (mainLog += d))
 app.process().stderr?.on('data', (d) => (mainLog += d))
 const page = await app.firstWindow()
-page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+// Errors of the app itself. Messages from inside documents (doc://...) don't count: the test
+// library has a page that deliberately tries forbidden things, and those must fail.
+page.on('console', (m) => m.type() === 'error' && !m.location().url.startsWith('doc://') && !/doc:\/\/library\//.test(m.text()) && errors.push(m.text()))
 page.on('pageerror', (e) => errors.push(String(e)))
 let dialogAnswer = 'dismiss'
-page.on('dialog', (d) => (dialogAnswer === 'accept' ? d.accept() : d.dismiss()))
+// A dialog may already be gone when Playwright answers it; that must not crash the test.
+page.on('dialog', (d) => void (dialogAnswer === 'accept' ? d.accept() : d.dismiss()).catch(() => {}))
 await page.setViewportSize({ width: 1320, height: 860 })
 await page.emulateMedia({ colorScheme: null }) // Playwright forces "light" by default; let the app decide
 
@@ -470,6 +509,83 @@ try {
   const bookNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['sach/Git cơ bản.epub']?.items ?? []
   check(bookNotes.length === 1 && bookNotes[0].cfi?.startsWith('epubcfi(') && bookNotes[0].quote === 'pull trước khi push', 'EPUB: highlight saved with its position in the book')
   await page.screenshot({ path: shot('14-epub') })
+
+  // 19. Issue #1: a page can't open programs, and asks before opening other files.
+  step('19. Safety: opening files from a page')
+  await app.evaluate(({ shell, dialog }) => {
+    // Keep the real functions: window.confirm() in the UI also goes through showMessageBox.
+    globalThis.__real = { openPath: shell.openPath, showItemInFolder: shell.showItemInFolder, showMessageBox: dialog.showMessageBox }
+    globalThis.__opened = []
+    globalThis.__revealed = []
+    globalThis.__asked = 0
+    shell.openPath = async (p) => (globalThis.__opened.push(p), '')
+    shell.showItemInFolder = (p) => globalThis.__revealed.push(p)
+    dialog.showMessageBox = async () => (globalThis.__asked++, { response: 1 }) // answer "Không"
+  })
+  const attackId = await page.evaluate(async (rel) => (await window.api.getLibrary()).docs.find((d) => d.rel === rel).path, ATTACK)
+  await page.evaluate((id) => window.api.markOpened(id), attackId)
+  await openDoc('Tài liệu lạ')
+  await page.waitForTimeout(800)
+  const runInPage = (hash) =>
+    page.frames().find((fr) => fr.url().includes('T%C3%A0i%20li%E1%BB%87u%20l%E1%BA%A1.html')).evaluate((h) => (location.hash = h), hash)
+  await runInPage('#run-py')
+  await page.waitForTimeout(800)
+  const afterPy = await app.evaluate(() => ({ opened: globalThis.__opened.length, revealed: globalThis.__revealed.length }))
+  check(afterPy.opened === 0 && afterPy.revealed === 1, 'a page navigating to a .py file only shows it in Explorer, never runs it')
+  await openDoc('Tài liệu lạ')
+  await page.waitForTimeout(800)
+  await runInPage('#run-txt')
+  await page.waitForTimeout(800)
+  const afterTxt = await app.evaluate(() => ({ opened: globalThis.__opened.length, asked: globalThis.__asked }))
+  check(afterTxt.asked === 1 && afterTxt.opened === 0, 'a page opening a .txt file asks first (answered "Không": nothing opened)')
+  await app.evaluate(({ shell, dialog }) => {
+    Object.assign(shell, { openPath: globalThis.__real.openPath, showItemInFolder: globalThis.__real.showItemInFolder })
+    dialog.showMessageBox = globalThis.__real.showMessageBox
+  })
+
+  // 20. Issue #2: when exporting to PDF the page can't read other files; hidden files are never served.
+  step('20. Safety: export window and hidden files')
+  const readIn = (url) =>
+    app.evaluate(async ({ BrowserWindow }, u) => {
+      const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
+      try {
+        await w.loadURL(u)
+        await new Promise((r) => setTimeout(r, 1500))
+        return await w.webContents.executeJavaScript('document.body.dataset.result || ""')
+      } finally {
+        w.destroy()
+      }
+    }, url)
+  const attackUrl = 'doc://library/' + attackId.split('/').map(encodeURIComponent).join('/')
+  check((await readIn(attackUrl + '?print=1')) === 'blocked,blocked', 'export window: the page cannot fetch other files')
+  check((await readIn(attackUrl)).startsWith('status404'), 'hidden files (.docs-meta.json) are never served')
+
+  // 21. Issue #3: the raw editor keeps CRLF line endings and doesn't rewrite an unchanged file.
+  step('21. Raw editor keeps CRLF')
+  const crlfBefore = readFileSync(file(CRLF), 'utf8')
+  const mtimeBefore = (await import('node:fs')).statSync(file(CRLF)).mtimeMs
+  await openDoc('Windows note')
+  await page.click('.doc-controls >> text=Raw')
+  await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('Dòng hai'))
+  await page.click('.raw-host .cm-content')
+  await page.keyboard.press('Control+S')
+  await page.waitForTimeout(600)
+  check((await import('node:fs')).statSync(file(CRLF)).mtimeMs === mtimeBefore, 'Ctrl+S without changes does not rewrite the file')
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('x')
+  await page.keyboard.press('Backspace')
+  await page.waitForTimeout(300)
+  check((await page.locator('.raw-toolbar .dirty-dot').count()) === 0, 'typing then deleting a character is not "unsaved"')
+  await page.keyboard.type('Dòng ba.')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.raw-toolbar .dirty-dot'), null, { timeout: 5000 })
+  const crlfAfter = readFileSync(file(CRLF), 'utf8')
+  check(
+    crlfAfter.startsWith(crlfBefore) && crlfAfter.includes('Dòng ba.\r\n') && !/[^\r]\n/.test(crlfAfter),
+    'saving keeps CRLF line endings everywhere'
+  )
+  await page.click('.raw-toolbar >> text=Đóng raw')
 
   // 18. Removing a folder from the workspace keeps its files.
   step("18. Remove folder")

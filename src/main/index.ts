@@ -15,6 +15,7 @@ import { SearchService } from './search'
 import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
 import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
+import { canOpenWithDefaultApp } from './open-policy'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 
 // Tests run with their own settings folder so they never touch your real settings.
@@ -29,11 +30,6 @@ protocol.registerSchemesAsPrivileged([
 /** Origin of Chromium's built-in PDF viewer, which shows PDF documents inside an iframe. */
 const PDF_VIEWER = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'
 
-/** File types that are never launched from a link; they are shown in Explorer instead. */
-const EXECUTABLE = new Set([
-  '.exe', '.bat', '.cmd', '.com', '.msi', '.ps1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh',
-  '.scr', '.lnk', '.pif', '.hta', '.cpl', '.jar', '.reg', '.msc', '.appref-ms'
-])
 
 let win: BrowserWindow | null = null
 
@@ -278,12 +274,28 @@ function watchRoot(root: Root): void {
 }
 
 /** Opens a library file with its default app; programs/scripts are only shown in Explorer. */
-async function openLibraryFile(rel: string): Promise<void> {
+/**
+ * Opens a library file with its default app. Only safe types are opened (see open-policy.ts);
+ * anything else is shown in Explorer. `fromPage`: the request came from inside a document
+ * (a link or a script in an HTML page), not from you clicking in the app, so ask first.
+ */
+async function openLibraryFile(rel: string, fromPage = false): Promise<void> {
   const abs = inLibrary(rel)
   if (!abs) throw new Error('File nằm ngoài thư mục tài liệu')
-  if (EXECUTABLE.has(path.extname(abs).toLowerCase())) {
+  if (!canOpenWithDefaultApp(abs)) {
     shell.showItemInFolder(abs)
     return
+  }
+  if (fromPage && win) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      title: 'Mở file',
+      message: `Bài đang đọc muốn mở "${path.basename(abs)}" bằng ứng dụng mặc định của Windows.`,
+      buttons: ['Mở', 'Không'],
+      defaultId: 1,
+      cancelId: 1
+    })
+    if (response !== 0) return
   }
   const error = await shell.openPath(abs)
   if (error) throw new Error(error)
@@ -313,6 +325,9 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
   }
   return (await fs.stat(abs)).mtimeMs
 }
+
+/** Export to PDF: the page may draw itself, but not read other files or open connections. */
+const PRINT_CSP = "connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; form-action 'none'"
 
 /**
  * Prints a document to PDF in a hidden window: HTML pages as they are (without the app's
@@ -591,7 +606,7 @@ function createWindow(): void {
     if (hasDoc(target.path)) {
       webContents.send('doc:navigate', target.path, target.hash)
     } else {
-      openLibraryFile(target.path).catch((err) => console.error('open failed', err))
+      openLibraryFile(target.path, true).catch((err) => console.error('open failed', err))
     }
   })
 
@@ -641,7 +656,10 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     protocol.handle('doc', async (request) => {
       const target = parseDocUrl(request.url) // null for malformed URLs such as a stray "%"
-      const abs = target ? inLibrary(target.path) : null
+      // Hidden files (.docs-meta.json, .docs-notes.json, backups...) are the app's own data,
+      // never something a page may load.
+      const hidden = target?.path.split('/').some((part) => part.startsWith('.'))
+      const abs = target && !hidden ? inLibrary(target.path) : null
       if (!abs) return new Response('Not found', { status: 404 })
 
       // ?edit=1 on an HTML doc: serve it with the inline editor script, and switch off the
@@ -658,14 +676,17 @@ if (!app.requestSingleInstanceLock()) {
       }
       if (kindOf(abs) === 'html') {
         const params = new URL(request.url).searchParams
-        const html = (extra: string): Response =>
-          new Response(extra, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+        const html = (body: string, csp?: string): Response =>
+          new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...(csp ? { 'Content-Security-Policy': csp } : {}) } })
         const source = await fs.readFile(abs, 'utf8')
         // Export to PDF: the page as it is, plus (if asked) its highlights and notes.
         if (params.get('print') === '1') {
           const loc = locate(target!.path)
           const notes = params.get('notes') === '1' ? (loc?.root.notes?.byDoc()[loc.rel] ?? []) : []
-          return html(notes.length ? source + printNotesInjection(notes) : source)
+          // When printing, the page is not in the sandboxed iframe, so it must not be able to
+          // read other files (fetch, frames, workers) and send them anywhere. Fonts, images
+          // and styles still load so the PDF looks right.
+          return html(notes.length ? source + printNotesInjection(notes) : source, PRINT_CSP)
         }
         // Reading mode: add the helper for outline, highlights, reading position and shortcuts.
         return html(source + viewModeInjection())

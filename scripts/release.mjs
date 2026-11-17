@@ -2,13 +2,13 @@
 //
 //   1. npm version patch --no-git-tag-version   (or minor / major)
 //   2. git commit -am "Release vX.Y.Z" && git push
-//   3. npm run release
+//   3. npm run release            (runs typecheck + unit tests first; add -- --smoke for the smoke test)
 //
 // electron-builder only builds here; the GitHub CLI (`gh`, already logged in) creates the
 // release and uploads the files. If a previous run stopped half-way, running it again
 // finishes the upload.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -43,7 +43,17 @@ if (existingAssets?.includes('latest.yml')) {
   fail(`Release ${tag} đã phát hành rồi. Tăng version trước: npm version patch --no-git-tag-version`)
 }
 
-// 3. Build the installer and latest.yml (the file installed apps read to find updates).
+// 3. Never ship a version that doesn't pass its checks: every installed app updates to it.
+//    `npm run release -- --smoke` also runs the smoke test (slower, opens app windows).
+const checks = [['typecheck'], ['test']]
+if (process.argv.includes('--smoke')) checks.push(['smoke'])
+for (const [script] of checks) {
+  console.log(`\nKiểm tra: npm run ${script} ...\n`)
+  const r = spawnSync('npm', ['run', script], { stdio: 'inherit', cwd: projectRoot, shell: true })
+  if (r.status !== 0) fail(`"npm run ${script}" thất bại, không phát hành.`)
+}
+
+// 4. Build the installer and latest.yml (the file installed apps read to find updates).
 console.log(`\nĐóng gói ${tag} ...\n`)
 for (const args of [['electron-vite', 'build'], ['electron-builder', '--win', '--publish', 'never']]) {
   const r = spawnSync('npx', args, { stdio: 'inherit', cwd: projectRoot, shell: true })
@@ -69,11 +79,25 @@ const files = [installer, `${installer}.blockmap`, 'latest.yml'].map((f) => {
   return dest
 })
 
-// 4. Create the release (tagged at the pushed commit) or finish an interrupted one.
+// 5. Release notes: the commit titles since the previous release.
+function releaseNotes() {
+  try {
+    run('git', ['fetch', '--tags', '--quiet'])
+    const previous = run('git', ['describe', '--tags', '--abbrev=0', 'HEAD^'])
+    const log = run('git', ['log', `${previous}..HEAD`, '--no-merges', '--pretty=format:- %s'])
+    return `## Study Docs ${tag}\n\nThay đổi kể từ ${previous}:\n\n${log || '- (không có commit mới)'}\n`
+  } catch {
+    return `Study Docs ${tag}`
+  }
+}
+const notesFile = path.join(staging, 'notes.md')
+writeFileSync(notesFile, releaseNotes())
+
+// 6. Create the release (tagged at the pushed commit) or finish an interrupted one.
 console.log(`\nTải lên GitHub ...\n`)
 const ghArgs = existingAssets
   ? ['release', 'upload', tag, ...files, '--clobber', '-R', repoArg]
-  : ['release', 'create', tag, ...files, '--target', head, '--title', tag, '--notes', `Study Docs ${tag}`, '-R', repoArg]
+  : ['release', 'create', tag, ...files, '--target', head, '--title', tag, '--notes-file', notesFile, '-R', repoArg]
 const r = spawnSync('gh', ghArgs, { stdio: 'inherit', cwd: projectRoot })
 if (r.status !== 0) fail('Tải lên GitHub thất bại. Chạy lại "npm run release" để thử tiếp.')
 rmSync(staging, { recursive: true, force: true })

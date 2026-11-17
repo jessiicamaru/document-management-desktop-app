@@ -6,6 +6,7 @@ import { html } from '@codemirror/lang-html'
 import { markdown } from '@codemirror/lang-markdown'
 import { oneDark } from '@codemirror/theme-one-dark'
 import type { DocEntry } from '../../../shared/types'
+import { detectEol, fromLf, toLf, type Eol } from '../lib/eol'
 
 interface Props {
   doc: DocEntry
@@ -22,8 +23,11 @@ const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
-  // Content and modified time of the file as last loaded/saved: the base for conflict checks.
+  // Content (with "\n" line endings, like the editor) and modified time of the file as last
+  // loaded/saved: the base for "unsaved?" and conflict checks.
   const base = useRef({ content: '', mtime: doc.mtime })
+  // The file's own line endings, put back when saving.
+  const eol = useRef<Eol>('\n')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const cb = useRef({ onDirty, onDraft, onError })
@@ -41,7 +45,7 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
     if (content === base.current.content) return
     setSaving(true)
     try {
-      const mtime = await window.api.writeDoc(doc.path, content, base.current.mtime)
+      const mtime = await window.api.writeDoc(doc.path, fromLf(content, eol.current), base.current.mtime)
       base.current = { content, mtime }
       markDirty(false)
     } catch (err) {
@@ -83,7 +87,9 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
 
     window.api
       .readDoc(doc.path)
-      .then((content) => {
+      .then((raw) => {
+        eol.current = detectEol(raw)
+        const content = toLf(raw)
         base.current = { content, mtime: doc.mtime }
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } })
         markDirty(false)
@@ -106,7 +112,9 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
     if (!view || doc.mtime === base.current.mtime || dirty) return
     window.api
       .readDoc(doc.path)
-      .then((content) => {
+      .then((raw) => {
+        eol.current = detectEol(raw)
+        const content = toLf(raw)
         base.current = { content, mtime: doc.mtime }
         view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } })
         markDirty(false)

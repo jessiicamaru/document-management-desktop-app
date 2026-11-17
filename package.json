@@ -3,7 +3,7 @@
   "productName": "Study Docs",
   "version": "0.7.0",
   "description": "Quản lý tài liệu học (Markdown + HTML) trên Windows",
-  "author": "",
+  "author": "jessiicamaru",
   "license": "MIT",
   "private": true,
   "main": "out/main/index.js",
