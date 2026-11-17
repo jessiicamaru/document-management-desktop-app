@@ -9,7 +9,11 @@ export const NOTES_FILE = '.docs-notes.json'
 
 interface DocNotes extends DocKeyed {
   items: Annotation[]
+  /** A note about the whole document, not tied to a highlight (issue #21). */
+  docNote?: { text: string; updated: number }
 }
+
+const MAX_DOC_NOTE = 50000
 
 const COLORS: HighlightColor[] = ['yellow', 'green', 'blue', 'pink']
 const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
@@ -43,6 +47,41 @@ export class NotesStore extends DocStore<DocNotes> {
     return store
   }
 
+  /** Highlights from both versions (the newer copy of each); the newer document note. */
+  protected mergeEntry(a: DocNotes, b: DocNotes): DocNotes {
+    const items = new Map<string, Annotation>()
+    for (const x of [...(a.items ?? []), ...(b.items ?? [])]) {
+      const prev = items.get(x.id)
+      if (!prev || (x.updated ?? 0) > (prev.updated ?? 0)) items.set(x.id, x)
+    }
+    const notes = [a.docNote, b.docNote].filter((n): n is NonNullable<DocNotes['docNote']> => !!n?.text)
+    const docNote = notes.sort((x, y) => y.updated - x.updated)[0]
+    return { ...b, ...a, items: [...items.values()].sort((x, y) => x.created - y.created), ...(docNote ? { docNote } : {}) }
+  }
+
+  /** Document path -> its note about the whole document (documents without one are left out). */
+  docNotes(): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const [p, entry] of Object.entries(this.docs)) if (entry.docNote?.text) out[p] = entry.docNote.text
+    return out
+  }
+
+  /** Sets (or clears, with an empty text) the note about the whole document. */
+  setDocNote(docPath: string, text: string, doc?: Pick<DocEntry, 'hash' | 'name'>): Promise<string> {
+    return this.enqueue(async () => {
+      const clean = String(text ?? '').slice(0, MAX_DOC_NOTE)
+      const entry = this.docs[docPath] ?? { items: [] }
+      const next = { ...this.docs }
+      const updated: DocNotes = { ...entry, hash: doc?.hash ?? entry.hash, name: doc?.name ?? entry.name }
+      if (clean.trim()) updated.docNote = { text: clean, updated: Date.now() }
+      else delete updated.docNote
+      if (updated.items.length || updated.docNote) next[docPath] = updated
+      else delete next[docPath]
+      await this.write(next)
+      return clean.trim() ? clean : ''
+    })
+  }
+
   /** Document path -> its annotations (documents without any are left out). */
   byDoc(): Record<string, Annotation[]> {
     const out: Record<string, Annotation[]> = {}
@@ -54,6 +93,7 @@ export class NotesStore extends DocStore<DocNotes> {
   save(docPath: string, annotation: Annotation, doc?: Pick<DocEntry, 'hash' | 'name'>): Promise<Annotation[]> {
     return this.enqueue(async () => {
       const entry = this.docs[docPath] ?? { items: [] }
+      entry.items ??= []
       const items = entry.items.some((a) => a.id === annotation.id)
         ? entry.items.map((a) => (a.id === annotation.id ? annotation : a))
         : [...entry.items, annotation]
@@ -69,7 +109,7 @@ export class NotesStore extends DocStore<DocNotes> {
       if (!entry) return []
       const items = entry.items.filter((a) => a.id !== id)
       const next = { ...this.docs }
-      if (items.length) next[docPath] = { ...entry, items }
+      if (items.length || entry.docNote) next[docPath] = { ...entry, items }
       else delete next[docPath]
       await this.write(next)
       return items

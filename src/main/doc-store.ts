@@ -56,8 +56,108 @@ export abstract class DocStore<V extends DocKeyed> {
       this.docs = result.docs
       this.lastWritten = result.raw
     } else if (result.kind === 'corrupt') {
-      await this.backupCorrupt(result.raw)
+      await this.handleCorrupt(result.raw)
     }
+  }
+
+  /** Combines two versions of one document's entry (from a Git conflict or a backup). */
+  protected abstract mergeEntry(a: V, b: V): V
+
+  /** Merges `extra` into `base`, entry by entry. */
+  private mergeDocs(base: Record<string, V>, extra: Record<string, V>): Record<string, V> {
+    const out = { ...base }
+    for (const [p, entry] of Object.entries(extra)) out[p] = out[p] ? this.mergeEntry(out[p], entry) : entry
+    return out
+  }
+
+  /**
+   * Tries to get the data out of a file that isn't valid JSON (issue #25):
+   *  - a Git merge conflict (<<<<<<< / ======= / >>>>>>>): both sides are read and merged;
+   *  - trailing commas left by hand editing.
+   * Returns null when it can't be repaired safely.
+   */
+  recover(raw: string): Record<string, V> | null {
+    const parse = (text: string): Record<string, V> | null => {
+      for (const t of [text, text.replace(/,(\s*[}\]])/g, '$1')]) {
+        try {
+          const parsed = JSON.parse(t) as StoreFile<V>
+          if (parsed && typeof parsed === 'object' && parsed.docs && typeof parsed.docs === 'object') return parsed.docs
+        } catch {
+          // try the next repair
+        }
+      }
+      return null
+    }
+    if (!/^<{7}( |$)/m.test(raw)) return parse(raw)
+
+    // Rebuild "ours" and "theirs" from the conflict blocks (diff3 base sections are dropped).
+    const ours: string[] = []
+    const theirs: string[] = []
+    let side: 'both' | 'ours' | 'base' | 'theirs' = 'both'
+    for (const line of raw.split(/\r?\n/)) {
+      if (/^<{7}( |$)/.test(line)) side = 'ours'
+      else if (/^\|{7}( |$)/.test(line) && side === 'ours') side = 'base'
+      else if (/^={7}$/.test(line) && side !== 'both') side = 'theirs'
+      else if (/^>{7}( |$)/.test(line) && side === 'theirs') side = 'both'
+      else {
+        if (side === 'both' || side === 'ours') ours.push(line)
+        if (side === 'both' || side === 'theirs') theirs.push(line)
+      }
+    }
+    if (side !== 'both') return null // unfinished conflict block
+    const a = parse(ours.join('\n'))
+    const b = parse(theirs.join('\n'))
+    return a && b ? this.mergeDocs(a, b) : null
+  }
+
+  /** Backup files of this store in the folder (newest first), e.g. ".docs-meta.corrupt-2026-….json". */
+  async backups(): Promise<string[]> {
+    const prefix = `${this.fileName.replace(/\.json$/, '')}.corrupt-`
+    const names = await fs.readdir(this.root).catch(() => [] as string[])
+    return names.filter((n) => n.startsWith(prefix) && n.endsWith('.json')).sort().reverse()
+  }
+
+  /** Full path of one of this store's backups; throws for anything else (no path tricks). */
+  backupPath(name: string): string {
+    const prefix = `${this.fileName.replace(/\.json$/, '')}.corrupt-`
+    if (typeof name !== 'string' || !name.startsWith(prefix) || !name.endsWith('.json') || /[\\/]/.test(name)) {
+      throw new Error('Không phải bản sao lưu của app')
+    }
+    return path.join(this.root, name)
+  }
+
+  /**
+   * Merges a backup into the current data (nothing current is lost). The backup is then
+   * renamed to ".merged-…" so it isn't offered again. Returns how many documents it had.
+   */
+  restoreBackup(name: string): Promise<number> {
+    return this.enqueue(async () => {
+      const file = this.backupPath(name)
+      const docs = this.recover(await fs.readFile(file, 'utf8'))
+      if (!docs) throw new Error(`Không đọc được ${name}. Hãy mở file và sửa tay (hoặc bỏ bản này).`)
+      await this.write(this.mergeDocs(this.docs, docs))
+      await fs.rename(file, file.replace('.corrupt-', '.merged-'))
+      this.warning = null
+      return Object.keys(docs).length
+    })
+  }
+
+  /** Entries of documents that no longer exist. */
+  orphans(existing: Iterable<string>): string[] {
+    const keep = new Set(existing)
+    return Object.keys(this.docs).filter((p) => !keep.has(p))
+  }
+
+  /** Removes the entries of documents that no longer exist. Returns how many were removed. */
+  pruneOrphans(existing: Iterable<string>): Promise<number> {
+    return this.enqueue(async () => {
+      const gone = this.orphans(existing)
+      if (!gone.length) return 0
+      const next = { ...this.docs }
+      for (const p of gone) delete next[p]
+      await this.write(next)
+      return gone.length
+    })
   }
 
   all(): Record<string, V> {
@@ -108,10 +208,7 @@ export abstract class DocStore<V extends DocKeyed> {
     return this.enqueue(async () => {
       const result = await this.read()
       if (result.kind === 'missing') return false
-      if (result.kind === 'corrupt') {
-        await this.backupCorrupt(result.raw)
-        return false
-      }
+      if (result.kind === 'corrupt') return this.handleCorrupt(result.raw)
       if (result.raw === this.lastWritten) return false
       this.docs = result.docs
       this.lastWritten = result.raw
@@ -169,12 +266,30 @@ export abstract class DocStore<V extends DocKeyed> {
     }
   }
 
-  private async backupCorrupt(raw: string): Promise<void> {
+  /**
+   * The file can't be parsed. It is always copied to a backup first. A Git conflict (or a
+   * small slip like a trailing comma) is then repaired and merged automatically; anything
+   * else waits for the user in the recovery dialog. Returns true if the data changed.
+   */
+  private async handleCorrupt(raw: string): Promise<boolean> {
+    const backup = await this.backupCorrupt(raw)
+    const recovered = this.recover(raw)
+    if (!recovered) return false
+    // Keep what is in memory too, in case the broken file lost something.
+    await this.write(this.mergeDocs(recovered, this.docs))
+    await fs.rename(backup, backup.replace('.corrupt-', '.merged-')).catch(() => undefined)
+    this.warning = `File ${this.fileName} bị xung đột khi đồng bộ; app đã tự gộp hai phiên bản (bản gốc lưu ở ${path.basename(backup).replace('.corrupt-', '.merged-')}).`
+    return true
+  }
+
+  private async backupCorrupt(raw: string): Promise<string> {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const backup = path.join(this.root, `${this.fileName.replace(/\.json$/, '')}.corrupt-${stamp}.json`)
     await fs.writeFile(backup, raw, 'utf8')
     this.warning =
       `File ${this.fileName} bị hỏng (có thể do xung đột khi đồng bộ). ` +
-      `Bản cũ đã được sao lưu thành ${path.basename(backup)}; ${this.contents} mới sẽ được ghi vào file mới.`
+      `Bản cũ đã được sao lưu thành ${path.basename(backup)}; ${this.contents} mới sẽ được ghi vào file mới. ` +
+      `Mở "Khôi phục" để gộp lại dữ liệu cũ.`
+    return backup
   }
 }

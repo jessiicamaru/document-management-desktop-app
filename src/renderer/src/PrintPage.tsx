@@ -32,7 +32,7 @@ export default function PrintPage({ id, withNotes }: { id: string; withNotes: bo
           mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' })
           await mermaid.run({ nodes: diagrams }).catch((e: unknown) => console.error('Mermaid error', e))
         }
-        if (withNotes) createAnchoring().printNotes(el, lib.notes[id] ?? [], 'Ghi chú')
+        if (withNotes) createAnchoring().printNotes(el, lib.notes[id] ?? [], 'Ghi chú', lib.docNotes[id] ?? '')
       } finally {
         window.__studydocsPrintDone?.() // see main.tsx
       }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { DEFAULT_UI, type AppInfo, type RootInfo, type UiSettings } from '../../../shared/types'
+import { DEFAULT_UI, type AppInfo, type LibrarySnapshot, type RecoveryItem, type RootInfo, type UiSettings } from '../../../shared/types'
 import { errorMessage } from '../lib/docs'
 
 const ACCENTS = [
@@ -20,11 +20,20 @@ interface Props {
   onAddFolders: () => void
   onRemoveFolder: (key: string) => void
   appInfo: AppInfo | null
+  lib: LibrarySnapshot | null
 }
 
-export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFolders, onRemoveFolder, appInfo }: Props) {
+export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFolders, onRemoveFolder, appInfo, lib }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [updateMsg, setUpdateMsg] = useState<string | null>(null)
+  // The app's toasts are hidden behind this modal dialog, so its own messages show here.
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null)
+  const reportError = (err: unknown): void => {
+    setMessage({ text: errorMessage(err), error: true })
+  }
+  const reportInfo = (text: string): void => {
+    setMessage({ text, error: false })
+  }
   const set = <K extends keyof UiSettings>(key: K, value: UiSettings[K]): void => onChange({ ...ui, [key]: value })
 
   useEffect(() => {
@@ -55,6 +64,13 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
           ×
         </button>
       </header>
+      {message && (
+        <div className={`dialog-msg ${message.error ? 'error' : ''}`} role={message.error ? 'alert' : 'status'}>
+          {message.text}
+        </div>
+      )}
+
+      {lib && lib.recovery.length > 0 && <RecoverySection items={lib.recovery} onError={reportError} onInfo={reportInfo} />}
 
       <section>
         <h3>Giao diện</h3>
@@ -122,6 +138,23 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
         </Row>
         <p className="hint">Bài HTML giữ nguyên giao diện riêng của nó; chỉ đổi theo chế độ Sáng/Tối nếu bài có hỗ trợ.</p>
       </section>
+
+      <section>
+        <h3>Thanh bên</h3>
+        <Row label="Sắp xếp bài trong thư mục">
+          <Segmented
+            value={ui.sidebarSort}
+            options={[
+              ['name', 'Theo tên'],
+              ['modified', 'Mới sửa trước']
+            ]}
+            onChange={(v) => set('sidebarSort', v)}
+          />
+        </Row>
+        <p className="hint">Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục.</p>
+      </section>
+
+      {lib && <TagsSection lib={lib} onError={reportError} onInfo={reportInfo} />}
 
       <section>
         <h3>Thư mục trong workspace</h3>
@@ -194,5 +227,157 @@ function Segmented<T extends string>({ value, options, onChange }: { value: T; o
         </button>
       ))}
     </div>
+  )
+}
+
+/** Rename or delete a tag on every document, and clean up data of deleted files (issue #22). */
+function TagsSection({ lib, onError, onInfo }: { lib: LibrarySnapshot; onError: (err: unknown) => void; onInfo: (text: string) => void }) {
+  const [editing, setEditing] = useState<string | null>(null)
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const existing = new Set(lib.docs.map((d) => d.path))
+  const counts = new Map<string, number>()
+  for (const [id, m] of Object.entries(lib.meta)) {
+    if (!existing.has(id)) continue
+    for (const t of m.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1)
+  }
+  const tags = [...counts].sort((a, b) => a[0].localeCompare(b[0], 'vi'))
+
+  const run = async (job: () => Promise<string>): Promise<void> => {
+    setBusy(true)
+    try {
+      onInfo(await job())
+    } catch (err) {
+      onError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const rename = (from: string): void => {
+    const to = name.trim()
+    setEditing(null)
+    if (!to || to === from) return
+    void run(async () => `Đã đổi tag ở ${await window.api.renameTag(from, to)} bài`)
+  }
+
+  return (
+    <section className="tags-section">
+      <h3>Tag</h3>
+      {tags.length === 0 && <p className="hint">Chưa có tag nào. Thêm tag ở đầu mỗi bài.</p>}
+      <div className="tag-list">
+        {tags.map(([tag, n]) => (
+          <div key={tag} className="tag-row">
+            {editing === tag ? (
+              <input
+                autoFocus
+                value={name}
+                aria-label={`Tên mới cho tag ${tag}`}
+                onChange={(e) => setName(e.target.value)}
+                onBlur={() => rename(tag)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') rename(tag)
+                  if (e.key === 'Escape') {
+                    // Cancel the rename, not the whole dialog.
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setEditing(null)
+                  }
+                }}
+              />
+            ) : (
+              <span className="tag-name">#{tag}</span>
+            )}
+            <span className="tag-count">{n} bài</span>
+            <button
+              className="btn small"
+              disabled={busy}
+              onClick={() => {
+                setName(tag)
+                setEditing(tag)
+              }}
+            >
+              Đổi tên
+            </button>
+            <button
+              className="btn small danger"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm(`Bỏ tag "${tag}" khỏi ${n} bài? Bài không bị xoá.`)) void run(async () => `Đã bỏ tag ở ${await window.api.deleteTag(tag)} bài`)
+              }}
+            >
+              Xoá
+            </button>
+          </div>
+        ))}
+      </div>
+      <Row label={<span>Dữ liệu của file đã xoá{lib.scanning ? ' (đang quét…)' : `: ${lib.orphans} mục`}</span>}>
+        <button
+          className="btn small"
+          disabled={busy || lib.scanning || !lib.orphans}
+          onClick={() => {
+            if (window.confirm(`Xoá tag, trạng thái và ghi chú của ${lib.orphans} mục thuộc file không còn trong thư mục? Không hoàn tác được.`)) {
+              void run(async () => `Đã dọn ${await window.api.cleanOrphans()} mục`)
+            }
+          }}
+        >
+          Dọn dẹp
+        </button>
+      </Row>
+      <p className="hint">File đổi tên hoặc chuyển chỗ (cùng nội dung) được app tự nhận ra; chỉ dữ liệu của file đã mất hẳn mới bị dọn.</p>
+    </section>
+  )
+}
+
+/** Backups of broken .docs-meta.json / .docs-notes.json files that can be merged back (issue #25). */
+function RecoverySection({ items, onError, onInfo }: { items: RecoveryItem[]; onError: (err: unknown) => void; onInfo: (text: string) => void }) {
+  const [busy, setBusy] = useState(false)
+  const act = async (job: () => Promise<void>): Promise<void> => {
+    setBusy(true)
+    try {
+      await job()
+    } catch (err) {
+      onError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="recovery">
+      <h3>Khôi phục dữ liệu</h3>
+      <p className="hint">
+        Đây là bản sao lưu của dữ liệu bị hỏng (thường do xung đột khi đồng bộ). "Gộp lại" đưa tag, trạng thái và ghi chú trong đó trở lại mà không mất dữ liệu hiện
+        tại. Nếu app không đọc được bản đó, mở thư mục, sửa file bằng tay rồi bấm lại.
+      </p>
+      {items.map((it) => (
+        <div key={it.root + it.file} className="setting-row">
+          <div className="setting-label">
+            <b>{it.store === 'meta' ? 'Tag và trạng thái' : 'Highlight và ghi chú'}</b> · {it.rootName}
+            <br />
+            <span className="path">{it.file}</span>
+          </div>
+          <div className="recovery-actions">
+            <button
+              className="btn small primary"
+              disabled={busy}
+              onClick={() => void act(async () => onInfo(`Đã gộp lại dữ liệu của ${await window.api.restoreBackup(it.root, it.file)} bài`))}
+            >
+              Gộp lại
+            </button>
+            <button className="btn small" disabled={busy} onClick={() => void act(() => window.api.revealBackup(it.root, it.file))}>
+              Mở thư mục
+            </button>
+            <button
+              className="btn small danger"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm('Bỏ bản sao lưu này vào Thùng rác?')) void act(() => window.api.discardBackup(it.root, it.file))
+              }}
+            >
+              Bỏ
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
   )
 }

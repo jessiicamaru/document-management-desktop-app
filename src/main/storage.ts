@@ -76,7 +76,8 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
     accent: typeof ui.accent === 'string' && HEX.test(ui.accent) ? ui.accent : DEFAULT_UI.accent,
     readingSize: Math.min(24, Math.max(13, Math.round(Number(ui.readingSize) || DEFAULT_UI.readingSize))),
     readingFont: pick(ui.readingFont, ['sans', 'serif'] as const, DEFAULT_UI.readingFont),
-    readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth)
+    readingWidth: pick(ui.readingWidth, ['narrow', 'normal', 'wide'] as const, DEFAULT_UI.readingWidth),
+    sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort)
   }
 }
 

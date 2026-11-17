@@ -30,6 +30,7 @@ interface Props {
   onOpenSettings: () => void
   onAddFolders: () => void
   onRemoveFolder: (key: string) => void
+  sort: 'name' | 'modified'
 }
 
 export default function Sidebar(props: Props) {
@@ -40,6 +41,7 @@ export default function Sidebar(props: Props) {
   const workspaceName =
     roots.length === 0 ? 'Chưa có thư mục' : roots.length === 1 ? roots[0].name : `Workspace · ${roots.length} thư mục`
   const rootNames = Object.fromEntries(roots.map((r) => [r.key, r.name]))
+  const listRef = useRef<HTMLDivElement>(null)
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: allDocs.length }
@@ -90,6 +92,11 @@ export default function Sidebar(props: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Escape') onQuery('')
             if (e.key === 'Enter' && hits?.[0]) onOpen(hits[0].doc.path)
+            if (e.key === 'ArrowDown') {
+              // Move into the list (issue #23).
+              e.preventDefault()
+              listRef.current?.querySelector<HTMLElement>(ROW)?.focus()
+            }
           }}
         />
       </div>
@@ -120,12 +127,12 @@ export default function Sidebar(props: Props) {
         </div>
       )}
 
-      <div className="doc-list">
+      <div className="doc-list" ref={listRef} onKeyDown={(e) => onListKey(e, props.searchRef)}>
         {hits ? (
           <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 ? rootNames : null} />
         ) : (
           <div className="group">
-            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} />
+            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} />
             {docs.length === 0 && roots.length > 0 && <div className="empty">Không có tài liệu nào khớp.</div>}
           </div>
         )}
@@ -151,6 +158,44 @@ export default function Sidebar(props: Props) {
   )
 }
 
+/** Rows you can move between with the arrow keys. */
+const ROW = 'button.row, button.hit'
+
+/**
+ * Arrow keys in the document list (issue #23): Up/Down move, Enter opens (the row is a
+ * button), Left closes a folder or goes to its parent, Right opens a folder.
+ */
+function onListKey(e: React.KeyboardEvent<HTMLDivElement>, searchRef: RefObject<HTMLInputElement | null>): void {
+  const rows = [...e.currentTarget.querySelectorAll<HTMLElement>(ROW)]
+  const current = document.activeElement as HTMLElement | null
+  const i = current ? rows.indexOf(current) : -1
+  if (i < 0) return
+  const depth = (el: HTMLElement): number => Number(el.dataset.depth ?? 0)
+  const go = (el: HTMLElement | undefined): void => {
+    if (!el) return
+    e.preventDefault()
+    el.focus()
+    el.scrollIntoView({ block: 'nearest' })
+  }
+  if (e.key === 'ArrowDown') go(rows[i + 1])
+  else if (e.key === 'ArrowUp') {
+    if (i === 0) {
+      e.preventDefault()
+      searchRef.current?.focus()
+    } else go(rows[i - 1])
+  } else if (e.key === 'Home') go(rows[0])
+  else if (e.key === 'End') go(rows[rows.length - 1])
+  else if (e.key === 'ArrowRight' && current!.dataset.folder) {
+    e.preventDefault()
+    if (current!.dataset.folder === 'closed') current!.click()
+    else go(rows[i + 1])
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    if (current!.dataset.folder === 'open') current!.click()
+    else go(rows.slice(0, i).reverse().find((r) => r.dataset.folder && depth(r) < depth(current!)))
+  }
+}
+
 function Chip(props: { active: boolean; onClick: () => void; className?: string; children: ReactNode }) {
   return (
     <button className={`chip ${props.className ?? ''} ${props.active ? 'active' : ''}`} onClick={props.onClick}>
@@ -165,13 +210,14 @@ interface TreeProps {
   selected: string | null
   onOpen: (p: string) => void
   onRemoveRoot: (key: string) => void
+  sort: 'name' | 'modified'
 }
 
 /**
  * One folder: its documents as a plain tree, like before.
  * Several folders: each one is a top-level node (like a VS Code multi-root workspace).
  */
-function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
+function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) {
   // Remember which folders you collapsed. Folder ids start with their root key, so they never clash.
   const storageKey = 'collapsed:workspace'
   const [collapsed, setCollapsed] = useState<string[]>(() => loadLocal(storageKey, []))
@@ -187,7 +233,14 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
         const open = !collapsed.includes(f.path)
         return (
           <div key={f.path}>
-            <button className="row folder" style={{ paddingLeft: 10 + depth * 14 }} onClick={() => toggle(f.path)}>
+            <button
+              className="row folder"
+              style={{ paddingLeft: 10 + depth * 14 }}
+              onClick={() => toggle(f.path)}
+              data-folder={open ? 'open' : 'closed'}
+              data-depth={depth}
+              aria-expanded={open}
+            >
               <span className={`chevron ${open ? 'open' : ''}`}>▸</span>
               <span className="row-title">{f.name}</span>
             </button>
@@ -202,7 +255,7 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
   )
 
   // Built only when the documents change, not on every render (issue #11).
-  const trees = useMemo(() => new Map(roots.map((r) => [r.key, buildTree(docs.filter((d) => d.root === r.key), r.key)])), [roots, docs])
+  const trees = useMemo(() => new Map(roots.map((r) => [r.key, buildTree(docs.filter((d) => d.root === r.key), r.key, sort)])), [roots, docs, sort])
   const treeOf = (root: RootInfo): TreeFolder => trees.get(root.key)!
 
   if (roots.length === 1) return <>{renderFolder(treeOf(roots[0]), 0)}</>
@@ -216,7 +269,14 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
         return (
           <div key={root.key} className="root-group">
             <div className="root-row">
-              <button className="row folder root" onClick={() => toggle(root.key)} title={root.path}>
+              <button
+                className="row folder root"
+                onClick={() => toggle(root.key)}
+                title={root.path}
+                data-folder={open ? 'open' : 'closed'}
+                data-depth={0}
+                aria-expanded={open}
+              >
                 <span className={`chevron ${open ? 'open' : ''}`}>▸</span>
                 <span className="row-title">{root.name}</span>
                 {!root.available && <span className="root-missing">không tìm thấy</span>}
@@ -248,6 +308,7 @@ function DocRow({ doc, depth, selected, onOpen }: { doc: DocEntry; depth: number
       style={{ paddingLeft: 10 + depth * 14 + 14 }}
       onClick={() => onOpen(doc.path)}
       title={doc.rel}
+      data-depth={depth}
     >
       <span className={`kind kind-${doc.kind}`}>{doc.kind.toUpperCase()}</span>
       <span className="row-title">{doc.title}</span>

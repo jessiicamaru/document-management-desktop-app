@@ -22,15 +22,18 @@ node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ b�
 |---|---|
 | Icon thư mục có dấu + | Thêm một hoặc nhiều thư mục vào workspace, ở ổ nào cũng được (C:, D:, USB...). Mỗi thư mục là một nhánh trên cây; di chuột vào tên thư mục rồi bấm × để bỏ nó khỏi workspace (file không bị xoá). |
 | `Ctrl+K` | Tìm kiếm trong mọi thư mục (không cần gõ dấu) |
+| `Ctrl+F` | Tìm trong bài đang mở (Markdown, HTML, cả cuốn EPUB), không cần gõ dấu. `Enter` / `Shift+Enter` sang kết quả sau / trước, `Esc` để đóng. |
 | `Ctrl+E` hoặc icon đồng hồ | Danh sách bài mở gần đây |
+| `↑` `↓` `Enter` `←` `→` trong danh sách bài | Chọn bài, mở bài, thu/mở thư mục. Cài đặt có tuỳ chọn xếp bài theo tên hoặc mới sửa trước. |
 | `Alt+←` / `Alt+→`, nút ‹ ›, nút lùi/tiến trên chuột | Quay lại / tiến tới giữa các bài đã mở |
 | **Mục lục** | Danh sách tiêu đề bên phải; bấm để nhảy tới, mục đang đọc được tô sáng. App nhớ vị trí đang đọc của từng bài. |
-| **Bôi đen chữ** | Hiện thanh highlight: 4 màu hoặc **✎ Ghi chú**. Bấm vào chỗ đã highlight để sửa ghi chú, đổi màu, xoá. Tab **Ghi chú** ở bảng bên phải liệt kê mọi highlight của bài. Dùng được cho Markdown, HTML và EPUB. |
+| **Bôi đen chữ** | Hiện thanh highlight: 4 màu hoặc **✎ Ghi chú**. Bấm vào chỗ đã highlight để sửa ghi chú, đổi màu, xoá. Tab **Ghi chú** ở bảng bên phải liệt kê mọi highlight của bài, và có ô **Ghi chú chung** cho cả bài. Ghi chú viết được Markdown (`**đậm**`, danh sách, `code`, link). Dùng được cho Markdown, HTML và EPUB. |
 | **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
 | **⋯ → Xuất PDF kèm highlight và ghi chú…** | Như trên, nhưng in cả highlight theo màu, số chú thích ¹ ² ³ sau đoạn có ghi chú, và mục **Ghi chú** ở cuối file |
 | File `.epub` | Đọc sách EPUB **từng trang** như sách thật: nút ‹ ›, phím ← → / PageUp PageDown, hoặc lăn chuột để lật trang; cửa sổ rộng thì hiện 2 trang. Thanh dưới cùng cho biết chương và % đã đọc. Mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
 | File `.pdf` | Mở ngay trong app bằng trình xem PDF có sẵn (phóng to, tìm chữ, in). PDF được tìm theo tên file, chưa tìm theo nội dung. |
-| `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown |
+| `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown, đổi tên / xoá tag trên mọi bài, dọn dữ liệu của file đã xoá |
+| Markdown | Code block được tô màu theo ngôn ngữ (` ```js `, ` ```python `...), công thức `$...$` và `$$...$$` hiển thị bằng KaTeX, sơ đồ ` ```mermaid `. |
 | **Sửa chữ** | Sửa chữ ngay trên bài (HTML và Markdown). Chỉ thêm/xoá/sửa chữ: Enter, định dạng và kéo thả bị tắt. `Ctrl+S` lưu, `Esc` huỷ. |
 | **Raw** | Mở mã nguồn bên cạnh bài để sửa bố cục, sơ đồ, thẻ HTML... Markdown được xem trước trực tiếp khi gõ; HTML cập nhật sau khi lưu (`Ctrl+S`). |
 
@@ -98,7 +101,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 
 - **File bài chỉ bị sửa khi bạn bấm Sửa chữ hoặc lưu trong Raw.** Khi đó app chỉ thay đúng phần bạn đổi, giữ nguyên kiểu xuống dòng của file, không sửa file không phải UTF-8, và từ chối ghi đè nếu file vừa bị sửa ở nơi khác. Đọc, highlight, gắn tag, xuất PDF không bao giờ đụng vào file bài.
 - **Tag và trạng thái học** nằm trong `.docs-meta.json` của từng thư mục trong workspace, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
-  - Nếu file này bị hỏng (ví dụ do xung đột khi đồng bộ), app sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` và hiện cảnh báo, chứ không lặng lẽ xoá dữ liệu.
+  - Nếu file này bị hỏng, app luôn sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` trước. Xung đột Git (`<<<<<<<`) được tự gộp cả hai phía. Hỏng kiểu khác thì app hiện nút **Khôi phục…**: sửa bản sao lưu bằng tay rồi bấm **Gộp lại**, dữ liệu hiện tại không bị mất. (`.docs-notes.json` cũng vậy.)
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
 - **Highlight và ghi chú** nằm trong `.docs-notes.json` của từng thư mục, **không ghi vào file bài**. Mỗi highlight lưu đoạn chữ được chọn kèm vài chữ trước/sau, nên bài bị sửa vẫn tìm lại được chỗ; nếu đoạn đó bị xoá hẳn, ghi chú vẫn được giữ và đánh dấu "không còn tìm thấy". Với EPUB, vị trí được lưu chính xác bằng EPUB CFI.
 - **Settings (kể cả giao diện) và "mở gần đây"** nằm trong `%APPDATA%\Study Docs`, không ghi vào thư mục tài liệu.

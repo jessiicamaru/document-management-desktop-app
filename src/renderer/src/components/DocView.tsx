@@ -33,6 +33,9 @@ interface Props {
   /** Highlights and notes of this document. */
   annotations: Annotation[]
   onAnnotationsChange: (items: Annotation[]) => void
+  /** Note about the whole document (Markdown). */
+  docNote: string
+  onDocNoteChange: (text: string) => void
 }
 
 const positionKey = (path: string): string => `pos:${path}`
@@ -350,7 +353,7 @@ export default function DocView(props: Props) {
                 </button>
               </>
             )}
-            <MoreMenu doc={doc} onError={onError} onExport={canEdit ? exportPdf : null} hasNotes={annotations.length > 0} exporting={exporting} />
+            <MoreMenu doc={doc} onError={onError} onExport={canEdit ? exportPdf : null} hasNotes={annotations.length > 0 || !!props.docNote} exporting={exporting} />
           </div>
         )}
       </header>
@@ -381,6 +384,15 @@ export default function DocView(props: Props) {
                   missing={missing}
                   onGoto={(a) => readerRef.current?.gotoAnnotation(a.id)}
                   onEdit={(a, rect) => setNoteEditor({ id: a.id, rect })}
+                  docNote={props.docNote}
+                  onSaveDocNote={async (text) => {
+                    try {
+                      props.onDocNoteChange(await window.api.saveDocNote(doc.path, text))
+                    } catch (err) {
+                      onError(err)
+                      throw err
+                    }
+                  }}
                 />
               )}
               {panelTab === 'outline' && outline.length === 0 && <div className="empty">Bài này không có tiêu đề nào.</div>}

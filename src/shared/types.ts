@@ -74,8 +74,23 @@ export interface LibrarySnapshot {
   recent: Record<string, number>
   /** Document id -> its highlights/notes (documents without any are left out). */
   notes: Record<string, Annotation[]>
+  /** Document id -> its note about the whole document (issue #21). */
+  docNotes: Record<string, string>
   /** Problems the user should know about (corrupt meta file, folder missing...). */
   warnings: string[]
+  /** Backups of broken .docs-meta.json / .docs-notes.json files that can be merged back (issue #25). */
+  recovery: RecoveryItem[]
+  /** Tags/notes saved for files that no longer exist (0 while scanning). */
+  orphans: number
+}
+
+/** A backup of a broken data file, offered in the recovery dialog. */
+export interface RecoveryItem {
+  root: string
+  rootName: string
+  store: 'meta' | 'notes'
+  /** Backup file name, e.g. ".docs-meta.corrupt-2026-01-01T10-00-00-000Z.json". */
+  file: string
 }
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink'
@@ -110,6 +125,8 @@ export interface UiSettings {
   readingSize: number
   readingFont: 'sans' | 'serif'
   readingWidth: 'narrow' | 'normal' | 'wide'
+  /** Sidebar order inside each folder (issue #23). */
+  sidebarSort: 'name' | 'modified'
 }
 
 export const DEFAULT_UI: UiSettings = {
@@ -117,7 +134,8 @@ export const DEFAULT_UI: UiSettings = {
   accent: '#b4531f',
   readingSize: 16,
   readingFont: 'sans',
-  readingWidth: 'normal'
+  readingWidth: 'normal',
+  sidebarSort: 'name'
 }
 
 /** One edited block of an HTML document: which element (by position) and its new inner HTML. */
@@ -175,6 +193,20 @@ export interface DocsApi {
   /** Adds or updates a highlight/note. Resolves with all annotations of that document. */
   saveAnnotation(path: string, annotation: Annotation): Promise<Annotation[]>
   deleteAnnotation(path: string, id: string): Promise<Annotation[]>
+  /** Sets the note about the whole document (empty text removes it). Resolves with the saved text. */
+  saveDocNote(path: string, text: string): Promise<string>
+  /** Renames a tag on every document in the workspace. Resolves with how many documents changed. */
+  renameTag(from: string, to: string): Promise<number>
+  /** Removes a tag from every document in the workspace. */
+  deleteTag(tag: string): Promise<number>
+  /** Removes tags/notes of files that no longer exist. Resolves with how many entries were removed. */
+  cleanOrphans(): Promise<number>
+  /** Merges a backup of a broken data file into the current data. Resolves with how many documents it had. */
+  restoreBackup(root: string, file: string): Promise<number>
+  /** Moves a backup to the Recycle Bin. */
+  discardBackup(root: string, file: string): Promise<void>
+  /** Shows a backup file in Explorer (to fix it by hand). */
+  revealBackup(root: string, file: string): Promise<void>
   /** Raw bytes of a document (used for EPUB books). */
   readBinary(path: string): Promise<Uint8Array>
   /** Full-text search over all documents (accent-insensitive). */

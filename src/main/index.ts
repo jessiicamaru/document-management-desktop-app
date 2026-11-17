@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, UiSettings } from '../shared/types'
+import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, RecoveryItem, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
 import { printNotesInjection, viewModeInjection } from './view-helper'
 import { kindOf, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
@@ -103,11 +103,20 @@ async function snapshot(): Promise<LibrarySnapshot> {
   const docs: DocEntry[] = []
   const meta: Record<string, DocMeta> = {}
   const notes: Record<string, Annotation[]> = {}
+  const docNotes: Record<string, string> = {}
   const warnings: string[] = []
+  const recovery: RecoveryItem[] = []
+  let orphans = 0
   for (const r of roots) {
     for (const d of r.docs) docs.push({ ...d, path: `${r.key}/${d.path}`, root: r.key, rel: d.path })
     for (const [rel, m] of Object.entries(r.meta?.all() ?? {})) meta[`${r.key}/${rel}`] = m
     for (const [rel, items] of Object.entries(r.notes?.byDoc() ?? {})) notes[`${r.key}/${rel}`] = items
+    for (const [rel, text] of Object.entries(r.notes?.docNotes() ?? {})) docNotes[`${r.key}/${rel}`] = text
+    for (const [store, s] of [['meta', r.meta], ['notes', r.notes]] as const) {
+      for (const file of (await s?.backups()) ?? []) recovery.push({ root: r.key, rootName: r.name, store, file })
+    }
+    // Only count once the folder is fully scanned and reachable, or every file would look gone.
+    if (!scanning && !r.warning) orphans += storesOf(r).reduce((n, st) => n + st.orphans(r.docs.map((d) => d.path)).length, 0)
     for (const w of [r.meta?.warning, r.notes?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
   }
   return {
@@ -117,9 +126,24 @@ async function snapshot(): Promise<LibrarySnapshot> {
     meta,
     recent: recentByDoc(await loadRecent()),
     notes,
-    warnings
+    docNotes,
+    warnings,
+    recovery,
+    orphans
   }
 }
+
+const storesOf = (r: Root): (MetaStore | NotesStore)[] => [r.meta, r.notes].filter((x): x is MetaStore | NotesStore => !!x)
+
+/** The meta or notes store of a folder, for the recovery dialog. */
+function storeFor(rootKey: string, store: string): MetaStore | NotesStore {
+  const r = roots.find((x) => x.key === rootKey)
+  const s = store === 'meta' ? r?.meta : store === 'notes' ? r?.notes : null
+  if (!s) throw new Error('Thư mục này không còn trong workspace')
+  return s
+}
+/** Which store a backup file name belongs to. */
+const storeOfBackup = (file: string): 'meta' | 'notes' => (String(file).startsWith('.docs-notes.') ? 'notes' : 'meta')
 
 async function pushSnapshot(): Promise<void> {
   win?.webContents.send('library:changed', await snapshot())
@@ -503,6 +527,71 @@ function registerIpc(): void {
     }
   })
 
+  ipcMain.handle('notes:docNote', async (_e, id: string, text: string) => {
+    const loc = locate(id)
+    if (!loc?.root.notes) throw new Error('File nằm ngoài thư mục tài liệu')
+    try {
+      return await loc.root.notes.setDocNote(loc.rel, String(text ?? ''), loc.root.docs.find((d) => d.path === loc.rel))
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+  })
+
+  // ---------- workspace-wide tags and clean-up (issue #22) ----------
+  ipcMain.handle('tags:rename', async (_e, from: string, to: string) => {
+    const a = String(from ?? '').trim()
+    const b = String(to ?? '').trim()
+    if (!a || !b) throw new Error('Tên tag không được trống')
+    let n = 0
+    try {
+      for (const r of roots) n += (await r.meta?.renameTag(a, b)) ?? 0
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+    await pushSnapshot()
+    return n
+  })
+  ipcMain.handle('tags:delete', async (_e, tag: string) => {
+    let n = 0
+    try {
+      for (const r of roots) n += (await r.meta?.deleteTag(String(tag ?? ''))) ?? 0
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+    await pushSnapshot()
+    return n
+  })
+  ipcMain.handle('library:cleanOrphans', async () => {
+    if (scanning) throw new Error('Đang quét thư mục, đợi quét xong rồi thử lại')
+    let n = 0
+    try {
+      for (const r of roots) {
+        if (r.warning) continue // folder unreachable: its files only look missing
+        for (const st of storesOf(r)) n += await st.pruneOrphans(r.docs.map((d) => d.path))
+      }
+    } catch (err) {
+      throw friendlyWriteError(err)
+    }
+    await pushSnapshot()
+    return n
+  })
+
+  // ---------- recovery of broken data files (issue #25) ----------
+  ipcMain.handle('recovery:restore', async (_e, rootKey: string, file: string) => {
+    const n = await storeFor(rootKey, storeOfBackup(file)).restoreBackup(String(file))
+    await pushSnapshot()
+    return n
+  })
+  ipcMain.handle('recovery:discard', async (_e, rootKey: string, file: string) => {
+    const st = storeFor(rootKey, storeOfBackup(file))
+    await shell.trashItem(st.backupPath(String(file)))
+    if (!(await st.backups()).length) st.warning = null
+    await pushSnapshot()
+  })
+  ipcMain.handle('recovery:reveal', (_e, rootKey: string, file: string) => {
+    shell.showItemInFolder(storeFor(rootKey, storeOfBackup(file)).backupPath(String(file)))
+  })
+
   ipcMain.handle('doc:exportPdf', async (_e, id: string, withNotes: boolean) => {
     const loc = locate(id)
     const doc = loc?.root.docs.find((d) => d.path === loc.rel)
@@ -687,11 +776,13 @@ if (!app.requestSingleInstanceLock()) {
         // Export to PDF: the page as it is, plus (if asked) its highlights and notes.
         if (params.get('print') === '1') {
           const loc = locate(target!.path)
-          const notes = params.get('notes') === '1' ? (loc?.root.notes?.byDoc()[loc.rel] ?? []) : []
+          const withNotes = params.get('notes') === '1'
+          const notes = withNotes ? (loc?.root.notes?.byDoc()[loc.rel] ?? []) : []
+          const docNote = withNotes ? (loc?.root.notes?.docNotes()[loc.rel] ?? '') : ''
           // When printing, the page is not in the sandboxed iframe, so it must not be able to
           // read other files (fetch, frames, workers) and send them anywhere. Fonts, images
           // and styles still load so the PDF looks right.
-          return html(notes.length ? source + printNotesInjection(notes) : source, PRINT_CSP)
+          return html(notes.length || docNote ? source + printNotesInjection(notes, docNote) : source, PRINT_CSP)
         }
         // Reading mode: add the helper for outline, highlights, reading position and shortcuts.
         return html(source + viewModeInjection())

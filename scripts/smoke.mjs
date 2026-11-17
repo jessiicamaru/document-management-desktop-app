@@ -108,10 +108,11 @@ try {
 
   // 1. Corrupt meta file: backed up and reported, not silently dropped.
   step("1. Corrupt meta file: backed up and reported, not silently dropped.")
-  await page.waitForSelector('.banner')
-  check((await page.textContent('.banner')).includes('bị hỏng'), 'corrupt meta file shows a warning')
+  await page.waitForSelector('.banner:has-text("đã được sao lưu thành")')
+  check(true, 'corrupt meta file shows a warning')
   check(readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')), 'corrupt meta file was backed up')
-  await page.click('.banner button')
+  check((await page.locator('.banner:has-text("Khôi phục…")').count()) === 1, 'a banner offers to recover the backup (issue #25)')
+  await page.click('.banner:has-text("đã được sao lưu thành") button[aria-label="Ẩn cảnh báo"]')
 
   // 1b. Two folders in one workspace: each is a top-level node in the tree.
   step("1b. Two folders in one workspace: each is a top-level node in the tree.")
@@ -644,6 +645,79 @@ try {
   check(/^1\/\d+/.test(bookCount) && bookText?.includes('Làm việc với remote'), `EPUB: Ctrl+F searches the whole book and opens the chapter (${bookCount})`)
   await page.press('.find-bar input', 'Escape')
 
+  // 23. Issues #21, #22, #23, #25: document note, Markdown notes, tags, clean-up, recovery, sidebar.
+  step('23a. Recover a broken data file')
+  const backupName = readdirSync(library).find((f) => f.startsWith('.docs-meta.corrupt-'))
+  // The user fixed the backup by hand; it has a tag for Event Sourcing and data of a deleted file.
+  writeFileSync(file(backupName), JSON.stringify({ version: 1, docs: { [ES]: { tags: ['phục-hồi'], status: 'new' }, 'gone/old.md': { tags: ['cũ'], status: 'done' } } }))
+  await page.click('.banner:has-text("Khôi phục…") button')
+  await page.waitForSelector('dialog.settings[open] section.recovery')
+  await page.click('section.recovery button:has-text("Gộp lại")')
+  await page.waitForSelector('section.recovery', { state: 'detached' })
+  const merged = JSON.parse(readFileSync(metaFile, 'utf8')).docs
+  check(merged[ES]?.tags?.includes("phục-hồi") && merged[ES]?.tags?.includes("backend") && merged[ES]?.status === 'learning', 'backup merged into the current tags without losing them')
+  check(!readdirSync(library).some((f) => f.startsWith('.docs-meta.corrupt-')) && readdirSync(library).some((f) => f.startsWith('.docs-meta.merged-')), 'merged backup is kept as .merged-, not offered again')
+  check((await page.locator('.banner:has-text("Khôi phục…")').count()) === 0, 'recovery banner disappears')
+
+  step('23b. Tags across the workspace')
+  await page.click('.tag-row:has-text("#backend") >> text=Đổi tên')
+  await page.fill('.tag-row input', 'server')
+  await page.press('.tag-row input', 'Enter')
+  await page.waitForSelector('.tag-row:has-text("#server")')
+  check(JSON.parse(readFileSync(metaFile, 'utf8')).docs[ES]?.tags?.includes('server'), 'renaming a tag changes it in .docs-meta.json')
+  dialogAnswer = 'accept'
+  await page.click('.tag-row:has-text("#phục-hồi") >> text=Xoá')
+  await page.waitForSelector('.tag-row:has-text("#phục-hồi")', { state: 'detached' })
+  check(!JSON.stringify(JSON.parse(readFileSync(metaFile, 'utf8')).docs).includes('phục-hồi'), 'deleting a tag removes it from every document')
+  const orphanLabel = await page.textContent('.tags-section .setting-row')
+  await page.click('.tags-section >> text=Dọn dẹp')
+  await page.waitForFunction(() => document.querySelector('.tags-section .setting-row')?.textContent?.includes(': 0 mục'))
+  dialogAnswer = 'dismiss'
+  check(/: [1-9]\d* mục/.test(orphanLabel) && !JSON.parse(readFileSync(metaFile, 'utf8')).docs['gone/old.md'], `clean-up removes data of deleted files (${orphanLabel.trim()})`)
+
+  step('23c. Sidebar order and arrow keys')
+  await page.click('dialog.settings >> text=Mới sửa trước')
+  await page.click('dialog.settings >> text=Xong')
+  await page.waitForTimeout(300)
+  const order = await page.evaluate(async () => {
+    const lib = await window.api.getLibrary()
+    const want = lib.docs
+      .filter((d) => d.root === lib.roots[0].key && /^backend\/[^/]+$/.test(d.rel))
+      .sort((a, b) => b.mtime - a.mtime || a.title.localeCompare(b.title, 'vi'))
+      .map((d) => d.rel)
+    const shown = [...document.querySelectorAll('.doc-list .row.doc')].map((r) => r.getAttribute('title')).filter((t) => /^backend\/[^/]+$/.test(t))
+    return { want, shown }
+  })
+  check(order.want.length > 1 && order.want.join('|') === order.shown.join('|'), `sidebar sorted by last change (${order.shown.join(', ')})`)
+  await page.focus(`.doc-list .row.doc[title="${order.shown[0]}"]`)
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await docPathIs(order.shown[1])
+  check(true, 'ArrowDown + Enter opens the next document')
+  await page.focus('.doc-list .row.folder:has-text("backend")')
+  await page.keyboard.press('ArrowLeft')
+  check((await page.getAttribute('.doc-list .row.folder:has-text("backend")', 'aria-expanded')) === 'false', 'ArrowLeft closes a folder')
+  await page.keyboard.press('ArrowRight')
+  check((await page.getAttribute('.doc-list .row.folder:has-text("backend")', 'aria-expanded')) === 'true', 'ArrowRight opens it again')
+
+  step('23d. Note about the whole document, notes in Markdown')
+  await openDoc('React useEffect — khi nào chạy?')
+  await page.waitForSelector('.markdown h2')
+  await page.click('.panel-tabs >> text=Ghi chú')
+  await page.click('.doc-note >> text=+ Viết')
+  await page.fill('.doc-note textarea', '**Tóm tắt:** effect chạy sau render\n- ý 1\n- ý 2')
+  await page.keyboard.press('Control+Enter')
+  await page.waitForSelector('.doc-note-text strong')
+  check((await page.locator('.doc-note-text li').count()) === 2, 'document note is shown as Markdown')
+  const savedNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs[REACT]
+  check(savedNotes?.docNote?.text?.startsWith('**Tóm tắt:**') && savedNotes.items.length > 0, 'document note saved next to the highlights')
+  await page.click('.note-card .note-card-edit >> nth=0')
+  await page.fill('.note-popover textarea', 'Có `code` và **đậm**')
+  await page.keyboard.press('Control+Enter')
+  await page.waitForSelector('.note-card-text code')
+  check(true, 'highlight notes are shown as Markdown')
+  await page.screenshot({ path: shot('23-doc-note') })
+
   // 18. Removing a folder from the workspace keeps its files.
   step("18. Remove folder")
   dialogAnswer = 'accept'
@@ -658,6 +732,7 @@ try {
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {
   console.error(err)
+  if (errors.length) console.error(['--- console errors ---', ...errors].join('\n'))
   await page.screenshot({ path: shot('error') }).catch(() => {})
   const lastLines = mainLog.split(/\r?\n/).slice(-25).join('\n')
   console.error(`--- main process log (last lines) ---\n${lastLines}`)

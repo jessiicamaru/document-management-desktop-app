@@ -58,8 +58,9 @@ export interface TreeFolder {
  * Groups documents into nested folders by their path inside their workspace folder (doc.rel).
  * `prefix` is put in front of every folder path, so folders of different workspace
  * folders get distinct ids (used to remember which ones are collapsed).
+ * Folders are sorted by name; documents by title, or newest change first (issue #23).
  */
-export function buildTree(docs: DocEntry[], prefix = ''): TreeFolder {
+export function buildTree(docs: DocEntry[], prefix = '', order: 'name' | 'modified' = 'name'): TreeFolder {
   const root: TreeFolder = { name: '', path: prefix, folders: [], docs: [] }
   for (const doc of docs) {
     const parts = doc.rel.split('/')
@@ -76,7 +77,7 @@ export function buildTree(docs: DocEntry[], prefix = ''): TreeFolder {
   }
   const sort = (f: TreeFolder): void => {
     f.folders.sort((a, b) => a.name.localeCompare(b.name, 'vi'))
-    f.docs.sort((a, b) => a.title.localeCompare(b.title, 'vi'))
+    f.docs.sort((a, b) => (order === 'modified' && b.mtime !== a.mtime ? b.mtime - a.mtime : a.title.localeCompare(b.title, 'vi')))
     f.folders.forEach(sort)
   }
   sort(root)

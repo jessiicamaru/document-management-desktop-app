@@ -315,6 +315,7 @@ export default function App() {
         onAddFolders={addFolders}
         onRemoveFolder={removeFolder}
         onOpenSettings={() => setSettingsOpen(true)}
+        sort={ui.sidebarSort}
       />
       <main className="content">
         {appInfo?.update.state === 'ready' && (
@@ -322,6 +323,14 @@ export default function App() {
             <span>Đã tải xong bản {appInfo.update.version}. Bản mới sẽ được cài khi bạn tắt app, hoặc cập nhật ngay:</span>
             <button className="btn primary small" onClick={() => window.api.installUpdate().catch(notify)}>
               Khởi động lại để cập nhật
+            </button>
+          </div>
+        )}
+        {lib && lib.recovery.length > 0 && (
+          <div className="banner" role="alert">
+            <span>Có {lib.recovery.length} bản sao lưu dữ liệu bị hỏng chưa được gộp lại.</span>
+            <button className="btn small" onClick={() => setSettingsOpen(true)}>
+              Khôi phục…
             </button>
           </div>
         )}
@@ -350,6 +359,8 @@ export default function App() {
             onHistory={goHistory}
             annotations={lib?.notes[current.path] ?? NO_NOTES}
             onAnnotationsChange={(items) => setLib((l) => l && { ...l, notes: { ...l.notes, [current.path]: items } })}
+            docNote={lib?.docNotes[current.path] ?? ''}
+            onDocNoteChange={(text) => setLib((l) => l && { ...l, docNotes: { ...l.docNotes, [current.path]: text } })}
             rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (
@@ -365,6 +376,7 @@ export default function App() {
           onAddFolders={addFolders}
           onRemoveFolder={removeFolder}
           appInfo={appInfo}
+          lib={lib}
         />
       )}
       <div className="toasts" aria-live="polite">

@@ -151,12 +151,12 @@ export function viewModeInjection(): string {
 }
 
 /** Export to PDF with notes: draws the highlights, numbers the notes and lists them at the end. */
-export function printNotesInjection(annotations: Annotation[]): string {
+export function printNotesInjection(annotations: Annotation[], docNote = ''): string {
   return `
 <script data-studydocs>
 (() => {
   const anchoring = ${anchoringSource()}
-  anchoring.printNotes(document.body, ${scriptJson(annotations)}, 'Ghi chú')
+  anchoring.printNotes(document.body, ${scriptJson(annotations)}, 'Ghi chú', ${scriptJson(docNote)})
 })()
 </script>`
 }

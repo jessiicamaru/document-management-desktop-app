@@ -34,7 +34,7 @@ export interface Anchoring {
   /** What is selected inside root, or null. */
   selectionInfo(root: Element, selection: Selection | null): SelectionInfo | null
   /** For export: numbers the notes (¹ ² ³) after their highlight and lists them at the end of root. */
-  printNotes(root: Element, annotations: Annotation[], heading: string): void
+  printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string): void
   /** Ctrl+F: every place `query` occurs in root's text (accent- and case-insensitive). */
   findAll(root: Element, query: string): Range[]
   /** Shows find matches with the CSS Custom Highlight API (no change to the page's DOM). */
@@ -177,7 +177,7 @@ export function createAnchoring(): Anchoring {
     return { ...q, start: at.start, end: at.end, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }
   }
 
-  function printNotes(root: Element, annotations: Annotation[], heading: string) {
+  function printNotes(root: Element, annotations: Annotation[], heading: string, docNote?: string) {
     const doc = root.ownerDocument
     const missing = apply(root, annotations)
     const text = textIndex(root).text
@@ -186,7 +186,8 @@ export function createAnchoring(): Anchoring {
       .filter((a) => a.note.trim())
       .map((a) => ({ a, at: missing.indexOf(a.id) === -1 ? (findQuote(text, a)?.start ?? Infinity) : Infinity }))
       .sort((x, y) => x.at - y.at)
-    if (!withNotes.length) return
+    const general = (docNote || '').trim()
+    if (!withNotes.length && !general) return
 
     const section = doc.createElement('section')
     section.setAttribute('data-sd-notes', '')
@@ -195,7 +196,16 @@ export function createAnchoring(): Anchoring {
     h.textContent = heading
     const list = doc.createElement('ol')
     list.style.cssText = 'padding-left:1.6em'
-    section.append(h, list)
+    section.append(h)
+    if (general) {
+      // The note about the whole document comes first (issue #21).
+      const p = doc.createElement('div')
+      p.setAttribute('data-sd-doc-note', '')
+      p.textContent = general
+      p.style.cssText = 'white-space:pre-wrap;margin:0 0 1.2em;padding:8px 12px;background:#f6f4ef;border-radius:6px'
+      section.append(p)
+    }
+    if (withNotes.length) section.append(list)
 
     withNotes.forEach(({ a }, i) => {
       const n = String(i + 1)
