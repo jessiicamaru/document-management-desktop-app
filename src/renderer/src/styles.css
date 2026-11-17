@@ -479,7 +479,7 @@ html:has(.markdown.print), html:has(.markdown.print) body, html:has(.markdown.pr
 
 /* ---------- EPUB ---------- */
 .epub-host { position: absolute; inset: 0; background: var(--paper); }
-.kind-epub { background: color-mix(in srgb, var(--st-done) 16%, transparent); color: var(--st-done); }
+.kind-epub, .kind-mobi { background: color-mix(in srgb, var(--st-done) 16%, transparent); color: var(--st-done); }
 
 /* EPUB: page by page */
 .epub-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--paper); }

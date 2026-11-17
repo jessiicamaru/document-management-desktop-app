@@ -4,7 +4,8 @@
  * md and html can be read, edited, annotated and exported; pdf is shown with the built-in
  * PDF viewer; epub books are read (and annotated) with epub.js.
  */
-export type DocKind = 'md' | 'html' | 'pdf' | 'epub'
+/** mobi = Kindle books (.mobi, .azw3, .azw), read like EPUB. */
+export type DocKind = 'md' | 'html' | 'pdf' | 'epub' | 'mobi'
 
 /** How far along you are with a document. */
 export type StudyStatus = 'new' | 'learning' | 'review' | 'done'

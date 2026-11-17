@@ -51,7 +51,10 @@ const EXTENSIONS: Record<string, DocKind> = {
   '.html': 'html',
   '.htm': 'html',
   '.pdf': 'pdf',
-  '.epub': 'epub'
+  '.epub': 'epub',
+  '.mobi': 'mobi',
+  '.azw3': 'mobi',
+  '.azw': 'mobi'
 }
 
 function shouldSkipDir(name: string): boolean {
@@ -128,6 +131,7 @@ async function readEntry(
       if (kind === 'md') title = extractMarkdown(buffer.toString('utf8')).title
     }
     if (kind === 'epub') title = await epubTitle(abs).catch(() => '')
+    if (kind === 'mobi') title = await mobiTitle(abs).catch(() => '')
     const info = { title: title || fallbackTitle, hash }
     cache?.set(abs, stat.size, stat.mtimeMs, info)
     return { ...base, ...info }
@@ -136,14 +140,55 @@ async function readEntry(
   }
 }
 
-/** Searchable plain text of a document (used by the search worker). PDFs have none. */
+/** Searchable plain text of a document (used by the search worker). */
 export async function extractText(abs: string, kind: DocKind): Promise<string> {
   if (kind === 'epub') return epubText(abs)
+  if (kind === 'mobi') return (await import('./mobi-text')).mobiText(abs, MAX_BOOK_TEXT)
   if (kind === 'pdf') return (await import('./pdf-text')).pdfText(abs, MAX_BOOK_TEXT)
   const stat = await fs.stat(abs)
   if (stat.size > MAX_HASH_BYTES) return ''
   const source = await fs.readFile(abs, 'utf8')
   return kind === 'html' ? extractHtml(source).text : extractMarkdown(source).text
+}
+
+// ---------- MOBI / AZW3 ----------
+
+/**
+ * Title of a Kindle book, read straight from its headers (a few KB): the EXTH "updated
+ * title" (record type 503) if there is one, else the book's full name.
+ */
+export async function mobiTitle(abs: string): Promise<string> {
+  const file = await fs.open(abs, 'r')
+  try {
+    const head = Buffer.alloc(86)
+    await file.read(head, 0, 86, 0)
+    if (head.toString('latin1', 60, 68) !== 'BOOKMOBI') return ''
+    const rec0 = Buffer.alloc(64 * 1024)
+    const { bytesRead } = await file.read(rec0, 0, rec0.length, head.readUInt32BE(78))
+    const r = rec0.subarray(0, bytesRead)
+    if (r.length < 132 || r.toString('latin1', 16, 20) !== 'MOBI') return ''
+    const decoder = new TextDecoder(r.readUInt32BE(28) === 65001 ? 'utf-8' : 'windows-1252')
+    const headerLength = r.readUInt32BE(20)
+    if (r.readUInt32BE(128) & 0x40) {
+      let at = 16 + headerLength
+      if (r.toString('latin1', at, at + 4) === 'EXTH') {
+        const count = r.readUInt32BE(at + 8)
+        at += 12
+        for (let i = 0; i < count && at + 8 <= r.length; i++) {
+          const type = r.readUInt32BE(at)
+          const length = r.readUInt32BE(at + 4)
+          if (length < 8) break
+          if (type === 503) return collapse(decodeEntities(decoder.decode(r.subarray(at + 8, at + length))))
+          at += length
+        }
+      }
+    }
+    const offset = r.readUInt32BE(84)
+    const length = r.readUInt32BE(88)
+    return offset + length <= r.length ? collapse(decodeEntities(decoder.decode(r.subarray(offset, offset + length)))) : ''
+  } finally {
+    await file.close()
+  }
 }
 
 // ---------- EPUB ----------
@@ -215,11 +260,11 @@ function decodeEntities(s: string): string {
   })
 }
 
-function collapse(s: string): string {
+export function collapse(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
-function stripTags(html: string): string {
+export function stripTags(html: string): string {
   return decodeEntities(html.replace(/<[^>]+>/g, ' '))
 }
 

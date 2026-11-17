@@ -153,7 +153,7 @@ async function pushSnapshot(): Promise<void> {
 // ---------- opening a file from Explorer (issue #24) ----------
 
 /** File types the installer associates with the app. */
-const OPENABLE = /\.(md|markdown|html?|pdf|epub)$/i
+const OPENABLE = /\.(md|markdown|html?|pdf|epub|mobi|azw3?)$/i
 /** A file to show once the UI is ready and its folder has been scanned. */
 let pendingFile: string | null = null
 /** True once the UI asked for the library, so it is listening for doc:navigate. */

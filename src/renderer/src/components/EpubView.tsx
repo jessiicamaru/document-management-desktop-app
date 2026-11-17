@@ -177,6 +177,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
 
   useEffect(() => {
     let book: Book | null = null
+    let disposeBook: (() => void) | undefined
     let cancelled = false
     const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const onScheme = (): void => {
@@ -212,7 +213,16 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
     void (async () => {
       const bytes = await window.api.readBinary(doc.path)
       if (cancelled) return
-      book = ePub(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
+      let data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+      // Kindle books are turned into an EPUB first (issue #20).
+      if (doc.kind === 'mobi') {
+        const { mobiToEpub } = await import('../lib/mobi-to-epub')
+        const converted = await mobiToEpub(bytes)
+        disposeBook = converted.dispose
+        if (cancelled) return converted.dispose()
+        data = converted.epub
+      }
+      book = ePub(data)
       bookRef.current = book
       const r = book.renderTo(hostRef.current!, {
         width: '100%',
@@ -322,6 +332,7 @@ const EpubView = forwardRef<ReaderHandle, Props>(function EpubView(props, ref) {
       drawn.current = []
       bookRef.current = null
       book?.destroy()
+      disposeBook?.()
     }
   }, [doc.path, doc.mtime])
 

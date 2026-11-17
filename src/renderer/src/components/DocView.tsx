@@ -250,7 +250,7 @@ export default function DocView(props: Props) {
   const preview =
     doc.kind === 'pdf' ? (
       <PdfView {...readerProps} doc={doc} onError={onError} />
-    ) : doc.kind === 'epub' ? (
+    ) : doc.kind === 'epub' || doc.kind === 'mobi' ? (
       <EpubView {...readerProps} doc={doc} onError={onError} />
     ) : doc.kind === 'html' ? (
       <HtmlView

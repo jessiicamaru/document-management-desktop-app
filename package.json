@@ -87,6 +87,16 @@
       },
       {
         "ext": [
+          "mobi",
+          "azw3",
+          "azw"
+        ],
+        "name": "Kindle",
+        "description": "Sách Kindle",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
           "html",
           "htm"
         ],

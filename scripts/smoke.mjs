@@ -121,9 +121,9 @@ try {
   check(rootNames.join('|') === 'library|notes', `both folders shown as roots (${rootNames.join(', ')})`)
   check((await page.textContent('.library-name')).includes('2 thư mục'), 'header says the workspace has 2 folders')
   await page.fill('.search input', 'container')
-  await page.waitForSelector('.hit')
-  check((await page.textContent('.hit .hit-path')) === 'notes / devops', 'search finds docs in the second folder, with its name')
-  await page.click('.hit')
+  await page.waitForSelector('.hit:has-text("Docker cơ bản")')
+  check((await page.textContent('.hit:has-text("Docker cơ bản") .hit-path')) === 'notes / devops', 'search finds docs in the second folder, with its name')
+  await page.click('.hit:has-text("Docker cơ bản")')
   await docPathIs('devops/Docker cơ bản.md')
   check((await page.textContent('.doc-root')) === 'notes', 'doc header shows which folder the doc is in')
   await page.fill('.search input', '')
@@ -552,6 +552,32 @@ try {
   const bookNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['sach/Git cơ bản.epub']?.items ?? []
   check(bookNotes.length === 1 && bookNotes[0].cfi?.startsWith('epubcfi(') && bookNotes[0].quote === 'pull trước khi push', 'EPUB: highlight saved with its position in the book')
   await page.screenshot({ path: shot('14-epub') })
+
+  // Issue #20: Kindle books (MOBI/AZW3) open in the same reader, with outline, highlights, search.
+  step('18g. Kindle book')
+  await page.fill('.search input', 'volume de giu du lieu')
+  await page.waitForFunction(() => [...document.querySelectorAll('.hit')].some((h) => h.textContent.includes('Docker nhanh')), null, { timeout: 30000 })
+  check(true, 'search finds text inside a Kindle book')
+  await page.fill('.search input', '')
+  await openDoc('Docker nhanh')
+  await page.waitForFunction(() => document.querySelectorAll('.outline-item').length === 3, null, { timeout: 15000 })
+  check((await page.locator('.outline-item').allTextContents()).join('|').includes('Chương 2. Image và Dockerfile'), 'Kindle book: chapters listed in the outline')
+  await page.click('.outline-item >> text=Chương 3')
+  await page.waitForTimeout(1200)
+  check((await bookFrame().evaluate(() => document.body.textContent)).includes('Dùng volume để giữ dữ liệu'), 'Kindle book: outline jumps to a chapter')
+  await bookFrame().evaluate(() => {
+    const b = [...document.querySelectorAll('b')].find((e) => e.textContent === 'volume')
+    const range = document.createRange()
+    range.selectNodeContents(b)
+    getSelection().removeAllRanges()
+    getSelection().addRange(range)
+  })
+  await page.waitForSelector('.hl-toolbar', { timeout: 5000 })
+  await page.click('.hl-toolbar .hl-swatch[title="Highlight vàng"]')
+  await page.waitForTimeout(800)
+  const kindleNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['sach/Docker nhanh.mobi']?.items ?? []
+  check(kindleNotes.length === 1 && kindleNotes[0].cfi?.startsWith('epubcfi(') && kindleNotes[0].quote === 'volume', 'Kindle book: highlight saved with its position')
+  await page.screenshot({ path: shot('14b-kindle') })
 
   // 19. Issue #1: a page can't open programs, and asks before opening other files.
   step('19. Safety: opening files from a page')

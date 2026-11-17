@@ -31,6 +31,7 @@ node scripts/make-sample-epub.mjs  # tạo lại sample-library/sach/Git cơ b�
 | **⋯ → Xuất PDF…** | Xuất bài .md / .html ra PDF (khổ A4, có số trang và bookmark theo tiêu đề, luôn nền sáng) |
 | **⋯ → Xuất PDF kèm highlight và ghi chú…** | Như trên, nhưng in cả highlight theo màu, số chú thích ¹ ² ³ sau đoạn có ghi chú, và mục **Ghi chú** ở cuối file |
 | File `.epub` | Đọc sách EPUB **từng trang** như sách thật: nút ‹ ›, phím ← → / PageUp PageDown, hoặc lăn chuột để lật trang; cửa sổ rộng thì hiện 2 trang. Thanh dưới cùng cho biết chương và % đã đọc. Mục lục theo chương, nhớ vị trí đọc, màu và cỡ chữ theo Cài đặt, tìm được cả chữ trong sách. Sách có DRM (mua trên Kindle, Google Play...) thì không mở được. |
+| File `.mobi` / `.azw3` | Sách Kindle, đọc như EPUB (lật trang, mục lục, highlight, `Ctrl+F`, tìm kiếm). App chuyển sách sang EPUB trong bộ nhớ khi mở, không sửa file. Sách có DRM không mở được. |
 | File `.pdf` | Mở trong app bằng pdf.js: cuộn từng trang, phóng to/thu nhỏ (nút góc dưới), mục lục theo bookmark của PDF, nhớ vị trí đọc. Highlight, ghi chú và `Ctrl+F` dùng được như bài Markdown; ô tìm kiếm tìm cả chữ bên trong PDF. PDF chỉ là ảnh scan (không có chữ) thì không tìm/highlight được. |
 | `Ctrl+,` hoặc icon bánh răng | Cài đặt: chế độ Sáng/Tối, màu nhấn, cỡ chữ / kiểu chữ / độ rộng khi đọc Markdown, đổi tên / xoá tag trên mọi bài, dọn dữ liệu của file đã xoá |
 | Markdown | Code block được tô màu theo ngôn ngữ (` ```js `, ` ```python `...), công thức `$...$` và `$$...$$` hiển thị bằng KaTeX, sơ đồ ` ```mermaid `. |
