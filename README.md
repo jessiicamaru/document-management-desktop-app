@@ -96,7 +96,7 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 
 ## Dữ liệu nằm ở đâu
 
-- **File gốc không bao giờ bị sửa.**
+- **File bài chỉ bị sửa khi bạn bấm Sửa chữ hoặc lưu trong Raw.** Khi đó app chỉ thay đúng phần bạn đổi, giữ nguyên kiểu xuống dòng của file, không sửa file không phải UTF-8, và từ chối ghi đè nếu file vừa bị sửa ở nơi khác. Đọc, highlight, gắn tag, xuất PDF không bao giờ đụng vào file bài.
 - **Tag và trạng thái học** nằm trong `.docs-meta.json` của từng thư mục trong workspace, nên đi theo thư mục khi bạn đồng bộ bằng Git hay OneDrive.
   - Nếu file này bị hỏng (ví dụ do xung đột khi đồng bộ), app sao lưu nó thành `.docs-meta.corrupt-<thời gian>.json` và hiện cảnh báo, chứ không lặng lẽ xoá dữ liệu.
   - Đổi tên hoặc di chuyển file thì tag vẫn được giữ: app nhận ra file nhờ nội dung giống hệt, hoặc nhờ tên file giống (khi vừa di chuyển vừa sửa). Nếu có nhiều file cùng khớp thì app không đoán.
@@ -107,4 +107,5 @@ Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồ
 ## Bảo mật
 
 - HTML mở trong iframe `sandbox`: chạy được CSS/JS riêng của bài nhưng không chạm được vào app hay ổ đĩa.
-- Link trong bài: sang bài khác thì mở trong app; link web mở bằng trình duyệt; file khác (pdf, ảnh) mở bằng app mặc định. Riêng file chương trình/script (`.exe`, `.bat`, `.ps1`...) thì chỉ hiện trong Explorer, không bao giờ tự chạy.
+- Link trong bài: sang bài khác thì mở trong app; link web mở bằng trình duyệt. File khác chỉ được mở bằng app mặc định nếu thuộc danh sách an toàn (pdf, ảnh, txt, Office không macro, audio/video, xem `src/main/open-policy.ts`), và app hỏi trước khi mở nếu lệnh đến từ bên trong bài. Mọi loại khác (chương trình, script, `.py`, `.url`, file Office có macro...) chỉ hiện trong Explorer, không bao giờ tự chạy.
+- Khi xuất PDF, trang không đọc được file nào khác và không mở được kết nối (CSP). File dữ liệu ẩn của app (`.docs-meta.json`, `.docs-notes.json`) không bao giờ được trả cho trang nào.

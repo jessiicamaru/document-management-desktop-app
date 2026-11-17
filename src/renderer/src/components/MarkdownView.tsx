@@ -48,7 +48,7 @@ md.core.ruler.push('heading_ids', (state) => {
 /** Renders a whole .md file (front matter skipped) to safe HTML with source ranges. */
 export function renderMarkdown(source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
-  const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length }
+  const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length, source: body }
   return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true } })
 }
 

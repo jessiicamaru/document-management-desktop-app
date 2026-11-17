@@ -10,7 +10,7 @@ const patch = (a: string, hunks: ReturnType<typeof diffWords>): string =>
 function blocks(src: string): { start: number; end: number; text: string }[] {
   const md = new MarkdownIt()
   sourceRangesPlugin(md)
-  const html = md.render(src, { lineStarts: lineStartsOf(src), offset: 0, length: src.length })
+  const html = md.render(src, { lineStarts: lineStartsOf(src), offset: 0, length: src.length, source: src })
   return [...html.matchAll(/data-src="(\d+):(\d+)"[^>]*>([\s\S]*?)<\/(p|h\d|td|th|span)>/g)].map((m) => ({
     start: Number(m[1]),
     end: Number(m[2]),
@@ -82,6 +82,12 @@ describe('applyMarkdownEdits', () => {
   })
   it('edits one table cell only', () => {
     expect(edit('đầu', 'phiên bản đầu')).toContain('| v1 | phiên bản đầu |')
+  })
+  it('edits table cells in a file with Windows line endings (issue #5)', () => {
+    const crlf = src.replace(/\n/g, '\r\n')
+    const b = blocks(crlf).find((x) => x.text === 'đầu')!
+    const out = applyMarkdownEdits(crlf, [{ start: b.start, end: b.end, oldText: 'đầu', newText: 'phiên bản đầu' }])
+    expect(out).toBe(crlf.replace('| v1 | đầu |', '| v1 | phiên bản đầu |'))
   })
   it('escapes Markdown characters typed by the user', () => {
     expect(edit('Lưu chuỗi event rồi replay.', 'Lưu chuỗi event rồi replay *ngay*.')).toContain('replay \\*ngay\\*.')

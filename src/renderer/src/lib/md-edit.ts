@@ -30,6 +30,11 @@ interface RangeEnv {
   /** Where that text starts in the file (front matter is cut off before rendering). */
   offset?: number
   length?: number
+  /**
+   * The text exactly as given to markdown-it. markdown-it turns "\r\n" into "\n" in
+   * state.src, so positions in the file must be read from this instead (issue #5).
+   */
+  source?: string
 }
 
 export function lineStartsOf(text: string): number[] {
@@ -81,7 +86,7 @@ export function sourceRangesPlugin(md: MarkdownIt): void {
       }
       if (t.type === 'tr_open' && t.map) {
         const lineFrom = lineStart(t.map[0])
-        const line = state.src.slice(lineFrom, lineStart(t.map[0] + 1)).replace(/\r?\n$/, '')
+        const line = (env.source ?? state.src).slice(lineFrom, lineStart(t.map[0] + 1)).replace(/\r?\n$/, '')
         const cells = tableCellRanges(line)
         const cellTokens = []
         for (let j = i + 1; j < tokens.length && tokens[j].type !== 'tr_close'; j++) {

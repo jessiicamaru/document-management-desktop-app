@@ -201,11 +201,9 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot }: TreeProps) {
     </>
   )
 
-  const treeOf = (root: RootInfo): TreeFolder =>
-    buildTree(
-      docs.filter((d) => d.root === root.key),
-      root.key
-    )
+  // Built only when the documents change, not on every render (issue #11).
+  const trees = useMemo(() => new Map(roots.map((r) => [r.key, buildTree(docs.filter((d) => d.root === r.key), r.key)])), [roots, docs])
+  const treeOf = (root: RootInfo): TreeFolder => trees.get(root.key)!
 
   if (roots.length === 1) return <>{renderFolder(treeOf(roots[0]), 0)}</>
 

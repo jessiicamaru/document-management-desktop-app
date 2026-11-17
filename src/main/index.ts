@@ -16,6 +16,7 @@ import { NOTES_FILE, NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveSettings, saveWorkspacePaths } from './storage'
 import { labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { canOpenWithDefaultApp } from './open-policy'
+import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 
 // Tests run with their own settings folder so they never touch your real settings.
@@ -140,7 +141,9 @@ async function openRoot(root: Root): Promise<void> {
   }
   root.docs = await scanLibrary(root.path, [], scanCache)
   await reconcileStores(root)
-  watchRoot(root)
+  // The folder may have been removed from the workspace while it was being scanned:
+  // then don't start watching it, nobody would ever stop the watcher (issue #9).
+  if (roots.includes(root)) watchRoot(root)
 }
 
 /** Lets tags and notes follow renamed/moved documents. */
@@ -177,6 +180,7 @@ async function openRoots(list: Root[]): Promise<void> {
   scanning = true
   await pushSnapshot()
   for (const root of list) {
+    if (!roots.includes(root)) continue // removed before its turn
     await openRoot(root)
     syncSearch()
     await pushSnapshot()
@@ -314,7 +318,8 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
   if (Math.abs(stat.mtimeMs - expectedMtime) > 1) {
     throw new Error('File vừa bị thay đổi bên ngoài app. Bài đã được tải lại; hãy sửa lại thay đổi của bạn.')
   }
-  const content = build(await fs.readFile(abs, 'utf8'))
+  // Refuse files that aren't UTF-8: saving them as UTF-8 would garble their text (issue #4).
+  const content = build(decodeUtf8Strict(await fs.readFile(abs)))
   const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.studydocs-tmp`)
   try {
     await fs.writeFile(tmp, content, 'utf8')
@@ -714,5 +719,5 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit())
   // Keep what was learned about the files for the next start.
-  app.on('before-quit', () => void scanCache?.save())
+  app.on('before-quit', () => scanCache?.saveSync())
 }

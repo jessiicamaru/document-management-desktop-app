@@ -2,7 +2,7 @@
 // so reopening a big library only needs a quick look at file sizes and dates.
 // An entry is used only while the file's size and modified time are unchanged.
 
-import { promises as fs } from 'node:fs'
+import { promises as fs, renameSync, writeFileSync } from 'node:fs'
 import type { CachedInfo, InfoCache } from './library'
 import { pathKey } from './workspace'
 
@@ -36,7 +36,25 @@ export class ScanCache implements InfoCache {
     this.timer = setTimeout(() => void this.save(), 2000) // many files change at once while scanning
   }
 
+  /**
+   * Same as save(), but finishes before returning. Used while the app is quitting, when an
+   * asynchronous write might never complete (issue #7). Skipped if nothing changed.
+   */
+  saveSync(): void {
+    if (!this.timer) return
+    clearTimeout(this.timer)
+    this.timer = undefined
+    try {
+      writeFileSync(`${this.file}.tmp`, JSON.stringify({ version: 1, entries: this.entries }), 'utf8')
+      renameSync(`${this.file}.tmp`, this.file)
+    } catch (err) {
+      console.error('Could not save scan cache', err)
+    }
+  }
+
   async save(): Promise<void> {
+    clearTimeout(this.timer)
+    this.timer = undefined
     const tmp = `${this.file}.tmp`
     try {
       await fs.writeFile(tmp, JSON.stringify({ version: 1, entries: this.entries }), 'utf8')

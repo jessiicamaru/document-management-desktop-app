@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type SearchStatus, type StudyStatus, type UiSettings } from '../../shared/types'
 import { errorMessage, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
+import { pruneReadingPositions } from './lib/positions'
 import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
 import SettingsDialog from './components/SettingsDialog'
@@ -70,8 +71,34 @@ export default function App() {
     return window.api.onLibraryChanged(setLib)
   }, [notify])
 
+  // Clean up reading positions of documents that are gone, once a scan has finished (issue #8).
+  // Only after seeing "scanning" turn off: before the first scan the list is still empty.
+  const sawScanning = useRef(false)
+  useEffect(() => {
+    if (!lib) return
+    if (lib.scanning) sawScanning.current = true
+    else if (sawScanning.current) {
+      sawScanning.current = false
+      pruneReadingPositions(lib.docs, lib.roots)
+    }
+  }, [lib])
+
   // Background indexing of document text for search.
-  useEffect(() => window.api.onSearchStatus(setSearchStatus), [])
+  // While texts are being indexed, the current search is run again so results fill in, but at
+  // most every 2 seconds plus once at the end: each run scans all text (issue #11).
+  const [indexTick, setIndexTick] = useState(0)
+  const lastIndexTick = useRef(0)
+  useEffect(
+    () =>
+      window.api.onSearchStatus((status) => {
+        setSearchStatus(status)
+        if (status.done >= status.total || Date.now() - lastIndexTick.current > 2000) {
+          lastIndexTick.current = Date.now()
+          setIndexTick((t) => t + 1)
+        }
+      }),
+    []
+  )
 
   // App version + auto-update progress.
   useEffect(() => {
@@ -259,7 +286,7 @@ export default function App() {
       alive = false
       clearTimeout(timer)
     }
-  }, [query, visibleDocs, meta, searchStatus]) // searchStatus: results improve while texts are being indexed
+  }, [query, visibleDocs, meta, indexTick]) // indexTick: results improve while texts are being indexed
 
   const current = docs.find((d) => d.path === selected) ?? null
   const warnings = (lib?.warnings ?? []).filter((w) => !dismissed.includes(w))
