@@ -39,6 +39,18 @@ export interface LibrarySnapshot {
   warnings: string[]
 }
 
+/** Auto-update progress (see src/main/updater.ts). */
+export interface UpdateStatus {
+  state: 'idle' | 'downloading' | 'ready'
+  version?: string
+  percent?: number
+}
+
+export interface AppInfo {
+  version: string
+  update: UpdateStatus
+}
+
 /** The API the preload script exposes as `window.api`. */
 export interface DocsApi {
   getLibrary(): Promise<LibrarySnapshot>
@@ -53,6 +65,10 @@ export interface DocsApi {
   onLibraryChanged(cb: (snapshot: LibrarySnapshot) => void): () => void
   /** Called when a link inside an HTML document points to another library document. */
   onNavigate(cb: (path: string, hash: string) => void): () => void
+  getAppInfo(): Promise<AppInfo>
+  onUpdateStatus(cb: (status: UpdateStatus) => void): () => void
+  /** Restarts the app into the downloaded update. */
+  installUpdate(): Promise<void>
 }
 
 export const DEFAULT_META: DocMeta = { tags: [], status: 'new' }

@@ -1,7 +1,7 @@
 {
   "name": "study-docs",
   "productName": "Study Docs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quản lý tài liệu học (Markdown + HTML) trên Windows",
   "author": "",
   "license": "MIT",
@@ -12,9 +12,10 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "smoke": "electron-vite build && node scripts/smoke.mjs",
-    "dist": "electron-vite build && electron-builder --win",
+    "dist": "electron-vite build && electron-builder --win --publish never",
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
@@ -55,6 +56,17 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "Study Docs"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jessiicamaru",
+        "repo": "document-management-desktop-app",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

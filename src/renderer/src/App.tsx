@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { DocMeta, LibrarySnapshot, StudyStatus } from '../../shared/types'
+import type { AppInfo, DocMeta, LibrarySnapshot, StudyStatus } from '../../shared/types'
 import { buildIndex, errorMessage, loadLocal, metaOf, saveLocal } from './lib/docs'
 import Sidebar, { type SearchHit } from './components/Sidebar'
 import DocView from './components/DocView'
@@ -26,6 +26,7 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [dismissed, setDismissed] = useState<string[]>([])
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   /** Shows an error message in the bottom-right corner for a few seconds. */
@@ -45,6 +46,12 @@ export default function App() {
       })
       .catch(notify)
     return window.api.onLibraryChanged(setLib)
+  }, [notify])
+
+  // App version + auto-update progress.
+  useEffect(() => {
+    window.api.getAppInfo().then(setAppInfo).catch(notify)
+    return window.api.onUpdateStatus((update) => setAppInfo((info) => info && { ...info, update }))
   }, [notify])
 
   // Ctrl+K / Ctrl+P jumps to search, like in VS Code.
@@ -140,8 +147,17 @@ export default function App() {
         selected={selected}
         onOpen={openDoc}
         onChooseLibrary={chooseLibrary}
+        appInfo={appInfo}
       />
       <main className="content">
+        {appInfo?.update.state === 'ready' && (
+          <div className="banner update" role="status">
+            <span>Đã tải xong bản {appInfo.update.version}. Bản mới sẽ được cài khi bạn tắt app, hoặc cập nhật ngay:</span>
+            <button className="btn primary small" onClick={() => window.api.installUpdate().catch(notify)}>
+              Khởi động lại để cập nhật
+            </button>
+          </div>
+        )}
         {warnings.map((w) => (
           <div key={w} className="banner" role="alert">
             <span>{w}</span>

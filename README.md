@@ -10,8 +10,28 @@ npm run dev        # chạy app ở chế độ dev (sửa code là tự reload)
 npm run typecheck  # kiểm tra kiểu TypeScript
 npm test           # unit test (Vitest)
 npm run smoke      # build rồi tự bấm thử app trên sample-library/, fail nếu có lỗi; ảnh lưu vào scripts/
-npm run dist       # đóng gói ra release/Study Docs Setup x.y.z.exe
+npm run dist       # đóng gói ra release/Study Docs Setup x.y.z.exe (chỉ trên máy, không phát hành)
+npm run release    # đóng gói + phát hành lên GitHub Releases để các máy tự cập nhật
 ```
+
+## Cập nhật app
+
+App đã cài **tự cập nhật** từ [GitHub Releases](https://github.com/jessiicamaru/document-management-desktop-app/releases):
+
+- Mỗi lần mở app (và cứ 4 giờ một lần), app kiểm tra bản mới rồi tải ngầm.
+- Tải xong sẽ có thanh thông báo "Khởi động lại để cập nhật". Nếu bạn không bấm, bản mới sẽ được cài vào lần tắt app tiếp theo.
+- Tài liệu, tag, trạng thái và settings đều được giữ nguyên.
+
+Phát hành một bản mới:
+
+```bash
+npm version patch --no-git-tag-version   # 0.2.0 -> 0.2.1 (tính năng lớn thì dùng minor)
+git commit -am "Release v0.2.1"
+git push
+npm run release
+```
+
+`npm run release` từ chối chạy nếu còn thay đổi chưa commit/push, hoặc nếu version đó đã được phát hành. Token GitHub lấy từ `gh auth token` (GitHub CLI), không lưu vào file nào.
 
 Gỡ app: double-click `uninstall.bat`. Script tắt app, gỡ cài đặt, rồi hỏi có xoá settings trong `%APPDATA%\Study Docs` không. Thư mục tài liệu không bị đụng tới.
 

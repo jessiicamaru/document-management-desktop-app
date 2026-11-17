@@ -8,6 +8,7 @@ import type { DocEntry, DocMeta, LibrarySnapshot } from '../shared/types'
 import { resolveInLibrary, scanLibrary } from './library'
 import { META_FILE, MetaStore } from './meta-store'
 import { loadRecent, loadSettings, markOpened, saveSettings } from './storage'
+import { getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 
 // Documents are served as doc://library/<relative path>. A "standard" scheme means
 // relative links inside an HTML document (images, other pages) resolve normally.
@@ -198,6 +199,9 @@ function registerIpc(): void {
     const abs = inLibrary(rel)
     if (abs) shell.showItemInFolder(abs)
   })
+
+  ipcMain.handle('app:info', () => ({ version: app.getVersion(), update: getUpdateStatus() }))
+  ipcMain.handle('update:install', () => installUpdateNow())
 }
 
 // ---------- window ----------
@@ -293,6 +297,7 @@ if (!app.requestSingleInstanceLock()) {
     await openLibrary(process.env.DOCS_LIBRARY || settings.libraryPath || null)
 
     createWindow()
+    startAutoUpdate(() => win)
   })
 
   app.on('window-all-closed', () => app.quit())

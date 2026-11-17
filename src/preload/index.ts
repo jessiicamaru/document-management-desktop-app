@@ -2,7 +2,7 @@
 // and nothing else, so a document can never reach the file system on its own.
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { DocsApi, LibrarySnapshot } from '../shared/types'
+import type { DocsApi, LibrarySnapshot, UpdateStatus } from '../shared/types'
 
 /** Subscribes to a main-process event and returns an unsubscribe function. */
 function listen<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -20,7 +20,10 @@ const api: DocsApi = {
   openPath: (path) => ipcRenderer.invoke('doc:openPath', path),
   revealInFolder: (path) => ipcRenderer.invoke('doc:reveal', path),
   onLibraryChanged: (cb) => listen<[LibrarySnapshot]>('library:changed', cb),
-  onNavigate: (cb) => listen<[string, string]>('doc:navigate', cb)
+  onNavigate: (cb) => listen<[string, string]>('doc:navigate', cb),
+  getAppInfo: () => ipcRenderer.invoke('app:info'),
+  onUpdateStatus: (cb) => listen<[UpdateStatus]>('update:status', cb),
+  installUpdate: () => ipcRenderer.invoke('update:install')
 }
 
 contextBridge.exposeInMainWorld('api', api)

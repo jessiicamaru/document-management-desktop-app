@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode, type RefObject } from 'react'
-import type { DocEntry, LibrarySnapshot } from '../../../shared/types'
+import type { AppInfo, DocEntry, LibrarySnapshot } from '../../../shared/types'
 import { buildTree, loadLocal, makeSnippet, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
 import type { StatusFilter } from '../App'
 
@@ -22,6 +22,7 @@ interface Props {
   selected: string | null
   onOpen: (path: string) => void
   onChooseLibrary: () => void
+  appInfo: AppInfo | null
 }
 
 export default function Sidebar(props: Props) {
@@ -128,6 +129,17 @@ export default function Sidebar(props: Props) {
           </>
         )}
       </div>
+
+      {props.appInfo && (
+        <div className="sidebar-foot">
+          <span>Study Docs v{props.appInfo.version}</span>
+          {props.appInfo.update.state === 'downloading' && (
+            <span className="update-progress">
+              Đang tải bản {props.appInfo.update.version}… {props.appInfo.update.percent ?? 0}%
+            </span>
+          )}
+        </div>
+      )}
     </aside>
   )
 }
