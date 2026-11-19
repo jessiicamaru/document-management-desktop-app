@@ -13,6 +13,12 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
 - **Notion Calendar** runs on Google Calendar, so reading Google covers it. Notion *databases* with dates (API token) can come later if needed.
 - **Data lives in the app's data folder**, never in the documents' folders, like tags and notes:
   `%APPDATA%\Study Docs\data\calendar.json`
+- **Events use the standard calendar format, iCalendar ([RFC 5545](https://www.rfc-editor.org/rfc/rfc5545)) `VEVENT`**, so they convert 1:1 to and from `.ics`, Google and Outlook.
+  - Field names and meanings follow the RFC, not a format of our own: `UID`, `DTSTAMP`, `DTSTART`/`DTEND` (or `DURATION`), `SUMMARY`, `LOCATION`, `DESCRIPTION`, `RRULE`, `EXDATE`, `RDATE`, `RECURRENCE-ID`, `SEQUENCE`, `STATUS`, `CATEGORIES`, `COLOR` ([RFC 7986](https://www.rfc-editor.org/rfc/rfc7986)), `VALARM`.
+  - `RRULE` is stored as the standard string, for example `FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;UNTIL=20261231T235959Z`.
+  - Times keep their `TZID`, and all-day events use `VALUE=DATE`.
+  - App-only data (document links, notes folder) goes in `X-STUDYDOCS-*` properties or beside the event, never in standard fields.
+  - Stored as JSON for speed. ical.js reads and writes it, so tests can check that `.ics` → app → `.ics` gives the same events.
 - **Libraries:**
   - **FullCalendar** (MIT core: daygrid, timegrid, interaction, rrule) for the week and month views.
   - **ical.js** to parse `.ics` files and expand recurrences. Hand-written RRULE handling is too error-prone.
@@ -20,19 +26,32 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
 ## Milestone 1: local calendar (MVP)
 
 1. [ ] **Data model + store** (`src/main/calendar-store.ts`, same write queue and corrupt-file backup as DocStore):
-   - Event fields: `id`, `title`, `start`, `end`, `allDay`, `location`, `color`, `rrule?` (weekly repeat + end date), `exdates?`, `note?`.
-   - Links: `{ eventId, occurrence?: 'YYYY-MM-DD', doc: { root, rel } }`.
-     - Without `occurrence`, the link applies to the whole series (course material).
+   - Events are iCalendar `VEVENT`s (see Decisions).
+   - An edited or cancelled single occurrence is a separate `VEVENT` with the same `UID` and a `RECURRENCE-ID`, or an `EXDATE` on the series, as the RFC does it.
+   - Links: `{ uid, recurrenceId?, doc: { root, rel } }`.
+     - Without `recurrenceId`, the link applies to the whole series (course material).
      - With it, the link applies to one class.
 2. [ ] **IPC + unit tests:**
    - CRUD for events and links.
-   - Recurrence expansion for a date range.
-   - Editing "this occurrence / the whole series".
+   - Recurrence expansion for a date range: every preset, `INTERVAL`, `BYDAY` with ordinals, `COUNT`/`UNTIL`, `EXDATE`, and daylight-saving changes.
+   - Editing "this / this and following / all".
+   - `.ics` round-trip.
 3. [ ] **Calendar view:**
    - New "Calendar" entry in the sidebar.
    - Week view by default (it fits a timetable), plus month view.
    - Today button; view and date remembered.
-4. [ ] **Event dialog:** title, time, location, color, weekly repeat until a date, free-text note. Uses the custom dialog styles.
+4. [ ] **Event dialog:** title, all-day or time, location, color, description, repeat, reminder. Uses the custom dialog styles.
+   - **Repeat presets:** does not repeat · daily · weekly on <weekday> · monthly on day <N> · monthly on the <2nd Tuesday> · yearly · every weekday (Mon–Fri) · **Custom…**
+   - **Custom repeat** (like Google Calendar), producing a standard `RRULE`:
+     - Every **N** days / weeks / months / years (`FREQ` + `INTERVAL`).
+     - Weekly: pick several weekdays, for example Tue + Thu (`BYDAY`).
+     - Monthly: on day N (`BYMONTHDAY`), or on the Nth / last <weekday> (`BYDAY=2TU`, `BYDAY=-1FR`).
+     - Ends: never · on a date (`UNTIL`) · after N times (`COUNT`).
+     - A summary line in plain words ("Every 2 weeks on Tue, Thu, until 31 Dec 2026"), plus a preview of the next few dates.
+   - **Skip dates**, for example holidays or exam week (`EXDATE`).
+   - **Editing a repeating event** asks: this event · this and following events (splits the series: old `UNTIL` + new series) · all events.
+   - **Deleting** asks the same three choices.
+   - RRULEs from imported calendars that the dialog can't show (for example `BYSETPOS`, `BYWEEKNO`) are kept unchanged and shown as "Custom (from calendar)".
 5. [ ] **Link documents:**
    - Drag a document from the sidebar onto an event, or pick one from a searchable list.
    - Choose "this class / whole course".
@@ -57,6 +76,8 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
    - The secret URL lets anyone see the calendar. Store it only locally; never log it, never include it in backups or exports unless asked.
    - Fetch only from the main process, over https only.
 6. [ ] Cache the last fetched feed, so the calendar works offline.
+
+7. [ ] **Export to `.ics`** (one event, or the whole local calendar), so it can be imported into Google, Outlook or a phone.
 
 ## Milestone 3: small extras (pick later)
 
