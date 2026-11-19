@@ -90,7 +90,9 @@ Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, th
 
 - HTML documents open in a `sandbox` iframe: their own CSS/JS runs, but they can't reach the app or the disk.
 - Links in documents: other documents open in the app; web links open in the browser. Other files are only opened with their default app if they are on the safe list (pdf, pictures, csv, Office without macros, audio/video; see `src/main/open-policy.ts`), and the app asks first when the request comes from inside a document. Anything else (programs, scripts, `.py`, `.url`, Office files with macros…) is only shown in Explorer, never run.
-- When exporting to PDF, the page can't read other files or open connections (CSP). Hidden files and folders (names starting with a dot) are never served to a page, and the app's data is outside the documents' folders, out of reach of pages.
+- When exporting to PDF, the page can't fetch other files (CSP), and the export window can't reach the internet at all, except the Google Fonts servers many pages use (pictures from the web are left out of the PDF). Hidden files and folders (names starting with a dot) are never served to a page, and the app's data is outside the documents' folders, out of reach of pages.
+- Opening a single file doesn't open its whole folder: only the files you opened, plus the pictures, styles, fonts and scripts a page needs around it, can be loaded.
+- A page can't flood the browser with tabs: two links opened within 10 seconds go through, the third asks, more are dropped.
 - SVG pictures are shown with `<img>`, where their scripts never run. Kindle books are decoded by a copy of foliate-js's `mobi.js` taken unchanged from its author's repository (see `src/vendor/foliate/README.md`).
 
 ## Reading the code

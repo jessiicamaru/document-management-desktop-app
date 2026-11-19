@@ -1,6 +1,6 @@
 // Electron main process: owns the window, the file system and the `doc://` protocol.
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session, shell } from 'electron'
 import { randomBytes } from 'node:crypto'
 import { promises as fs, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
@@ -107,8 +107,14 @@ function locate(id: string): { root: Root; rel: string; abs: string } | null {
   const parts = splitDocId(id)
   const root = parts && roots.find((r) => r.key === parts.key)
   const abs = root && resolveInLibrary(root.path, parts.rel)
-  return root && abs ? { root, rel: parts.rel, abs } : null
+  if (!root || !abs) return null
+  // A loose file's folder is not part of the library: only the files you opened, and the
+  // pictures/styles/fonts/scripts a page needs (next to it or below), may be reached.
+  if (root.loose && !root.files.some((f) => pathKey(f) === pathKey(abs)) && !LOOSE_RESOURCE.test(abs)) return null
+  return { root, rel: parts.rel, abs }
 }
+/** What a loose HTML/Markdown file may load from around it. */
+const LOOSE_RESOURCE = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico|css|js|mjs|woff2?|ttf|otf|eot|mp3|mp4|webm|ogg|wav|m4a)$/i
 const inLibrary = (id: string): string | null => locate(id)?.abs ?? null
 const hasDoc = (id: string): boolean => {
   const loc = locate(id)
@@ -675,6 +681,28 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
 }
 
 /** Export to PDF: the page may draw itself, but not read other files or open connections. */
+/**
+ * The hidden windows that print a page to PDF. A page there is not in the sandboxed iframe,
+ * so it could read pictures of the library (through a canvas) and send them out in the
+ * address of an image. So these windows may not reach the internet at all, except the
+ * Google Fonts servers many pages use for their fonts. Pictures from the web are left out
+ * of the PDF; pictures on the PC are shown as usual.
+ */
+const printContents = new Set<number>()
+const PRINT_ALLOWED_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com'])
+function blockNetworkForPrinting(): void {
+  session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (details, callback) => {
+    if (details.webContentsId === undefined || !printContents.has(details.webContentsId)) return callback({})
+    let host = ''
+    try {
+      host = new URL(details.url).hostname
+    } catch {
+      // not a URL: blocked
+    }
+    callback({ cancel: !(details.method === 'GET' && PRINT_ALLOWED_HOSTS.has(host)) })
+  })
+}
+
 const PRINT_CSP = "connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; form-action 'none'"
 
 /**
@@ -696,6 +724,8 @@ async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): 
     }
   })
   const wc = printWin.webContents
+  const printId = wc.id
+  printContents.add(printId)
   const debug = (msg: string): void => {
     if (process.env.STUDYDOCS_DEBUG) console.log(`[printToPdf] ${msg}`)
   }
@@ -752,6 +782,7 @@ async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): 
         '<div style="width:100%;font-size:8px;color:#888;text-align:center;font-family:sans-serif"><span class="pageNumber"></span> / <span class="totalPages"></span></div>'
     })
   } finally {
+    printContents.delete(printId)
     printWin.destroy()
   }
 }
@@ -1073,8 +1104,24 @@ function createWindow(): void {
     }
   })
 
+  // Links that open a new window go to the browser. A page could call window.open() in a
+  // loop to flood the browser with tabs, so: 2 within 10 seconds open right away, the 3rd
+  // asks first, and more than that within those 10 seconds are dropped.
+  const recentOpens: number[] = []
   webContents.setWindowOpenHandler(({ url }) => {
-    openInBrowser(url)
+    if (!/^https?:\/\//i.test(url)) return { action: 'deny' }
+    const now = Date.now()
+    while (recentOpens.length && now - recentOpens[0] > 10_000) recentOpens.shift()
+    recentOpens.push(now)
+    if (recentOpens.length <= 2) openInBrowser(url)
+    else if (recentOpens.length === 3) {
+      void askInWindow({
+        message: t('Bài đang đọc muốn mở liên tiếp nhiều trang web trong trình duyệt.'),
+        detail: url,
+        buttons: [t('Mở trang này'), t('Chặn')],
+        cancelId: 1
+      }).then((answer) => answer === 0 && openInBrowser(url))
+    }
     return { action: 'deny' }
   })
 
@@ -1163,6 +1210,7 @@ if (!app.requestSingleInstanceLock()) {
     })
 
     registerIpc()
+    blockNetworkForPrinting()
     const startUi = await loadUiSettings()
     nativeTheme.themeSource = startUi.theme
     setLanguage(startUi.language)

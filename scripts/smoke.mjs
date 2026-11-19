@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import JSZip from 'jszip'
+import { createServer } from 'node:http'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -25,6 +26,17 @@ cpSync(path.join(projectRoot, 'sample-library'), library, {
 const notes = path.join(workDir, 'notes')
 mkdirSync(path.join(notes, 'devops'), { recursive: true })
 writeFileSync(path.join(notes, 'devops', 'Docker cơ bản.md'), '# Docker cơ bản\n\nContainer chạy một tiến trình cô lập.\n')
+// A web server on this PC, standing in for "the internet" in the safety checks.
+const webHits = []
+const web = createServer((req, res) => {
+  webHits.push(req.url)
+  res.writeHead(200, { 'Content-Type': 'image/svg+xml' })
+  res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
+})
+await new Promise((r) => web.listen(0, '127.0.0.1', r))
+const WEB = `http://127.0.0.1:${web.address().port}`
+// A page that tries to send something out from the PDF export window, through an image address.
+writeFileSync(path.join(library, 'backend', 'Ảnh từ web.html'), `<!doctype html><html><head><meta charset="utf-8"><title>Ảnh từ web</title></head><body><h1>Ảnh từ web</h1><img src="${WEB}/leak?from=page"></body></html>`)
 // Files for the safety checks (issues #1, #2, #3).
 const ATTACK = 'backend/Tài liệu lạ.html'
 writeFileSync(
@@ -50,6 +62,7 @@ writeFileSync(
   const act = () => {
     if (location.hash === '#run-py') location = 'tool.py'
     if (location.hash === '#run-txt') location = 'bang.csv'
+    if (location.hash === '#popups') for (let i = 0; i < 5; i++) window.open('https://example.com/tab' + i)
   }
   act()
   addEventListener('hashchange', act)
@@ -822,6 +835,37 @@ try {
   check((await readIn(attackUrl + '?print=1')) === 'blocked,blocked', 'export window: the page cannot fetch other files')
   check((await readIn(attackUrl)).startsWith('status404'), 'hidden files (.docs-meta.json) are never served')
 
+  // Review: the export window may not reach the internet (it could send pictures of the library out).
+  step('20b. Export window has no network; pages cannot flood the browser with tabs')
+  const leakId = await page.evaluate(async () => (await window.api.getLibrary()).docs.find((d) => d.rel === 'backend/Ảnh từ web.html').path)
+  await openDoc('Ảnh từ web')
+  await page.waitForTimeout(1500)
+  const viewHits = webHits.length
+  webHits.length = 0
+  const leakPdf = path.join(workDir, 'leak.pdf')
+  await app.evaluate(({ dialog }, file) => {
+    globalThis.__realSave2 = dialog.showSaveDialog
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
+  }, leakPdf)
+  await page.evaluate((id) => window.api.exportPdf(id, false), leakId)
+  await app.evaluate(({ dialog }) => (dialog.showSaveDialog = globalThis.__realSave2))
+  check(viewHits > 0 && existsSync(leakPdf) && webHits.length === 0, `export to PDF makes no request to the web (reading: ${viewHits}, exporting: ${webHits.length})`)
+
+  await app.evaluate(({ shell }) => {
+    globalThis.__realExternal = shell.openExternal
+    globalThis.__tabs = []
+    shell.openExternal = async (u) => void globalThis.__tabs.push(u)
+  })
+  await setAnswer('dismiss') // the 3rd tab asks; answer "Chặn"
+  const askedBeforeTabs = await page.evaluate(() => window.__smokeAsked)
+  await openDoc('Tài liệu lạ')
+  await page.waitForTimeout(800)
+  await page.frames().find((fr) => fr.url().includes('T%C3%A0i%20li%E1%BB%87u%20l%E1%BA%A1.html')).evaluate(() => (location.hash = '#popups'))
+  await page.waitForTimeout(1200)
+  const openedTabs = await app.evaluate(({ shell }) => ((shell.openExternal = globalThis.__realExternal), globalThis.__tabs))
+  const tabAsks = (await page.evaluate(() => window.__smokeAsked)) - askedBeforeTabs
+  check(openedTabs.length === 2 && tabAsks === 1, `a page opening 5 tabs at once: 2 open, the 3rd asks, the rest are dropped (opened ${openedTabs.length}, asked ${tabAsks})`)
+
   // 21. Issue #3: the raw editor keeps CRLF line endings and doesn't rewrite an unchanged file.
   step('21. Raw editor keeps CRLF')
   const crlfBefore = readFileSync(file(CRLF), 'utf8')
@@ -1033,6 +1077,11 @@ try {
   await page.click('.loose-row:has-text("Thêm một file") .root-remove')
   await page.waitForFunction(() => document.querySelectorAll('.loose-group .row.doc').length === 1)
   check(existsSync(path.join(extra, 'Thêm.md')), 'removing a loose file from the list does not delete it')
+  writeFileSync(path.join(extra, 'bí mật.txt'), 'không được lộ')
+  writeFileSync(path.join(extra, 'hình.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+  const looseStatus = (name) => app.evaluate(async ({ net }, u) => (await net.fetch(u)).status, `doc://library/${keyOf(extra)}/${encodeURIComponent(name)}`)
+  const statuses = [await looseStatus('Ngoài workspace.md'), await looseStatus('hình.svg'), await looseStatus('bí mật.txt'), await looseStatus('Thêm.md')]
+  check(statuses.join(',') === '200,200,404,404', `next to a loose file only the file itself and page resources are served (${statuses.join(', ')})`)
 
   // Backup and restore (Settings): a tag removed after the backup comes back.
   const backupFile = path.join(workDir, 'backup.json')
@@ -1111,6 +1160,7 @@ try {
   failures++
 } finally {
   await app.close()
+  web.close()
   rmSync(workDir, { recursive: true, force: true })
 }
 
