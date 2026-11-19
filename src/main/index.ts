@@ -370,6 +370,15 @@ async function importLegacyData(root: Root): Promise<void> {
   const notesDocs = notes ? root.notes.recover(notes) : null
   if (metaDocs) await root.meta.importDocs(metaDocs)
   if (notesDocs) await root.notes.importDocs(notesDocs)
+  // A file too broken to read is copied to the data folder as a broken backup: the app then
+  // shows "Khôi phục…" (fix it by hand, then merge it), as for its own data files.
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  for (const [raw, docs, store] of [
+    [meta, metaDocs, 'meta'],
+    [notes, notesDocs, 'notes']
+  ] as const) {
+    if (raw !== null && !docs) await fs.writeFile(path.join(dataDirOf(root.key), `${store}.corrupt-v08-${stamp}.json`), raw, 'utf8')
+  }
   await writeDataInfo(root, { legacyImported: true })
 }
 

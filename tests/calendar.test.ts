@@ -5,6 +5,7 @@ import ICAL from 'ical.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildRrule, describeRrule, parseRrule, repeatPresets, type CalEventData } from '../src/shared/calendar'
 import { CalendarStore, nextStart } from '../src/main/calendar-store'
+import { ymdhm } from '../src/shared/calendar'
 import { setLanguage } from '../src/shared/i18n'
 import { folderChoices } from '../src/renderer/src/lib/docs'
 import type { DocEntry } from '../src/shared/types'
@@ -246,5 +247,80 @@ describe('linking folders', () => {
     const b = await CalendarStore.open(tmp())
     await b.merge(a.backup())
     expect(b.linksOf(uid, '2026-11-03T07:00')).toEqual([{ scope: 'series', link: { path: 'D:/hk1/mang', name: 'mang', kind: 'folder' } }])
+  })
+})
+
+describe('time zones and long series', () => {
+  const NEW_YORK = [
+    'BEGIN:VTIMEZONE',
+    'TZID:America/New_York',
+    'BEGIN:DAYLIGHT',
+    'TZOFFSETFROM:-0500',
+    'TZOFFSETTO:-0400',
+    'TZNAME:EDT',
+    'DTSTART:19700308T020000',
+    'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU',
+    'END:DAYLIGHT',
+    'BEGIN:STANDARD',
+    'TZOFFSETFROM:-0400',
+    'TZOFFSETTO:-0500',
+    'TZNAME:EST',
+    'DTSTART:19701101T020000',
+    'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU',
+    'END:STANDARD',
+    'END:VTIMEZONE'
+  ]
+  const online = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Test//EN',
+    ...NEW_YORK,
+    'BEGIN:VEVENT',
+    'UID:online@example.com',
+    'DTSTAMP:20261101T000000Z',
+    'DTSTART;TZID=America/New_York:20261117T090000',
+    'DTEND;TZID=America/New_York:20261117T100000',
+    'SUMMARY:Khoá online',
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n')
+  // 09:00 in New York on 17 Nov 2026 (EST, UTC-5) is 14:00 UTC, shown in this PC's time zone.
+  const expected = ymdhm(new Date(Date.UTC(2026, 10, 17, 14, 0)))
+
+  it('an imported event keeps its time zone: shown at the right time here, and written back with it', async () => {
+    const dir = tmp()
+    const store = await CalendarStore.open(dir)
+    await store.merge({ ics: online })
+    expect(store.occurrences('2026-11-16', '2026-11-19').map((o) => o.start)).toEqual([expected])
+    const ics = readFileSync(path.join(dir, 'calendar.ics'), 'utf8')
+    expect(ics).toContain('BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\n')
+    expect(ics).toContain('DTSTART;TZID=America/New_York:20261117T090000\r\n')
+    // Opening the file again (a new start of the app) reads the zone from the file itself.
+    ICAL.TimezoneService.remove('America/New_York')
+    const again = await CalendarStore.open(dir)
+    expect(again.occurrences('2026-11-16', '2026-11-19').map((o) => o.start)).toEqual([expected])
+    // Importing the same file twice doesn't add the zone twice.
+    await again.merge({ ics: online })
+    expect(again.toIcs().match(/BEGIN:VTIMEZONE/g)).toHaveLength(1)
+  })
+
+  it('a long daily series still shows years later', async () => {
+    const store = await CalendarStore.open(tmp())
+    await store.create(lesson({ summary: 'Đọc sách', start: '2000-01-01T21:00', end: '2000-01-01T21:30', rrule: 'FREQ=DAILY' }))
+    expect(store.occurrences('2026-11-16', '2026-11-23').map((o) => o.start.slice(0, 10))).toEqual([
+      '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22'
+    ])
+  })
+
+  it('skipping ahead gives the same classes as walking from the start', async () => {
+    const store = await CalendarStore.open(tmp())
+    const rule = 'FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH'
+    const fast = await store.create(lesson({ start: '2010-01-05T07:00', end: '2010-01-05T09:00', rrule: rule, exdates: ['2026-11-19'] }))
+    // COUNT counts from the real start, so this one is walked class by class.
+    const slow = await store.create(lesson({ start: '2010-01-05T07:00', end: '2010-01-05T09:00', rrule: `${rule};COUNT=4000`, exdates: ['2026-11-19'] }))
+    const of = (uid: string): string[] => store.occurrencesOf(uid, '2026-10-01', '2027-01-01').map((o) => o.start)
+    expect(of(fast).length).toBeGreaterThan(5)
+    expect(of(fast)).toEqual(of(slow))
+    expect(of(fast)).not.toContain('2026-11-19T07:00')
   })
 })

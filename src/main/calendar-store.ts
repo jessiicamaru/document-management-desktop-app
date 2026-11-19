@@ -164,6 +164,57 @@ export function previewStarts(input: Partial<CalEventData>, count = 6): string[]
   return out
 }
 
+/**
+ * Lets ical.js convert times in the time zones a calendar defines (its VTIMEZONE parts). Without
+ * this, 09:00 New York time would be read as 09:00 on this PC. Called before any time is read.
+ */
+function registerZones(cal: ICAL.Component): void {
+  for (const tz of cal.getAllSubcomponents('vtimezone')) {
+    const id = text(tz, 'tzid')
+    if (id && !ICAL.TimezoneService.has(id)) ICAL.TimezoneService.register(tz)
+  }
+}
+
+// ---------- repeats ----------
+
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
+
+/**
+ * A copy of a daily/weekly series that starts shortly before `from` instead of years earlier,
+ * so showing a week of a long series doesn't walk through every earlier class. The classes are
+ * the same: the start moves by whole repeat periods, and only for simple rules (no COUNT, which
+ * counts from the real start; the start itself is one of the repeated days). Null otherwise.
+ */
+function fastForward(master: ICAL.Component, from: string): ICAL.Component | null {
+  const rule = master.getFirstPropertyValue('rrule')
+  const span = spanOf(master)
+  if (!(rule instanceof ICAL.Recur) || !span || master.hasProperty('rdate')) return null
+  if ((rule.freq !== 'DAILY' && rule.freq !== 'WEEKLY') || rule.count) return null
+  const parts = rule.toString().split(';').map((p) => p.split('=')[0].toUpperCase())
+  if (parts.some((p) => !['FREQ', 'INTERVAL', 'BYDAY', 'UNTIL', 'WKST'].includes(p))) return null
+  const byDay = rule.getComponent('byday') as string[]
+  const start = span.start
+  // The weekday in the event's own time zone (1 = Sunday in ical.js).
+  const first = timeProp(master, 'dtstart')!
+  if (byDay.length && !byDay.includes(DAY_CODES[first.dayOfWeek() - 1])) return null
+  const period = (rule.interval || 1) * (rule.freq === 'WEEKLY' ? 7 : 1)
+  // Whole periods to skip, keeping one period of margin before `from` (events lasting several days).
+  const days = Math.floor(minutesBetween(start.slice(0, 10), from) / 1440)
+  const skip = Math.floor(days / period) - 1
+  if (skip < 1) return null
+  // A deep copy: toJSON() hands out the stored data itself, and the original must not move.
+  const clone = new ICAL.Component(JSON.parse(JSON.stringify(master.toJSON())))
+  for (const name of ['dtstart', 'dtend']) {
+    const prop = clone.getFirstProperty(name)
+    const value = prop?.getFirstValue()
+    if (!(value instanceof ICAL.Time)) continue
+    const moved = value.clone()
+    moved.adjust(skip * period, 0, 0, 0)
+    prop!.setValue(moved)
+  }
+  return clone
+}
+
 // ---------- the store ----------
 
 export class CalendarStore {
@@ -208,6 +259,7 @@ export class CalendarStore {
       try {
         const comp = new ICAL.Component(ICAL.parse(raw))
         if (comp.name !== 'vcalendar') throw new Error('not a calendar')
+        registerZones(comp)
         this.cal = comp
       } catch {
         await fs.copyFile(this.icsFile, path.join(this.dir, `calendar.corrupt-${stamp}.ics`)).catch(() => {})
@@ -301,7 +353,8 @@ export class CalendarStore {
         this.pushSingle(out, master, uid, from, to, false)
         continue
       }
-      const event = new ICAL.Event(master, { exceptions })
+      const base = fastForward(master, from) ?? master
+      const event = new ICAL.Event(base, { exceptions })
       const it = event.iterator()
       for (let i = 0, next = it.next(); next && i < MAX_EXPAND; next = it.next(), i++) {
         const details = event.getOccurrenceDetails(next)
@@ -325,7 +378,7 @@ export class CalendarStore {
           color: data.color || text(master, 'color'),
           rrule: this.dataOf(master)!.rrule,
           recurring: true,
-          overridden: comp !== master,
+          overridden: comp !== base,
           links: this.linkCount(uid, rid)
         })
       }
@@ -622,6 +675,16 @@ export class CalendarStore {
       throw new Error(t('File lịch không đọc được.'))
     }
     if (incoming.name !== 'vcalendar') throw new Error(t('File lịch không đọc được.'))
+    // Time zones first: events in them are only read right with their definition, and the
+    // calendar written back (and exported) must carry it too.
+    registerZones(incoming)
+    const known = new Set(this.cal.getAllSubcomponents('vtimezone').map((tz) => text(tz, 'tzid')))
+    for (const tz of incoming.getAllSubcomponents('vtimezone')) {
+      const id = text(tz, 'tzid')
+      if (!id || known.has(id)) continue
+      known.add(id)
+      this.cal.addSubcomponent(new ICAL.Component(JSON.parse(JSON.stringify(tz.toJSON()))))
+    }
     const groups = new Map<string, ICAL.Component[]>()
     for (const c of incoming.getAllSubcomponents('vevent')) {
       const uid = text(c, 'uid')
@@ -634,7 +697,7 @@ export class CalendarStore {
       const mine = this.events().filter((c) => text(c, 'uid') === uid)
       if (mine.length && changedAt(mine) >= changedAt(comps)) continue
       for (const c of mine) this.cal.removeSubcomponent(c)
-      for (const c of comps) this.cal.addSubcomponent(new ICAL.Component(c.toJSON()))
+      for (const c of comps) this.cal.addSubcomponent(new ICAL.Component(JSON.parse(JSON.stringify(c.toJSON()))))
     }
     for (const [uid, e] of Object.entries(backup.links ?? {})) {
       if (!e || typeof e !== 'object') continue

@@ -57,7 +57,7 @@ The calendar icon in the sidebar shows a week or month calendar instead of a doc
 - **Notes for this class** creates `<folder>\<course>\<date>.md` from a small template (date, time, place), opens it and links it to the class. The first time, the app asks which folder a course's notes go in (inside a workspace folder they are searchable like any document). An existing file is opened, never overwritten.
 - **Import .ics… / Export .ics…** read and write standard calendar files, so events move to and from Google Calendar, Outlook, a phone, or a timetable exported by your school.
 
-The calendar is stored in the standard iCalendar format (RFC 5545), so other calendar apps read it as it is: repeats are `RRULE`, skipped dates `EXDATE`, a class changed on its own is a second `VEVENT` with the same `UID` and a `RECURRENCE-ID`, colours are `COLOR` (RFC 7986). Times are local wall-clock ("floating") times. Only what is the app's own (documents linked to classes, the notes folder of each course) is kept in a separate JSON file.
+The calendar is stored in the standard iCalendar format (RFC 5545), so other calendar apps read it as it is: repeats are `RRULE`, skipped dates `EXDATE`, a class changed on its own is a second `VEVENT` with the same `UID` and a `RECURRENCE-ID`, colours are `COLOR` (RFC 7986). Events made in the app use local wall-clock ("floating") times; imported events keep their time zone (`TZID` with its `VTIMEZONE`), so a class at 09:00 New York time shows at the right hour here and exports unchanged. Only what is the app's own (documents linked to classes, the notes folder of each course) is kept in a separate JSON file.
 
 When editing text, the app replaces exactly the text you changed in the file and keeps every other character. If it can't be sure of that (an HTML tag without its closing tag, or text that Markdown would read as formatting), it doesn't save and tells you to use Raw. If the file is changed by another app while you edit, it isn't overwritten either.
 
@@ -93,7 +93,7 @@ Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, th
     notes.json   highlights, notes
   ```
   - The key is a short hash of the path, so removing a folder from the workspace and adding it again keeps its data.
-  - Versions up to 0.8 kept these in `.docs-meta.json` / `.docs-notes.json` inside the folder. They are read in once, automatically; the old files are left as they are.
+  - Versions up to 0.8 kept these in `.docs-meta.json` / `.docs-notes.json` inside the folder. They are read in once, automatically; the old files are left as they are. One too broken to read is copied to the data folder as a broken backup and offered under **Recover…**, like the app's own data files.
   - If a folder's path changed (renamed or moved, a USB drive with another letter, another PC), the app recognises its old data by the files' content and names, and asks whether to move the tags and notes to the new path. The old data stays on disk.
   - **Settings → Data → Back up to a file…** saves everything to one `.json` file; **Restore from a file…** merges it back (nothing is deleted). Data of a folder that isn't in the workspace at its old path can go to the matching folder you pick. Use it when moving to another PC or reinstalling Windows.
   - If a data file is broken, the app first copies it to `meta.corrupt-<time>.json` and shows **Recover…**: fix the backup by hand, then click **Merge**; the current data is kept.

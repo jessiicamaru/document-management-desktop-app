@@ -1157,11 +1157,21 @@ try {
   await page.press('.tag-editor input', 'Enter')
   await page.waitForTimeout(300)
   check(!!subId && JSON.parse(readFileSync(path.join(dataDir(sub), 'meta.json'), 'utf8')).docs['Trong thư mục con.md']?.tags?.[0] === 'theo', 'a loose file in a sub-folder gets its own data folder')
+  // Tags of v0.8 and older in this folder, in a file too broken to read.
+  writeFileSync(path.join(extra, '.docs-notes.json'), '{ "version": 1, "docs": { "a.md": { "items": [ <<< hỏng')
   await app.evaluate(({ dialog }, folder) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
   }, extra)
   await page.click('.sidebar-head .icon-btn[title="Thêm thư mục vào workspace"]')
   await page.waitForFunction(() => document.querySelectorAll('.loose-group').length === 0, null, { timeout: 15000 })
+  const legacyBackups = readdirSync(dataDir(extra)).filter((n) => n.startsWith('notes.corrupt-v08-'))
+  const recoveryNow = (await page.evaluate(() => window.api.getLibrary())).recovery
+  check(
+    legacyBackups.length === 1 && recoveryNow.some((r) => r.file === legacyBackups[0]) && (await page.locator('.banner >> text=Khôi phục…').count()) === 1,
+    'old notes too broken to read are kept as a broken backup and offered in "Khôi phục…"'
+  )
+  // Not needed further on: out of the way, so later steps see the same banners as before.
+  await page.evaluate(({ root, file }) => window.api.discardBackup(root, file), { root: recoveryNow.find((r) => r.file === legacyBackups[0]).root, file: legacyBackups[0] })
   const extraMeta = JSON.parse(readFileSync(path.join(dataDir(extra), 'meta.json'), 'utf8')).docs
   check(
     extraMeta['con/Trong thư mục con.md']?.tags?.[0] === 'theo' && extraMeta['Ngoài workspace.md']?.tags?.[0] === 'le',
