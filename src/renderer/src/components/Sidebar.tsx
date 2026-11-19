@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo, SearchResult, SearchStatus } from '../../../shared/types'
-import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder } from '../lib/docs'
+import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder, DOC_DRAG_TYPE } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
 import { t } from '../../../shared/i18n'
@@ -30,6 +30,9 @@ interface Props {
   recentOpen: boolean
   onRecentOpen: (open: boolean) => void
   onOpenSettings: () => void
+  /** The calendar is shown instead of a document. */
+  calendarOpen: boolean
+  onToggleCalendar: () => void
   onAddFolders: () => void
   onRemoveFolder: (key: string) => void
   sort: 'name' | 'modified'
@@ -83,6 +86,9 @@ export default function Sidebar(props: Props) {
           onClick={() => props.onRecentOpen(!props.recentOpen)}
         >
           <ClockIcon />
+        </button>
+        <button className={`icon-btn ${props.calendarOpen ? 'active' : ''}`} title={t('Lịch học')} aria-pressed={props.calendarOpen} onClick={props.onToggleCalendar}>
+          <CalendarIcon />
         </button>
         <button className="icon-btn" title={t('Cài đặt')} onClick={props.onOpenSettings}>
           <GearIcon />
@@ -363,6 +369,12 @@ function DocRow({ doc, depth, selected, onOpen, title }: { doc: DocEntry; depth:
       onClick={() => onOpen(doc.path)}
       title={title ?? doc.rel}
       data-depth={depth}
+      draggable
+      onDragStart={(e) => {
+        // Dropped on a calendar event, it links the document to that class.
+        e.dataTransfer.setData(DOC_DRAG_TYPE, doc.path)
+        e.dataTransfer.effectAllowed = 'link'
+      }}
     >
       <span className={`kind kind-${doc.kind}`}>{kindLabel(doc.kind)}</span>
       <span className="row-title">{doc.title}</span>
@@ -481,6 +493,15 @@ function ClockIcon() {
     <svg {...iconProps}>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 7.5V12l3 2" />
+    </svg>
+  )
+}
+
+function CalendarIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="3.5" y="5" width="17" height="15" rx="2" />
+      <path d="M3.5 9.5h17M8 3v4M16 3v4" />
     </svg>
   )
 }

@@ -1,5 +1,7 @@
 // Types shared by the main process, the preload bridge and the React UI.
 
+import type { CalDocRef, CalEventData, CalEventDetail, CalOccurrence, EditScope } from './calendar'
+
 /**
  * md and html can be read, edited, annotated and exported; pdf is shown with the built-in
  * PDF viewer; epub books are read (and annotated) with epub.js.
@@ -269,6 +271,31 @@ export interface DocsApi {
   writeDoc(path: string, content: string, expectedMtime: number): Promise<number>
   /** Applies inline text edits to an HTML document without touching the rest of the file. */
   saveHtmlEdits(path: string, edits: HtmlBlockEdit[], expectedMtime: number): Promise<number>
+
+  // ---------- calendar (see shared/calendar.ts) ----------
+  /** Occurrences that overlap [from, to), local dates "YYYY-MM-DD". */
+  calendarRange(from: string, to: string): Promise<CalOccurrence[]>
+  calendarDetail(uid: string, rid: string): Promise<CalEventDetail>
+  /** Resolves with the new event's UID. */
+  calendarCreate(data: CalEventData): Promise<string>
+  /** Changes one class, it and the following ones, or all (see CalendarStore.update). Resolves with its UID now. */
+  calendarUpdate(uid: string, rid: string, scope: EditScope, shownStart: string, data: CalEventData): Promise<string>
+  calendarDelete(uid: string, rid: string, scope: EditScope): Promise<void>
+  /** The first starts of an event as the dialog has it. */
+  calendarPreview(data: CalEventData): Promise<string[]>
+  /** Links a document to the course (rid null) or to one class. */
+  calendarLink(uid: string, rid: string | null, docId: string): Promise<void>
+  calendarUnlink(uid: string, rid: string | null, filePath: string): Promise<void>
+  /** The classes and courses a document is linked to. */
+  calendarForDoc(docId: string): Promise<CalDocRef[]>
+  /** Creates (or finds) the notes file of a class and links it. Resolves with its id, or null if cancelled. */
+  calendarClassNotes(uid: string, rid: string): Promise<string | null>
+  /** Picks the folder for a course's class notes. */
+  calendarChooseNotesFolder(uid: string): Promise<string | null>
+  /** Saves the calendar as an .ics file. Resolves with its path, or null if cancelled. */
+  calendarExport(): Promise<string | null>
+  /** Adds the events of an .ics file. Resolves with how many it had, or null if cancelled. */
+  calendarImport(): Promise<number | null>
 }
 
 export const DEFAULT_META: DocMeta = { tags: [], status: 'new' }

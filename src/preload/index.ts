@@ -51,7 +51,20 @@ const api: DocsApi = {
   getUiSettings: () => ipcRenderer.invoke('settings:get'),
   setUiSettings: (ui) => ipcRenderer.invoke('settings:set', ui),
   writeDoc: (path, content, expectedMtime) => ipcRenderer.invoke('doc:write', path, content, expectedMtime),
-  saveHtmlEdits: (path, edits, expectedMtime) => ipcRenderer.invoke('doc:saveHtmlEdits', path, edits, expectedMtime)
+  saveHtmlEdits: (path, edits, expectedMtime) => ipcRenderer.invoke('doc:saveHtmlEdits', path, edits, expectedMtime),
+  calendarRange: (from, to) => ipcRenderer.invoke('calendar:range', from, to),
+  calendarDetail: (uid, rid) => ipcRenderer.invoke('calendar:detail', uid, rid),
+  calendarCreate: (data) => ipcRenderer.invoke('calendar:create', data),
+  calendarUpdate: (uid, rid, scope, shownStart, data) => ipcRenderer.invoke('calendar:update', uid, rid, scope, shownStart, data),
+  calendarDelete: (uid, rid, scope) => ipcRenderer.invoke('calendar:delete', uid, rid, scope),
+  calendarPreview: (data) => ipcRenderer.invoke('calendar:preview', data),
+  calendarLink: (uid, rid, docId) => ipcRenderer.invoke('calendar:link', uid, rid, docId),
+  calendarUnlink: (uid, rid, filePath) => ipcRenderer.invoke('calendar:unlink', uid, rid, filePath),
+  calendarForDoc: (docId) => ipcRenderer.invoke('calendar:forDoc', docId),
+  calendarClassNotes: (uid, rid) => ipcRenderer.invoke('calendar:classNotes', uid, rid),
+  calendarChooseNotesFolder: (uid) => ipcRenderer.invoke('calendar:notesFolder', uid),
+  calendarExport: () => ipcRenderer.invoke('calendar:export'),
+  calendarImport: () => ipcRenderer.invoke('calendar:import')
 }
 
 contextBridge.exposeInMainWorld('api', api)

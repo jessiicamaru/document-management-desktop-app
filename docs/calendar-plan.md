@@ -4,7 +4,7 @@ A simple calendar for classes and study sessions, where each event (or one occur
 
 Example: "Network Programming, Tuesday morning" repeats weekly; the syllabus links to the whole course, and the notes of the 25 Nov class link to that one class.
 
-Status: planned, nothing built yet. Work top to bottom; each milestone ships on its own.
+Status: **milestone 1 is built**, plus importing and exporting `.ics` files from milestone 2. Next: subscribing to a calendar URL. Work top to bottom; each milestone ships on its own.
 
 ## Decisions
 
@@ -16,31 +16,29 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
 - **Events use the standard calendar format, iCalendar ([RFC 5545](https://www.rfc-editor.org/rfc/rfc5545)) `VEVENT`**, so they convert 1:1 to and from `.ics`, Google and Outlook.
   - Field names and meanings follow the RFC, not a format of our own: `UID`, `DTSTAMP`, `DTSTART`/`DTEND` (or `DURATION`), `SUMMARY`, `LOCATION`, `DESCRIPTION`, `RRULE`, `EXDATE`, `RDATE`, `RECURRENCE-ID`, `SEQUENCE`, `STATUS`, `CATEGORIES`, `COLOR` ([RFC 7986](https://www.rfc-editor.org/rfc/rfc7986)), `VALARM`.
   - `RRULE` is stored as the standard string, for example `FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;UNTIL=20261231T235959Z`.
-  - Times keep their `TZID`, and all-day events use `VALUE=DATE`.
-  - App-only data (document links, notes folder) goes in `X-STUDYDOCS-*` properties or beside the event, never in standard fields.
-  - Stored as JSON for speed. ical.js reads and writes it, so tests can check that `.ics` → app → `.ics` gives the same events.
+  - Times are local wall-clock ("floating") times, and all-day events use `VALUE=DATE`. Imported times with a `TZID` or in UTC are shown in this PC's time zone.
+  - Stored as an `.ics` file (`data\calendar.ics`), read and written by ical.js, so any calendar app can open it as it is.
+  - App-only data (document links, notes folder of each course) goes beside it in `data\calendar.json`, never in standard fields.
 - **Libraries:**
-  - **FullCalendar** (MIT core: daygrid, timegrid, interaction, rrule) for the week and month views.
+  - **FullCalendar** v6 (MIT core: daygrid, timegrid, interaction) for the week and month views; repeats are expanded by ical.js in the main process.
   - **ical.js** to parse `.ics` files and expand recurrences. Hand-written RRULE handling is too error-prone.
 
 ## Milestone 1: local calendar (MVP)
 
-1. [ ] **Data model + store** (`src/main/calendar-store.ts`, same write queue and corrupt-file backup as DocStore):
+1. [x] **Data model + store** (`src/main/calendar-store.ts`, same write queue and corrupt-file backup as DocStore):
    - Events are iCalendar `VEVENT`s (see Decisions).
    - An edited or cancelled single occurrence is a separate `VEVENT` with the same `UID` and a `RECURRENCE-ID`, or an `EXDATE` on the series, as the RFC does it.
-   - Links: `{ uid, recurrenceId?, doc: { root, rel } }`.
-     - Without `recurrenceId`, the link applies to the whole series (course material).
-     - With it, the link applies to one class.
-2. [ ] **IPC + unit tests:**
+   - Links, per `UID`: `series` (the whole course) and `occ[<RECURRENCE-ID>]` (one class), each a list of `{ path, name, hash }`. The hash and name find a document again after it is renamed or moved.
+2. [x] **IPC + unit tests:**
    - CRUD for events and links.
    - Recurrence expansion for a date range: every preset, `INTERVAL`, `BYDAY` with ordinals, `COUNT`/`UNTIL`, `EXDATE`, and daylight-saving changes.
    - Editing "this / this and following / all".
    - `.ics` round-trip.
-3. [ ] **Calendar view:**
+3. [x] **Calendar view:**
    - New "Calendar" entry in the sidebar.
    - Week view by default (it fits a timetable), plus month view.
    - Today button; view and date remembered.
-4. [ ] **Event dialog:** title, all-day or time, location, color, description, repeat, reminder. Uses the custom dialog styles.
+4. [x] **Event dialog:** title, all-day or time, location, color, description, repeat (reminders: milestone 3). Uses the custom dialog styles.
    - **Repeat presets:** does not repeat · daily · weekly on <weekday> · monthly on day <N> · monthly on the <2nd Tuesday> · yearly · every weekday (Mon–Fri) · **Custom…**
    - **Custom repeat** (like Google Calendar), producing a standard `RRULE`:
      - Every **N** days / weeks / months / years (`FREQ` + `INTERVAL`).
@@ -52,24 +50,24 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
    - **Editing a repeating event** asks: this event · this and following events (splits the series: old `UNTIL` + new series) · all events.
    - **Deleting** asks the same three choices.
    - RRULEs from imported calendars that the dialog can't show (for example `BYSETPOS`, `BYWEEKNO`) are kept unchanged and shown as "Custom (from calendar)".
-5. [ ] **Link documents:**
+5. [x] **Link documents:**
    - Drag a document from the sidebar onto an event, or pick one from a searchable list.
    - Choose "this class / whole course".
    - Clicking a linked doc opens it.
-6. [ ] **"Notes for this class" button:**
+6. [x] **"Notes for this class" button:**
    - Creates `<chosen folder>/<event title>/<YYYY-MM-DD>.md` with a small template (title, date, location) and opens it for editing.
    - Links the file to that occurrence. If the file already exists, it is opened instead.
-7. [ ] **Reverse link:** a document shows the classes it belongs to (a chip in DocView); clicking one jumps to the calendar.
-8. [ ] **Relink support:** links follow documents through the existing rename/move recognition and folder relink.
-9. [ ] **Backup/restore** includes `calendar.json`.
-10. [ ] **i18n** (vi + en), **smoke steps**, **README** section.
+7. [x] **Reverse link:** a document shows the classes it belongs to (a chip in DocView); clicking one jumps to the calendar.
+8. [x] **Relink support:** links follow documents through the existing rename/move recognition and folder relink.
+9. [x] **Backup/restore** includes `calendar.json`.
+10. [x] **i18n** (vi + en), **smoke steps**, **README** section.
 
 ## Milestone 2: read external calendars (ICS)
 
 1. [ ] **Subscribe to a calendar URL**, for example Google Calendar's "Secret address in iCal format":
    - Settings → Calendar → add URL, name, color.
    - Refreshed on start and every 30 minutes, with manual refresh.
-2. [ ] **Import a `.ics` file** (for example a timetable exported by the school), as a one-off copy into local events.
+2. [x] **Import a `.ics` file** (for example a timetable exported by the school), as a one-off copy into local events.
 3. [ ] **Rendering:** external events are shown read-only in their own color, recurrences expanded by ical.js.
 4. [ ] **Links on external events:** keyed by the event `UID` (+ occurrence date), so documents and notes can be attached to Google events too. The app never writes back to Google.
 5. [ ] **Privacy:**
@@ -77,7 +75,7 @@ Status: planned, nothing built yet. Work top to bottom; each milestone ships on 
    - Fetch only from the main process, over https only.
 6. [ ] Cache the last fetched feed, so the calendar works offline.
 
-7. [ ] **Export to `.ics`** (one event, or the whole local calendar), so it can be imported into Google, Outlook or a phone.
+7. [x] **Export to `.ics`** (the whole local calendar), so it can be imported into Google, Outlook or a phone.
 
 ## Milestone 3: small extras (pick later)
 

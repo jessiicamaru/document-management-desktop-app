@@ -1109,7 +1109,7 @@ try {
     globalThis.__realOpen = dialog.showOpenDialog
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
   }, path.join(extra, 'Thêm.md'))
-  await page.click('.sidebar-head')
+  await page.click('.sidebar-head .library-name')
   await page.keyboard.press('Control+O')
   await docPathIs('Thêm.md')
   check((await page.locator('.loose-group .row.doc').count()) === 2, 'Ctrl+O opens a file and lists it under "File lẻ"')
@@ -1220,6 +1220,109 @@ try {
   check(restoreAsks >= 1 && movedMeta()['devops/Docker cơ bản.md']?.tags?.includes('devops'), `restoring a backup from the old path asks which folder gets the data (${restoreAsks} asked)`)
   await app.evaluate(({ dialog }) => (dialog.showOpenDialog = globalThis.__realOpen3))
   await setAnswer('dismiss')
+
+  step('29. Calendar: a repeating class with documents and notes')
+  const icsFile = path.join(userData, 'data', 'calendar.ics')
+  const ics = () => readFileSync(icsFile, 'utf8')
+  const calLinks = () => JSON.parse(readFileSync(path.join(userData, 'data', 'calendar.json'), 'utf8')).links
+  await page.click('.sidebar-head .icon-btn[title="Lịch học"]')
+  await page.waitForSelector('.calendar-host.fc')
+  // Tuesday 5 March 2030, 07:00–09:30; custom repeat: Tuesday and Thursday, 6 times.
+  await page.click('.calendar-toolbar >> text=+ Sự kiện')
+  await page.waitForSelector('dialog.event-dialog[open]')
+  await page.fill('dialog.event-dialog input[name="summary"]', 'Lập trình mạng')
+  await page.fill('input[aria-label="Ngày bắt đầu"]', '2030-03-05')
+  await page.fill('input[aria-label="Giờ bắt đầu"]', '07:00')
+  await page.fill('input[aria-label="Giờ kết thúc"]', '09:30')
+  await page.selectOption('select[aria-label="Lặp lại"]', 'custom')
+  await page.click('.weekday-picker button[title="thứ Năm"]')
+  await page.click('.radio-list label:has-text("Sau") input[type=radio]')
+  await page.fill('input[aria-label="Số lần"]', '6')
+  await page.fill('dialog.event-dialog input[aria-label="Địa điểm"]', 'Phòng B2')
+  await page.waitForSelector('.event-preview')
+  const repeatText = await page.textContent('.repeat-summary')
+  await page.click('dialog.event-dialog footer .btn.primary')
+  await page.waitForSelector('dialog.event-dialog', { state: 'detached' })
+  await page.waitForSelector('.fc-event[data-key$="|2030-03-07T07:00"]')
+  check(repeatText === 'Hằng tuần vào T3, T5, 6 lần', `the custom repeat is described in words (${repeatText})`)
+  check(
+    /^BEGIN:VCALENDAR\r\n/.test(ics()) && ics().includes('DTSTART:20300305T070000\r\n') && ics().includes('RRULE:FREQ=WEEKLY;COUNT=6;BYDAY=TU,TH\r\n') && ics().includes('LOCATION:Phòng B2\r\n'),
+    'events are stored as a standard iCalendar file (DTSTART, RRULE, LOCATION)'
+  )
+  check((await page.locator('.fc-event').count()) === 2, 'the week shows both classes of the repeat')
+
+  // A document dragged from the sidebar onto a class.
+  check((await page.getAttribute('.doc-list .row.doc >> nth=0', 'draggable')) === 'true', 'documents in the sidebar can be dragged')
+  const esId = await page.evaluate(async (rel) => (await window.api.getLibrary()).docs.find((d) => d.rel === rel).path, ES)
+  await setAnswer('accept') // "Buổi này"
+  await page.evaluate((id) => {
+    const dt = new DataTransfer()
+    dt.setData('application/x-studydocs-doc', id)
+    document.querySelector('.fc-event[data-key$="|2030-03-05T07:00"]').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+  }, esId)
+  await page.waitForSelector('.event-panel .event-links li')
+  const eventUid = Object.keys(calLinks())[0]
+  check(calLinks()[eventUid]?.occ?.['2030-03-05T07:00']?.[0]?.path === file(ES), 'a document dropped on a class is linked to that class')
+
+  // Course material for every class, from the picker.
+  await page.click('.event-panel >> text=+ Gắn tài liệu…')
+  await page.click('dialog.doc-picker .segmented >> text=Cả môn')
+  await page.fill('dialog.doc-picker input', 'khi nao chay')
+  await page.click('dialog.doc-picker .row.doc')
+  await page.waitForFunction(() => document.querySelectorAll('.event-panel section')[1]?.querySelectorAll('.event-links li').length === 1)
+  check(calLinks()[eventUid]?.series?.[0]?.path === file(REACT), 'a document picked for the whole course is linked to every class')
+
+  // Notes for this class: a Markdown file from a template, opened and linked.
+  const classNotesDir = path.join(library, 'ghi-chep')
+  await app.evaluate(({ dialog }, dir) => {
+    globalThis.__realOpen4 = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] })
+  }, classNotesDir)
+  await page.click('.event-panel >> text=Ghi chép buổi này')
+  await docPathIs('ghi-chep/Lập trình mạng/2030-03-05.md')
+  const notesText = readFileSync(path.join(classNotesDir, 'Lập trình mạng', '2030-03-05.md'), 'utf8')
+  check(notesText.startsWith('# Lập trình mạng — 05/03/2030') && notesText.includes('Phòng B2'), 'notes for a class: a .md file from a template, opened right away')
+  await page.waitForSelector('.class-chip')
+  check((await page.textContent('.class-chip')).includes('T3, 05/03'), 'the document shows the class it belongs to')
+  await page.click('.class-chip')
+  await page.waitForSelector('.event-panel h2')
+  check((await page.textContent('.event-panel .event-meta')).includes('T3, 05/03'), 'clicking it opens that class in the calendar')
+
+  // Only the Thursday class moves to another room (RECURRENCE-ID), then one class is deleted (EXDATE).
+  await page.click('.fc-event[data-key$="|2030-03-07T07:00"]')
+  await page.waitForFunction(() => document.querySelector('.event-panel .event-meta')?.textContent.includes('07/03'))
+  await page.click('.event-actions >> text=Sửa')
+  await page.fill('dialog.event-dialog input[aria-label="Địa điểm"]', 'Phòng C5')
+  await setAnswer('accept') // "Chỉ sự kiện này"
+  await page.click('dialog.event-dialog footer .btn.primary')
+  await page.waitForSelector('dialog.event-dialog', { state: 'detached' })
+  await page.waitForFunction(() => document.querySelector('.event-panel .event-meta')?.textContent.includes('Phòng C5'))
+  check(ics().includes('RECURRENCE-ID:20300307T070000\r\n') && ics().includes('LOCATION:Phòng C5\r\n') && ics().includes('LOCATION:Phòng B2\r\n'), 'changing one class of a repeat keeps the others (RECURRENCE-ID)')
+  await page.click('.calendar-toolbar .icon-btn[title="Sau"]')
+  await page.click('.fc-event[data-key$="|2030-03-12T07:00"]')
+  await page.waitForFunction(() => document.querySelector('.event-panel .event-meta')?.textContent.includes('12/03'))
+  await page.click('.event-actions >> text=Xoá')
+  await page.waitForSelector('.fc-event[data-key$="|2030-03-12T07:00"]', { state: 'detached' })
+  check(ics().includes('EXDATE:20300312T070000\r\n') && (await page.locator('.fc-event').count()) === 1, 'deleting one class skips that date (EXDATE)')
+
+  // Export to .ics, and the backup carries the calendar.
+  const exported = path.join(workDir, 'lich.ics')
+  await app.evaluate(({ dialog }, file) => (dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })), exported)
+  await page.click('.calendar-toolbar >> text=Xuất .ics…')
+  for (let i = 0; i < 50 && !existsSync(exported); i++) await page.waitForTimeout(100)
+  await page.waitForTimeout(200)
+  check(existsSync(exported) && readFileSync(exported, 'utf8') === ics(), 'the calendar exports to an .ics file')
+  const calBackup = path.join(workDir, 'backup-cal.json')
+  await app.evaluate(({ dialog }, file) => (dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })), calBackup)
+  await page.evaluate(() => window.api.exportData())
+  const withCal = JSON.parse(readFileSync(calBackup, 'utf8'))
+  check(withCal.calendar?.ics?.includes(`UID:${eventUid}`) && withCal.calendar?.links?.[eventUid]?.series?.length === 1, 'backups include the calendar and its links')
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = globalThis.__realOpen4
+    dialog.showSaveDialog = globalThis.__realSave
+  })
+  await setAnswer('dismiss')
+  await page.screenshot({ path: shot('calendar') })
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

@@ -2,7 +2,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session, shell } from 'electron'
 import { randomBytes } from 'node:crypto'
-import { promises as fs, watch, type FSWatcher } from 'node:fs'
+import { promises as fs, readFileSync, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, RecoveryItem, UiSettings } from '../shared/types'
@@ -20,9 +20,21 @@ import { looksLikeSameFolder, matchScore, remapEntries, type Remembered } from '
 import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 import { setLanguage, t } from '../shared/i18n'
+import { CalendarStore, nextStart, previewStarts, type CalendarBackup, type StoredLink } from './calendar-store'
+import { formatDate, formatTimeRange, type CalDocRef, type CalEventData, type CalEventDetail, type EditScope } from '../shared/calendar'
 
 // Tests run with their own settings folder so they never touch your real settings.
 if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
+
+// Date and time fields (the calendar) are drawn in the app's language: dd/mm/yyyy and a
+// 24-hour clock, not the US format. Must be set before the app is ready, so settings.json is
+// read directly; a new install keeps Windows' own format.
+try {
+  const lang = (JSON.parse(readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8')) as { ui?: { language?: string } }).ui?.language
+  if (lang === 'vi' || lang === 'en') app.commandLine.appendSwitch('lang', lang === 'vi' ? 'vi' : 'en-GB')
+} catch {
+  // no settings yet
+}
 
 // Documents are served as doc://library/<root key>/<path inside that folder>. A "standard" scheme means
 // relative links inside an HTML document (images, other pages) resolve normally.
@@ -65,6 +77,8 @@ let scanning = false
 let scanCache: ScanCache | undefined
 /** Full-text search in a background thread. Set at startup. */
 let search: SearchService | undefined
+/** The calendar (data\calendar.ics). Set at startup. */
+let calendar: CalendarStore | undefined
 
 // ---------- workspace ----------
 
@@ -194,6 +208,7 @@ async function snapshot(): Promise<LibrarySnapshot> {
     if (!scanning && !r.warning) orphans += storesOf(r).reduce((n, st) => n + st.orphans(knownPaths(r)).length, 0)
     for (const w of [r.meta?.warning, r.notes?.warning, r.warning]) if (w) warnings.push(roots.length > 1 ? `${r.name}: ${w}` : w)
   }
+  if (calendar?.warning) warnings.push(calendar.warning)
   return {
     scanning,
     roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta, loose: r.loose })),
@@ -626,6 +641,164 @@ function watchRoot(root: Root): void {
   }
 }
 
+// ---------- calendar ----------
+
+const samePath = (a: string, b: string): boolean => pathKey(a) === pathKey(b)
+const cal = (): CalendarStore => {
+  if (!calendar) throw new Error(t('Lịch chưa sẵn sàng, hãy thử lại.'))
+  return calendar
+}
+
+/** What is remembered of a document linked to an event: its path, plus hash and name to find it after a move. */
+function linkOfDoc(id: string): StoredLink {
+  const loc = locate(String(id))
+  const doc = loc?.root.docs.find((d) => d.path === loc.rel)
+  if (!loc || !doc) throw new Error(t('Không tìm thấy tài liệu này.'))
+  return { path: loc.abs, name: doc.name, ...(doc.hash ? { hash: doc.hash } : {}) }
+}
+
+/**
+ * Finds a linked file: at its path, else (renamed or moved, a folder that changed drive letter)
+ * the one document with the same content. The new path is remembered.
+ */
+function resolveLink(l: StoredLink): { id: string; title: string; abs: string } | null {
+  const root = rootOfFile(l.path)
+  if (root) {
+    const rel = relOf(root, l.path)
+    const d = root.docs.find((x) => x.path === rel)
+    if (d) return { id: `${root.key}/${rel}`, title: d.title, abs: l.path }
+  }
+  if (l.hash) {
+    const found = roots.flatMap((r) => r.docs.filter((d) => d.hash === l.hash).map((d) => ({ r, d })))
+    if (found.length === 1) {
+      const { r, d } = found[0]
+      const abs = path.join(r.path, d.path)
+      void calendar?.updateLinkPath(l.path, { path: abs, name: d.name, hash: l.hash })
+      return { id: `${r.key}/${d.path}`, title: d.title, abs }
+    }
+  }
+  return null
+}
+
+function calendarDetail(uid: string, rid: string): CalEventDetail {
+  const store = cal()
+  const occurrence = store.occurrence(uid, rid)
+  const series = store.series(uid)
+  if (!occurrence || !series) throw new Error(t('Sự kiện này không còn trong lịch.'))
+  const links = store.linksOf(uid, rid).map(({ scope, link }) => {
+    const found = resolveLink(link)
+    return { id: found?.id ?? null, path: found?.abs ?? link.path, title: found?.title ?? link.name, scope }
+  })
+  return { occurrence, series, links, notesFolder: store.notesFolder(uid) }
+}
+
+/** The classes (and courses) a document is linked to. */
+function calendarRefsFor(id: string): CalDocRef[] {
+  if (!calendar) return []
+  const loc = locate(String(id))
+  if (!loc) return []
+  const hash = loc.root.docs.find((d) => d.path === loc.rel)?.hash
+  const refs = calendar.refsTo((l) => samePath(l.path, loc.abs) || (!!hash && l.hash === hash && resolveLink(l)?.abs === loc.abs))
+  const out: CalDocRef[] = []
+  for (const { uid, rid } of refs) {
+    const occ = rid ? calendar.occurrence(uid, rid) : nextStart(calendar, uid)
+    if (occ) out.push({ uid, rid, at: occ.rid, summary: occ.summary, color: occ.color, start: occ.start, allDay: occ.allDay })
+  }
+  return out.sort((a, b) => (a.start < b.start ? -1 : 1))
+}
+
+async function chooseNotesFolder(uid: string): Promise<string | null> {
+  const store = cal()
+  const summary = store.series(uid)?.summary ?? ''
+  const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+    title: t('Chọn thư mục lưu ghi chép của "{0}"', { 0: summary }),
+    defaultPath: store.notesFolder(uid) ?? folderRoots()[0]?.path,
+    properties: ['openDirectory', 'createDirectory']
+  })
+  if (canceled || !filePaths[0]) return null
+  await store.setNotesFolder(uid, filePaths[0])
+  return filePaths[0]
+}
+
+/**
+ * "Notes for this class": <notes folder>\<course>\<date>.md, created from a small template
+ * (an existing file is opened, never overwritten) and linked to the class. Resolves with its id.
+ */
+async function classNotes(uid: string, rid: string): Promise<string | null> {
+  const store = cal()
+  const occ = store.occurrence(uid, rid)
+  if (!occ) throw new Error(t('Sự kiện này không còn trong lịch.'))
+  let folder = store.notesFolder(uid)
+  const isDir = folder ? await fs.stat(folder).then((st) => st.isDirectory(), () => false) : false
+  if (!folder || !isDir) folder = await chooseNotesFolder(uid)
+  if (!folder) return null
+  const course = occ.summary.replace(/[<>:"/\\|?*\u0000-\u001f]/g, ' ').replace(/[. ]+$/, '').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Lich'
+  const file = path.join(folder, course, `${occ.start.slice(0, 10)}.md`)
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  const lines = [
+    `# ${occ.summary} — ${formatDate(occ.start)}`,
+    '',
+    `- ${t('Thời gian')}: ${formatTimeRange(occ.start, occ.end, occ.allDay)}`,
+    ...(occ.location ? [`- ${t('Địa điểm')}: ${occ.location}`] : []),
+    '',
+    `## ${t('Ghi chép')}`,
+    '',
+    ''
+  ]
+  try {
+    await fs.writeFile(file, lines.join('\n'), { encoding: 'utf8', flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+  }
+  await store.link(uid, rid, { path: file, name: path.basename(file) }, samePath)
+  const inFolder = folderRoots().find((r) => isSameOrInside(file, r.path))
+  if (inFolder) {
+    inFolder.docs = await scanRoot(inFolder)
+    syncSearch()
+    await pushSnapshot()
+    return `${inFolder.key}/${relOf(inFolder, file)}`
+  }
+  const [id] = await addFiles([file])
+  return id ?? null
+}
+
+function registerCalendarIpc(): void {
+  const str = (v: unknown): string => String(v ?? '')
+  const scopeOf = (v: unknown): EditScope => (v === 'this' || v === 'following' ? v : 'all')
+  ipcMain.handle('calendar:range', (_e, from: string, to: string) => cal().occurrences(str(from), str(to)))
+  ipcMain.handle('calendar:detail', (_e, uid: string, rid: string) => calendarDetail(str(uid), str(rid)))
+  ipcMain.handle('calendar:create', (_e, data: CalEventData) => cal().create(data))
+  ipcMain.handle('calendar:update', (_e, uid: string, rid: string, scope: EditScope, shownStart: string, data: CalEventData) =>
+    cal().update(str(uid), str(rid), scopeOf(scope), str(shownStart), data)
+  )
+  ipcMain.handle('calendar:delete', (_e, uid: string, rid: string, scope: EditScope) => cal().delete(str(uid), str(rid), scopeOf(scope)))
+  ipcMain.handle('calendar:preview', (_e, data: CalEventData) => previewStarts(data))
+  ipcMain.handle('calendar:link', (_e, uid: string, rid: string | null, docId: string) => cal().link(str(uid), rid ? str(rid) : null, linkOfDoc(docId), samePath))
+  ipcMain.handle('calendar:unlink', (_e, uid: string, rid: string | null, file: string) => cal().unlink(str(uid), rid ? str(rid) : null, str(file), samePath))
+  ipcMain.handle('calendar:forDoc', (_e, id: string) => calendarRefsFor(id))
+  ipcMain.handle('calendar:classNotes', (_e, uid: string, rid: string) => classNotes(str(uid), str(rid)))
+  ipcMain.handle('calendar:notesFolder', (_e, uid: string) => chooseNotesFolder(str(uid)))
+  ipcMain.handle('calendar:export', async () => {
+    const { canceled, filePath } = await dialog.showSaveDialog(win!, {
+      title: t('Xuất lịch ra file .ics'),
+      defaultPath: path.join(app.getPath('documents'), 'Study Docs.ics'),
+      filters: [{ name: t('Lịch iCalendar'), extensions: ['ics'] }]
+    })
+    if (canceled || !filePath) return null
+    await fs.writeFile(filePath, cal().toIcs(), 'utf8')
+    return filePath
+  })
+  ipcMain.handle('calendar:import', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      title: t('Nhập lịch từ file .ics'),
+      properties: ['openFile'],
+      filters: [{ name: t('Lịch iCalendar'), extensions: ['ics'] }]
+    })
+    if (canceled || !filePaths[0]) return null
+    return cal().merge({ ics: await fs.readFile(filePaths[0], 'utf8') })
+  })
+}
+
 // ---------- backup ("Sao lưu dữ liệu") ----------
 
 /** A backup file: every folder's tags/status and highlights/notes, keyed by the folder's path. */
@@ -635,6 +808,8 @@ interface BackupFile {
   version: 1
   exported: string
   folders: { path: string; loose: boolean; meta: Record<string, unknown>; notes: Record<string, unknown> }[]
+  /** The calendar and the documents linked to it (since v0.12). */
+  calendar?: CalendarBackup
 }
 
 /** Everything in the data folder, also of folders that are not in the workspace right now. */
@@ -662,7 +837,7 @@ async function exportData(): Promise<BackupFile> {
     const notes = open?.notes ? open.notes.all() : await readDocs(path.join(base, key, 'notes.json'))
     if (Object.keys(meta).length || Object.keys(notes).length) folders.push({ path: folderPath, loose: open?.loose ?? !!info.loose, meta, notes })
   }
-  return { app: 'study-docs', kind: 'backup', version: 1, exported: new Date().toISOString(), folders }
+  return { app: 'study-docs', kind: 'backup', version: 1, exported: new Date().toISOString(), folders, ...(calendar ? { calendar: calendar.backup() } : {}) }
 }
 
 /** Merges a backup into the current data (nothing current is lost). Returns how many documents it had. */
@@ -744,6 +919,7 @@ async function importData(raw: string): Promise<number> {
     await notes.importDocs(moved ? remapEntries(cleanNotes, target!.docs) : cleanNotes)
     n += new Set([...Object.keys(cleanMeta), ...Object.keys(cleanNotes)]).size
   }
+  if (backup.calendar && typeof backup.calendar === 'object' && calendar) n += await calendar.merge(backup.calendar)
   return n
 }
 
@@ -1328,6 +1504,7 @@ if (!app.requestSingleInstanceLock()) {
     })
 
     registerIpc()
+    registerCalendarIpc()
     blockNetworkForPrinting()
     const startUi = await loadUiSettings()
     nativeTheme.themeSource = startUi.theme
@@ -1335,6 +1512,7 @@ if (!app.requestSingleInstanceLock()) {
 
     scanCache = new ScanCache(path.join(app.getPath('userData'), 'scan-cache.json'))
     await scanCache.load()
+    calendar = await CalendarStore.open(path.join(app.getPath('userData'), 'data'))
     search = new SearchService(path.join(app.getPath('userData'), 'text-cache'), (status) =>
       win?.webContents.send('search:status', status)
     )

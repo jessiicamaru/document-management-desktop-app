@@ -1,0 +1,225 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import ICAL from 'ical.js'
+import { afterEach, describe, expect, it } from 'vitest'
+import { buildRrule, describeRrule, parseRrule, repeatPresets, type CalEventData } from '../src/shared/calendar'
+import { CalendarStore, nextStart } from '../src/main/calendar-store'
+import { setLanguage } from '../src/shared/i18n'
+
+const dirs: string[] = []
+const tmp = (): string => {
+  const d = mkdtempSync(path.join(tmpdir(), 'cal-'))
+  dirs.push(d)
+  return d
+}
+afterEach(() => {
+  setLanguage('vi')
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
+})
+
+/** Tuesday 3 Nov 2026, 07:00–09:30, weekly. */
+const lesson = (extra: Partial<CalEventData> = {}): CalEventData => ({
+  summary: 'Lập trình mạng',
+  allDay: false,
+  start: '2026-11-03T07:00',
+  end: '2026-11-03T09:30',
+  location: 'B2',
+  description: '',
+  color: 'royalblue',
+  rrule: 'FREQ=WEEKLY;BYDAY=TU',
+  exdates: [],
+  ...extra
+})
+const starts = (store: CalendarStore, from = '2026-11-01', to = '2026-12-31'): string[] => store.occurrences(from, to).map((o) => o.start)
+const same = (a: string, b: string): boolean => a === b
+
+describe('repeat rules', () => {
+  it('reads and writes what the custom editor shows', () => {
+    const start = '2026-11-10T07:00' // a Tuesday, 2nd of the month
+    const r = parseRrule('FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;UNTIL=20261231T235959', start)!
+    expect(r).toMatchObject({ freq: 'WEEKLY', interval: 2, byDay: ['TU', 'TH'], end: 'until', until: '2026-12-31' })
+    expect(buildRrule(r, start, false)).toBe('FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;UNTIL=20261231T235959')
+    expect(buildRrule({ ...r, freq: 'MONTHLY', monthly: 'weekday', end: 'count', count: 5 }, start, false)).toBe('FREQ=MONTHLY;INTERVAL=2;BYDAY=2TU;COUNT=5')
+    expect(buildRrule({ ...r, freq: 'MONTHLY', monthly: 'weekday', nth: -1, end: 'never' }, '2026-11-24', true)).toBe('FREQ=MONTHLY;INTERVAL=2;BYDAY=-1TU')
+    expect(buildRrule({ ...r, freq: 'DAILY', interval: 1, end: 'until' }, '2026-11-10', true)).toBe('FREQ=DAILY;UNTIL=20261231')
+  })
+
+  it('keeps rules it cannot show as they are', () => {
+    expect(parseRrule('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', '2026-11-30')).toBeNull()
+    expect(parseRrule('FREQ=WEEKLY;BYDAY=2TU', '2026-11-10')).toBeNull()
+    expect(describeRrule('FREQ=YEARLY;BYWEEKNO=20', '2026-11-10')).toBe('Tuỳ chỉnh (từ lịch gốc)')
+  })
+
+  it('describes rules in words, in both languages', () => {
+    expect(describeRrule('FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH;UNTIL=20261231T235959', '2026-11-10T07:00')).toBe('Mỗi 2 tuần vào T3, T5, đến 31/12/2026')
+    expect(describeRrule('FREQ=MONTHLY;BYDAY=-1FR', '2026-11-27')).toBe('Hằng tháng vào thứ Sáu cuối cùng của tháng')
+    expect(describeRrule('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', '2026-11-10')).toBe('Các ngày trong tuần (T2–T6)')
+    expect(describeRrule('FREQ=DAILY;COUNT=10', '2026-11-10')).toBe('Hằng ngày, 10 lần')
+    setLanguage('en')
+    expect(describeRrule('FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH', '2026-11-10T07:00')).toBe('Every 2 weeks on Tue, Thu')
+    expect(describeRrule('FREQ=MONTHLY;BYDAY=2TU', '2026-11-10')).toBe('Monthly on the second Tuesday')
+  })
+
+  it('offers the last weekday of the month only when the date is in the last week', () => {
+    expect(repeatPresets('2026-11-24', true).some((p) => p.rrule.includes('-1TU'))).toBe(true)
+    expect(repeatPresets('2026-11-10', true).some((p) => p.rrule.includes('-1TU'))).toBe(false)
+  })
+})
+
+describe('CalendarStore', () => {
+  it('stores events as a standard iCalendar file and expands repeats', async () => {
+    const dir = tmp()
+    const store = await CalendarStore.open(dir)
+    const uid = await store.create(lesson({ rrule: 'FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261119T235959', exdates: ['2026-11-12'] }))
+    expect(starts(store)).toEqual(['2026-11-03T07:00', '2026-11-05T07:00', '2026-11-10T07:00', '2026-11-17T07:00', '2026-11-19T07:00'])
+
+    const ics = readFileSync(path.join(dir, 'calendar.ics'), 'utf8')
+    expect(ics).toMatch(/^BEGIN:VCALENDAR\r\n/)
+    for (const line of ['VERSION:2.0', 'PRODID:-//Study Docs//Calendar//EN', `UID:${uid}`, 'DTSTART:20261103T070000', 'DTEND:20261103T093000', 'SUMMARY:Lập trình mạng', 'LOCATION:B2', 'COLOR:royalblue', 'RRULE:FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261119T235959', 'EXDATE:20261112T070000'])
+      expect(ics).toContain(`${line}\r\n`)
+    expect(ics).toMatch(/DTSTAMP:\d{8}T\d{6}Z/)
+    // Another iCalendar reader sees the same events.
+    const parsed = new ICAL.Component(ICAL.parse(ics))
+    expect(parsed.getAllSubcomponents('vevent')).toHaveLength(1)
+
+    const again = await CalendarStore.open(dir)
+    expect(starts(again)).toEqual(starts(store))
+  })
+
+  it('all-day events use DATE values and an exclusive end', async () => {
+    const dir = tmp()
+    const store = await CalendarStore.open(dir)
+    await store.create(lesson({ summary: 'Tuần thi', allDay: true, start: '2026-12-14', end: '2026-12-19', rrule: '' }))
+    const ics = readFileSync(path.join(dir, 'calendar.ics'), 'utf8')
+    expect(ics).toContain('DTSTART;VALUE=DATE:20261214\r\n')
+    expect(ics).toContain('DTEND;VALUE=DATE:20261219\r\n')
+    expect(store.occurrences('2026-12-18', '2026-12-19').map((o) => o.summary)).toEqual(['Tuần thi'])
+    expect(store.occurrences('2026-12-19', '2026-12-20')).toEqual([])
+  })
+
+  it('changes one class: a RECURRENCE-ID override, the others stay', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson())
+    await store.update(uid, '2026-11-10T07:00', 'this', '2026-11-10T07:00', lesson({ start: '2026-11-11T13:00', end: '2026-11-11T15:30', location: 'C5', rrule: '' }))
+    const occ = store.occurrences('2026-11-01', '2026-11-20')
+    expect(occ.map((o) => `${o.start} ${o.location}`)).toEqual(['2026-11-03T07:00 B2', '2026-11-11T13:00 C5', '2026-11-17T07:00 B2'])
+    expect(occ[1]).toMatchObject({ rid: '2026-11-10T07:00', overridden: true })
+    expect(store.toIcs()).toContain('RECURRENCE-ID:20261110T070000\r\n')
+  })
+
+  it('changes all classes: moving one class by an hour moves every class', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson())
+    await store.link(uid, '2026-11-10T07:00', { path: 'D:/notes/b2.md', name: 'b2.md' }, same)
+    await store.update(uid, '2026-11-10T07:00', 'all', '2026-11-10T07:00', lesson({ start: '2026-11-10T08:00', end: '2026-11-10T10:00', summary: 'LT mạng' }))
+    const occ = store.occurrences('2026-11-01', '2026-11-20')
+    expect(occ.map((o) => `${o.start}-${o.end.slice(11)} ${o.summary}`)).toEqual(['2026-11-03T08:00-10:00 LT mạng', '2026-11-10T08:00-10:00 LT mạng', '2026-11-17T08:00-10:00 LT mạng'])
+    // The class's own links follow it.
+    expect(store.linksOf(uid, '2026-11-10T08:00')).toHaveLength(1)
+  })
+
+  it('changes this and following classes: the series is split in two', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson({ rrule: 'FREQ=WEEKLY;BYDAY=TU;COUNT=6' }))
+    await store.link(uid, null, { path: 'D:/notes/syllabus.pdf', name: 'syllabus.pdf' }, same)
+    await store.link(uid, '2026-11-24T07:00', { path: 'D:/notes/b4.md', name: 'b4.md' }, same)
+    await store.setNotesFolder(uid, 'D:/notes')
+    const newUid = await store.update(uid, '2026-11-17T07:00', 'following', '2026-11-17T07:00', lesson({ rrule: 'FREQ=WEEKLY;BYDAY=TU;COUNT=6', start: '2026-11-17T13:00', end: '2026-11-17T15:00' }))
+    expect(newUid).not.toBe(uid)
+    const occ = store.occurrences('2026-11-01', '2027-01-31')
+    expect(occ.map((o) => o.start)).toEqual(['2026-11-03T07:00', '2026-11-10T07:00', '2026-11-17T13:00', '2026-11-24T13:00', '2026-12-01T13:00', '2026-12-08T13:00'])
+    expect(store.series(uid)!.rrule).toBe('FREQ=WEEKLY;BYDAY=TU;UNTIL=20261117T065959')
+    expect(store.series(newUid)!.rrule).toBe('FREQ=WEEKLY;COUNT=4;BYDAY=TU')
+    expect(store.linksOf(newUid, '2026-11-24T13:00').map((l) => `${l.scope} ${l.link.name}`)).toEqual(['series syllabus.pdf', 'this b4.md'])
+    expect(store.notesFolder(newUid)).toBe('D:/notes')
+  })
+
+  it('deletes one class (EXDATE), the following ones (UNTIL), or all', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson())
+    await store.delete(uid, '2026-11-10T07:00', 'this')
+    expect(starts(store, '2026-11-01', '2026-11-20')).toEqual(['2026-11-03T07:00', '2026-11-17T07:00'])
+    expect(store.series(uid)!.exdates).toEqual(['2026-11-10'])
+    await store.delete(uid, '2026-11-24T07:00', 'following')
+    expect(starts(store, '2026-11-01', '2027-03-01')).toEqual(['2026-11-03T07:00', '2026-11-17T07:00'])
+    await store.delete(uid, '2026-11-03T07:00', 'all')
+    expect(starts(store)).toEqual([])
+    expect(store.toIcs()).not.toContain('VEVENT')
+  })
+
+  it('finds where a document is linked and follows it when it moves', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson())
+    await store.link(uid, '2026-11-10T07:00', { path: 'D:/notes/b2.md', name: 'b2.md', hash: 'abc' }, same)
+    await store.link(uid, '2026-11-10T07:00', { path: 'D:/notes/b2.md', name: 'b2.md', hash: 'abc' }, same)
+    expect(store.linksOf(uid, '2026-11-10T07:00')).toHaveLength(1)
+    expect(store.occurrences('2026-11-10', '2026-11-11')[0].links).toBe(1)
+    await store.updateLinkPath('D:/notes/b2.md', { path: 'D:/notes/mang/b2.md', name: 'b2.md', hash: 'abc' })
+    expect(store.refsTo((l) => l.path === 'D:/notes/mang/b2.md')).toEqual([{ uid, rid: '2026-11-10T07:00' }])
+    await store.unlink(uid, '2026-11-10T07:00', 'D:/notes/mang/b2.md', same)
+    expect(store.refsTo(() => true)).toEqual([])
+  })
+
+  it('merges a backup: keeps the newer copy of an event, adds the rest', async () => {
+    const a = await CalendarStore.open(tmp())
+    const uid = await a.create(lesson())
+    await a.link(uid, null, { path: 'D:/x.pdf', name: 'x.pdf' }, same)
+    const backup = a.backup()
+    const b = await CalendarStore.open(tmp())
+    expect(await b.merge(backup)).toBe(1)
+    expect(b.occurrences('2026-11-03', '2026-11-04')[0]).toMatchObject({ uid, summary: 'Lập trình mạng', links: 1 })
+    await b.merge(backup)
+    expect(b.occurrences('2026-11-03', '2026-11-04')).toHaveLength(1)
+    await expect(b.merge({ ics: 'not a calendar' })).rejects.toThrow()
+  })
+
+  it('reads events from other calendar apps (UTC times, DURATION, cancelled classes)', async () => {
+    const store = await CalendarStore.open(tmp())
+    const ics = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Google Inc//Google Calendar 70.9054//EN',
+      'BEGIN:VEVENT',
+      'UID:abc@google.com',
+      'DTSTAMP:20261101T000000Z',
+      'DTSTART;VALUE=DATE:20261105',
+      'DURATION:P1D',
+      'SUMMARY:Nộp bài',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:x@google.com',
+      'DTSTAMP:20261101T000000Z',
+      'DTSTART;VALUE=DATE:20261102',
+      'RRULE:FREQ=DAILY;COUNT=3',
+      'SUMMARY:Ôn',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:x@google.com',
+      'DTSTAMP:20261101T000000Z',
+      'RECURRENCE-ID;VALUE=DATE:20261103',
+      'DTSTART;VALUE=DATE:20261103',
+      'STATUS:CANCELLED',
+      'SUMMARY:Ôn',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n')
+    await store.merge({ ics })
+    expect(store.occurrences('2026-11-01', '2026-11-10').map((o) => `${o.start} ${o.summary}`)).toEqual(['2026-11-02 Ôn', '2026-11-04 Ôn', '2026-11-05 Nộp bài'])
+  })
+
+  it('a broken calendar file is copied aside, not lost', async () => {
+    const dir = tmp()
+    const { writeFileSync, readdirSync } = await import('node:fs')
+    writeFileSync(path.join(dir, 'calendar.ics'), 'BEGIN:VCALENDAR\r\nthis is not ical')
+    const store = await CalendarStore.open(dir)
+    expect(store.warning).toBeTruthy()
+    expect(readdirSync(dir).some((f) => f.startsWith('calendar.corrupt-'))).toBe(true)
+  })
+
+  it('finds the next class of a course', async () => {
+    const store = await CalendarStore.open(tmp())
+    const uid = await store.create(lesson())
+    expect(nextStart(store, uid, new Date(2026, 10, 12, 12))?.start).toBe('2026-11-17T07:00')
+  })
+})

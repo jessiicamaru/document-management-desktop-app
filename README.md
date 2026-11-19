@@ -1,6 +1,6 @@
 # Study Docs
 
-A Windows app for reading and organising study documents: Markdown, HTML, PDF, Word, plain text, EPUB and Kindle books, and pictures. Tags, study status, highlights and notes for every document; full-text search that ignores Vietnamese accents. The interface is in English or Vietnamese.
+A Windows app for reading and organising study documents: Markdown, HTML, PDF, Word, plain text, EPUB and Kindle books, and pictures. Tags, study status, highlights and notes for every document; full-text search that ignores Vietnamese accents; a calendar of classes, each linked to its documents and notes. The interface is in English or Vietnamese.
 
 Built with Electron + React + TypeScript (electron-vite).
 
@@ -44,6 +44,19 @@ node scripts/make-sample-docx.mjs  # rebuild sample-library/frontend/CSS Flexbox
 | **Raw** | Open the source next to the document to change layout, diagrams, HTML tags… Markdown previews as you type; HTML updates when you save (`Ctrl+S`). |
 | `Ctrl+,` or the gear icon | Settings, in tabs: **Appearance** (language, light/dark, accent colour), **Reading** (Markdown text size, font and width; one or two book pages), **Library** (folders, sidebar order, pictures), **Data** (backup and restore, tags across the workspace, clean-up, recovery), **Updates**. |
 
+### Calendar
+
+The calendar icon in the sidebar shows a week or month calendar instead of a document.
+
+- **Events** have a title, time (or all day), place, colour and notes. Drag on the calendar or click **+ Event** to add one; drag an event to move it, drag its edge to change its length.
+- **Repeat:** the usual choices (daily, weekly on that day, every weekday, monthly on that date or on "the 2nd Tuesday", yearly), or **Custom…**: every N days / weeks / months / years, on several weekdays (Tue + Thu), monthly by date or by weekday, ending never, on a date or after N times. The dialog says the rule in words and shows the first dates. **Skip dates** leaves out holidays or exam weeks.
+- Changing or deleting one class of a repeating event asks: **this event**, **this and following events**, or **all events**.
+- **Documents of a class:** drag a document from the sidebar onto an event, or use **+ Link a document…**. Link it to **this class** (the slides of that lesson) or to the **whole course** (the syllabus). Click a linked document to open it. A document shows chips for the classes it belongs to; clicking one goes back to the calendar.
+- **Notes for this class** creates `<folder>\<course>\<date>.md` from a small template (date, time, place), opens it and links it to the class. The first time, the app asks which folder a course's notes go in (inside a workspace folder they are searchable like any document). An existing file is opened, never overwritten.
+- **Import .ics… / Export .ics…** read and write standard calendar files, so events move to and from Google Calendar, Outlook, a phone, or a timetable exported by your school.
+
+The calendar is stored in the standard iCalendar format (RFC 5545), so other calendar apps read it as it is: repeats are `RRULE`, skipped dates `EXDATE`, a class changed on its own is a second `VEVENT` with the same `UID` and a `RECURRENCE-ID`, colours are `COLOR` (RFC 7986). Times are local wall-clock ("floating") times. Only what is the app's own (documents linked to classes, the notes folder of each course) is kept in a separate JSON file.
+
 When editing text, the app replaces exactly the text you changed in the file and keeps every other character. If it can't be sure of that (an HTML tag without its closing tag, or text that Markdown would read as formatting), it doesn't save and tells you to use Raw. If the file is changed by another app while you edit, it isn't overwritten either.
 
 ## Updates
@@ -85,6 +98,7 @@ Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, th
   - Renaming or moving a file inside a workspace folder keeps its tags: the file is recognised by identical content, or by the same file name (moved and edited). If several files match, the app doesn't guess.
 - **Single files** (`Ctrl+O`, drag and drop, double-click in Explorer): only the path is remembered, the file isn't copied. A moved or deleted file shows "not found"; click × to remove it from the list (the file and its notes are kept).
 - **Highlights** are never written into the document. Each one keeps the selected text with a few words before and after, so it is found again after the document is edited; if the passage is gone, the note is kept and marked "no longer found". In EPUB books the exact position is kept as an EPUB CFI; in PDFs, the page.
+- **The calendar** is in `%APPDATA%\Study Docs\data\calendar.ics` (standard iCalendar), with the documents linked to classes in `calendar.json` next to it. A linked document is remembered by its path, content hash and name, so it is found again after it is renamed or moved. Backups (Settings → Data) include both. A calendar file that can't be read is copied to `calendar.corrupt-<time>.ics` before anything is written.
 - **Settings and "recently opened"** are in `%APPDATA%\Study Docs`.
 - **Caches for speed** are there too: `scan-cache.json` (document names) and `text-cache` (text read out for search, stored as UTF-8). Deleting them loses nothing; the app reads the files again. Text of files that left the workspace is cleaned up automatically.
 

@@ -14,6 +14,8 @@ import { HighlightToolbar, NotePopover, NotesPanel } from './Annotations'
 import { newAnnotationId, type OutlineItem, type ReaderHandle, type ScreenRect, type TextSelection } from './reader'
 import { t } from '../../../shared/i18n'
 import { confirmDialog } from '../lib/ask'
+import { colorHex, formatShortDate, type CalDocRef } from '../../../shared/calendar'
+import { CALENDAR_CHANGED } from './CalendarView'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
 type Mode = 'view' | 'edit' | 'raw'
@@ -41,6 +43,8 @@ interface Props {
   /** Note about the whole document (Markdown). */
   docNote: string
   onDocNoteChange: (text: string) => void
+  /** A class chip was clicked: show it in the calendar. */
+  onOpenCalendar: (ref: CalDocRef) => void
 }
 
 const positionKey = (path: string): string => `pos:${path}`
@@ -308,6 +312,7 @@ export default function DocView(props: Props) {
                 </span>
               )}
               <span className="doc-path">{doc.rel}</span>
+              <ClassChips docId={doc.path} onOpen={props.onOpenCalendar} />
             </div>
           </div>
         </div>
@@ -498,5 +503,42 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
         onBlur={add}
       />
     </div>
+  )
+}
+
+/** The classes (or courses) of the calendar this document is linked to. */
+function ClassChips({ docId, onOpen }: { docId: string; onOpen: (ref: CalDocRef) => void }) {
+  const [refs, setRefs] = useState<CalDocRef[]>([])
+  useEffect(() => {
+    let alive = true
+    const load = (): void => {
+      window.api
+        .calendarForDoc(docId)
+        .then((r) => alive && setRefs(r))
+        .catch(() => {})
+    }
+    load()
+    window.addEventListener(CALENDAR_CHANGED, load)
+    return () => {
+      alive = false
+      window.removeEventListener(CALENDAR_CHANGED, load)
+    }
+  }, [docId])
+  if (!refs.length) return null
+  return (
+    <span className="class-chips">
+      {refs.slice(0, 4).map((r) => (
+        <button
+          key={`${r.uid}|${r.rid ?? ''}`}
+          className="class-chip"
+          style={{ '--chip': colorHex(r.color) ?? 'var(--accent)' } as React.CSSProperties}
+          title={r.rid ? t('Tài liệu của buổi học này. Bấm để xem trong lịch.') : t('Tài liệu của cả môn. Bấm để xem buổi tới trong lịch.')}
+          onClick={() => onOpen(r)}
+        >
+          {r.summary} · {r.rid ? formatShortDate(r.start) : t('cả môn')}
+        </button>
+      ))}
+      {refs.length > 4 && <span className="class-chip more">+{refs.length - 4}</span>}
+    </span>
   )
 }

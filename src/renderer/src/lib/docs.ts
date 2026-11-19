@@ -108,3 +108,6 @@ export function saveLocal(key: string, value: unknown): void {
 export function kindLabel(kind: DocEntry['kind']): string {
   return kind === 'image' ? t('ẢNH') : kind.toUpperCase()
 }
+
+/** Drag data type of a document dragged from the sidebar (dropped on a calendar event to link it). */
+export const DOC_DRAG_TYPE = 'application/x-studydocs-doc'

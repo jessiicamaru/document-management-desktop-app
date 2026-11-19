@@ -9,6 +9,8 @@ import SettingsDialog, { type SettingsTab } from './components/SettingsDialog'
 import { setLanguage, t } from '../../shared/i18n'
 import { ask, confirmDialog } from './lib/ask'
 import AskHost from './components/AskHost'
+import CalendarView, { type CalendarFocus } from './components/CalendarView'
+import type { CalDocRef } from '../../shared/calendar'
 
 export type StatusFilter = StudyStatus | 'all'
 
@@ -42,6 +44,13 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined)
   const [recentOpen, setRecentOpen] = useState(false)
+  // The main area shows documents or the calendar.
+  const [view, setView] = useState<'docs' | 'calendar'>(() => loadLocal<'docs' | 'calendar'>('view', 'docs'))
+  const [calendarFocus, setCalendarFocus] = useState<CalendarFocus | null>(null)
+  const changeView = (next: 'docs' | 'calendar'): void => {
+    setView(next)
+    saveLocal('view', next)
+  }
   // True while the open document has unsaved edits (text edit or raw editor).
   const dirtyRef = useRef(false)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -185,6 +194,7 @@ export default function App() {
         }
       }
       setSelected(path)
+      changeView('docs')
       setScrollTarget((t) => ({ hash, n: t.n + 1 }))
       saveLocal('selected:workspace', path)
       window.api
@@ -371,6 +381,26 @@ export default function App() {
   }, [query, visibleDocs, meta, indexTick]) // indexTick: results improve while texts are being indexed
 
   const current = docs.find((d) => d.path === selected) ?? null
+
+  /** Shows the calendar; a document with unsaved edits asks first (it is closed). */
+  const showCalendar = useCallback(
+    async (focus?: Omit<CalendarFocus, 'n'>) => {
+      if (dirtyRef.current) {
+        const yes = await confirmDialog({
+          message: t('Bài đang mở có thay đổi chưa lưu. Mở lịch và bỏ các thay đổi đó?'),
+          ok: t('Bỏ thay đổi'),
+          cancel: t('Ở lại'),
+          danger: true
+        })
+        if (!yes) return
+        setDirty(false)
+      }
+      if (focus) setCalendarFocus((f) => ({ ...focus, n: (f?.n ?? 0) + 1 }))
+      changeView('calendar')
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [setDirty]
+  )
   const warnings = (lib?.warnings ?? []).filter((w) => !dismissed.includes(w))
 
   return (
@@ -396,6 +426,8 @@ export default function App() {
         onAddFolders={addFolders}
         onRemoveFolder={removeFolder}
         onOpenSettings={() => setSettingsOpen(true)}
+        calendarOpen={view === 'calendar'}
+        onToggleCalendar={() => (view === 'calendar' ? changeView('docs') : void showCalendar())}
         onOpenFiles={openFiles}
         onRemoveLoose={(p) => window.api.removeLooseFile(p).catch(notify)}
         sort={ui.sidebarSort}
@@ -429,7 +461,9 @@ export default function App() {
             </button>
           </div>
         ))}
-        {current ? (
+        {view === 'calendar' ? (
+          <CalendarView docs={docs} focus={calendarFocus} onOpenDoc={(id) => void openDoc(id)} onError={notify} onInfo={inform} />
+        ) : current ? (
           <DocView
             key={current.path}
             doc={current}
@@ -448,6 +482,7 @@ export default function App() {
             onAnnotationsChange={(items) => setLib((l) => l && { ...l, notes: { ...l.notes, [current.path]: items } })}
             docNote={lib?.docNotes[current.path] ?? ''}
             onDocNoteChange={(text) => setLib((l) => l && { ...l, docNotes: { ...l.docNotes, [current.path]: text } })}
+            onOpenCalendar={(ref: CalDocRef) => void showCalendar({ date: ref.start, uid: ref.uid, rid: ref.at })}
             rootName={(lib?.roots.length ?? 0) > 1 ? (lib?.roots.find((r) => r.key === current.root)?.name ?? null) : null}
           />
         ) : (
