@@ -1,12 +1,19 @@
-// Read-only documents shown as a page of text, like Markdown: plain text (.txt) and Word
-// (.docx, turned into HTML by mammoth). Same reading features as the other views: outline
-// (Word headings), reading position, Ctrl+F, highlights and notes. The file is never changed.
+// Read-only documents shown as a page of text: plain text (.txt) and Word (.docx). Same reading
+// features as the other views: outline (Word headings), reading position, Ctrl+F, highlights
+// and notes. The file is never changed.
+//
+// Word has two views:
+//  - "Bố cục Word" (default): docx-preview lays the document out in pages, with its fonts,
+//    colours, table borders, alignment, headers and footers.
+//  - "Xem đơn giản": mammoth keeps only the text and its structure, as a reading page.
+// If docx-preview can't draw a file, the simple view is used instead.
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import type { Annotation, DocEntry } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 import { decodeText } from '../../../shared/text'
+import { loadLocal, saveLocal } from '../lib/docs'
 import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
 import { t } from '../../../shared/i18n'
 
@@ -20,23 +27,52 @@ interface Props extends ReaderCallbacks {
   onError: (err: unknown) => void
 }
 
-const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+type WordView = 'layout' | 'simple'
+type Content = { mode: 'html'; html: string; note?: string } | { mode: 'layout'; bytes: Uint8Array }
 
-/** The document as safe HTML for the article. */
-async function loadHtml(doc: DocEntry): Promise<{ html: string; note?: string }> {
+const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const arrayBufferOf = (bytes: Uint8Array): ArrayBuffer => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+
+/** What to show for the document. */
+async function load(doc: DocEntry, view: WordView): Promise<Content> {
   const bytes = await window.api.readBinary(doc.path)
   if (doc.kind === 'txt') {
     const cut = bytes.length > MAX_TEXT_BYTES
     const text = decodeText(cut ? bytes.subarray(0, MAX_TEXT_BYTES) : bytes)
     return {
+      mode: 'html',
       html: `<pre class="plain-text">${escapeHtml(text)}</pre>`,
       note: cut ? t('File lớn: chỉ hiện {0} MB đầu. Mở bằng app mặc định để xem hết.', { 0: MAX_TEXT_BYTES / 1024 / 1024 }) : undefined
     }
   }
-  // Word: headings, lists, tables, bold/italic, links and images (embedded as data: URLs).
+  if (view === 'layout') return { mode: 'layout', bytes }
+  return { mode: 'html', html: await simpleWordHtml(bytes) }
+}
+
+/** Word as a simple reading page: headings, lists, tables, bold/italic, links, images. */
+async function simpleWordHtml(bytes: Uint8Array): Promise<string> {
   const mammoth = await import('mammoth')
-  const result = await mammoth.convertToHtml({ arrayBuffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer })
-  return { html: DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } }) }
+  const result = await mammoth.convertToHtml({ arrayBuffer: arrayBufferOf(bytes) })
+  return DOMPurify.sanitize(result.value, { USE_PROFILES: { html: true } })
+}
+
+/** Word laid out in pages (docx-preview). Embedded HTML ("alt chunks") and comments are not drawn. */
+async function drawWordLayout(bytes: Uint8Array, body: HTMLElement, styles: HTMLElement): Promise<void> {
+  const { renderAsync } = await import('docx-preview')
+  await renderAsync(new Blob([arrayBufferOf(bytes)]), body, styles, {
+    className: 'docx',
+    inWrapper: true,
+    breakPages: true,
+    renderHeaders: true,
+    renderFooters: true,
+    renderFootnotes: true,
+    renderEndnotes: true,
+    renderComments: false,
+    renderChanges: false,
+    renderAltChunks: false,
+    useBase64URL: true, // pictures as data: URLs, nothing to free afterwards
+    experimental: false
+  })
 }
 
 const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, ref) {
@@ -45,20 +81,26 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
   cb.current = props
   const scrollRef = useRef<HTMLDivElement>(null)
   const articleRef = useRef<HTMLElement>(null)
+  const stylesRef = useRef<HTMLDivElement>(null)
   const headings = useRef<HTMLElement[]>([])
   const annotations = useRef<Annotation[]>([])
-  const [content, setContent] = useState<{ html: string; note?: string } | null>(null)
+  const [content, setContent] = useState<Content | null>(null)
+  const [wordView, setWordView] = useState<WordView>(() => loadLocal<WordView>('word-view', 'layout'))
+  /** docx-preview couldn't draw this file: the simple view is shown instead. */
+  const [layoutFailed, setLayoutFailed] = useState(false)
+  const view: WordView = layoutFailed ? 'simple' : wordView
 
   useEffect(() => {
     let alive = true
     setContent(null)
-    loadHtml(doc)
+    load(doc, view)
       .then((c) => alive && setContent(c))
       .catch((err) => alive && cb.current.onError(err))
     return () => {
       alive = false
     }
-  }, [doc.path, doc.mtime, doc.kind])
+  }, [doc.path, doc.mtime, doc.kind, view])
+  useEffect(() => setLayoutFailed(false), [doc.path, doc.mtime])
 
   function drawAnnotations(): void {
     const el = articleRef.current
@@ -77,18 +119,43 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     cb.current.onReading(Math.round(scroller.scrollTop), active)
   }
 
-  // After drawing: links open in the browser, outline from the headings, highlights.
+  // Draw (Word layout), then: links open in the browser, outline from the headings, highlights.
   useEffect(() => {
     const el = articleRef.current
     if (!el || !content) return
-    el.querySelectorAll('a[href]').forEach((a) => {
-      if (!/^https?:/i.test(a.getAttribute('href') ?? '')) a.removeAttribute('href') // Word bookmarks etc.
-    })
-    headings.current = [...el.querySelectorAll<HTMLElement>('h1, h2, h3')]
-    cb.current.onOutline(headings.current.map((h) => ({ level: Number(h.tagName[1]), text: (h.textContent ?? '').trim() })))
-    cb.current.onReady()
-    reportScroll()
-    drawAnnotations()
+    let alive = true
+    void (async () => {
+      if (content.mode !== 'layout' && stylesRef.current) stylesRef.current.textContent = '' // styles of a Word layout shown before
+      if (content.mode === 'layout') {
+        try {
+          await drawWordLayout(content.bytes, el, stylesRef.current!)
+        } catch (err) {
+          console.warn('Word layout failed, using the simple view', err)
+          if (alive) setLayoutFailed(true)
+          return
+        }
+      }
+      if (!alive) return
+      el.querySelectorAll('a[href]').forEach((a) => {
+        if (!/^https?:/i.test(a.getAttribute('href') ?? '')) a.removeAttribute('href') // Word bookmarks, odd links
+      })
+      headings.current =
+        content.mode === 'layout'
+          ? [...el.querySelectorAll<HTMLElement>('p[class*="docx_heading"], p[class*="docx_title"]')].filter((h) => h.textContent?.trim())
+          : [...el.querySelectorAll<HTMLElement>('h1, h2, h3')]
+      const levelOf = (h: HTMLElement): number => {
+        if (/^H\d$/.test(h.tagName)) return Number(h.tagName[1])
+        const n = /docx_heading(\d)/.exec(h.className)?.[1]
+        return n ? Math.min(Number(n), 3) : 1
+      }
+      cb.current.onOutline(headings.current.map((h) => ({ level: levelOf(h), text: (h.textContent ?? '').trim() })))
+      cb.current.onReady()
+      reportScroll()
+      drawAnnotations()
+    })()
+    return () => {
+      alive = false
+    }
   }, [content])
 
   useEffect(() => {
@@ -126,7 +193,7 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('keyup', onKeyUp)
     }
-  }, [])
+  }, [content?.mode])
 
   // ---------- find (Ctrl+F) ----------
   const found = useRef<Range[]>([])
@@ -139,7 +206,7 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
       const r = current.getBoundingClientRect()
       const box = scroller.getBoundingClientRect()
       if (r.top < box.top + 40 || r.bottom > box.bottom - 40) scroller.scrollTop += r.top - box.top - scroller.clientHeight / 3
-      // Long lines in plain text scroll sideways too.
+      // Long lines in plain text (or wide Word pages) scroll sideways too.
       if (r.left < box.left || r.right > box.right) current.startContainer.parentElement?.scrollIntoView({ block: 'nearest', inline: 'center' })
     }
     return { index: foundIndex.current, total: found.current.length }
@@ -179,20 +246,43 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     }
   }))
 
+  const chooseView = (next: WordView): void => {
+    saveLocal('word-view', next)
+    setLayoutFailed(false)
+    setWordView(next)
+  }
+
   return (
     <div className="md-scroll" ref={scrollRef}>
-      {content?.note && <div className="article-note">{content.note}</div>}
-      {doc.kind === 'docx' && content && (
-        // Only the text and its structure come through (mammoth); say so, and offer Word.
+      {content?.mode === 'html' && content.note && <div className="article-note">{content.note}</div>}
+      {doc.kind === 'docx' && (
         <div className="article-note docx-note">
-          <span className="beta-badge">{t('Xem đơn giản')}</span>
-          <span>{t('Chỉ hiện chữ, tiêu đề, danh sách, bảng và ảnh. Bố cục, màu, khung và căn lề của Word không được giữ.')}</span>
+          <div className="segmented plain" role="group" aria-label={t('Cách hiện file Word')}>
+            <button className={view === 'layout' ? 'active' : ''} onClick={() => chooseView('layout')}>
+              {t('Bố cục Word')}
+            </button>
+            <button className={view === 'simple' ? 'active' : ''} onClick={() => chooseView('simple')}>
+              {t('Xem đơn giản')}
+            </button>
+          </div>
+          <span>
+            {layoutFailed
+              ? t('Không dựng được bố cục của file này, đang hiện bản đơn giản.')
+              : view === 'layout'
+                ? t('Gần giống Word: phông, màu, bảng, căn lề, đầu/chân trang. Một số thứ (hộp văn bản, hình vẽ) có thể lệch.')
+                : t('Chỉ hiện chữ, tiêu đề, danh sách, bảng và ảnh. Bố cục, màu, khung và căn lề của Word không được giữ.')}
+          </span>
           <button className="btn small" onClick={() => window.api.openPath(doc.path).catch(cb.current.onError)}>
             {t('Mở bằng Word')}
           </button>
         </div>
       )}
-      <article ref={articleRef} className={`markdown article-${doc.kind}`} dangerouslySetInnerHTML={{ __html: content?.html ?? '' }} />
+      <div ref={stylesRef} className="docx-styles" />
+      {content?.mode === 'layout' ? (
+        <div key="layout" ref={articleRef as React.RefObject<HTMLDivElement>} className="docx-layout" />
+      ) : (
+        <article key="html" ref={articleRef} className={`markdown article-${doc.kind}`} dangerouslySetInnerHTML={{ __html: content?.mode === 'html' ? content.html : '' }} />
+      )}
     </div>
   )
 })
