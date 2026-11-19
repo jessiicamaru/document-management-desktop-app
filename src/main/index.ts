@@ -16,6 +16,7 @@ import { NotesStore, sanitizeAnnotation } from './notes-store'
 import { loadLooseFiles, loadRecent, loadUiSettings, loadWorkspacePaths, markOpened, sanitizeUi, saveLooseFiles, saveSettings, saveWorkspacePaths } from './storage'
 import { isSameOrInside, labelRoots, normalizeRoot, pathKey, rootConflict, rootKeyOf, splitDocId } from './workspace'
 import { canOpenWithDefaultApp } from './open-policy'
+import { looksLikeSameFolder, matchScore, remapEntries, type Remembered } from './relink'
 import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 import { setLanguage, t } from '../shared/i18n'
@@ -90,9 +91,33 @@ const relOf = (root: Root, abs: string): string => path.relative(root.path, abs)
  * written to. info.json says which folder it is, for people looking at these files.
  */
 const dataDirOf = (key: string): string => path.join(app.getPath('userData'), 'data', key)
-async function writeDataInfo(root: Pick<Root, 'key' | 'path' | 'loose'>): Promise<void> {
+interface DataInfo {
+  path?: string
+  loose?: boolean
+  /** This data was moved to the folder at that path (see offerRelink). */
+  mergedInto?: string
+  /** Keys of old data you said do not belong to this folder. */
+  notThis?: string[]
+}
+async function readDataInfo(key: string): Promise<DataInfo> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(dataDirOf(key), 'info.json'), 'utf8')) as DataInfo
+  } catch {
+    return {}
+  }
+}
+async function writeDataInfo(root: Pick<Root, 'key' | 'path' | 'loose'>, extra: Partial<DataInfo> = {}): Promise<void> {
   const file = path.join(dataDirOf(root.key), 'info.json')
-  await fs.writeFile(file, JSON.stringify({ path: root.path, loose: root.loose }, null, 2), 'utf8').catch(() => {})
+  const info = { ...(await readDataInfo(root.key)), path: root.path, loose: root.loose, ...extra }
+  await fs.writeFile(file, JSON.stringify(info, null, 2), 'utf8').catch(() => {})
+}
+/** The entries of a data file as stored (for data of folders that are not open). */
+async function readStoredDocs(key: string, file: 'meta.json' | 'notes.json'): Promise<Record<string, Remembered>> {
+  try {
+    return (JSON.parse(await fs.readFile(path.join(dataDirOf(key), file), 'utf8')) as { docs?: Record<string, Remembered> }).docs ?? {}
+  } catch {
+    return {}
+  }
 }
 
 /** The root a file belongs to: its workspace folder, else its loose root (if it was opened). */
@@ -355,10 +380,58 @@ async function openRoots(list: Root[]): Promise<void> {
     await openRoot(root)
     syncSearch()
     await pushSnapshot()
+    void offerRelink(root)
   }
   scanning = false
   syncSearch() // the full list now: lets the worker clean up texts of files that are gone
   await scanCache?.save()
+  await pushSnapshot()
+}
+
+// ---------- finding a folder's data again after its path changed (see relink.ts) ----------
+
+let uiIsReady: () => void = () => {}
+const uiReadyPromise = new Promise<void>((resolve) => (uiIsReady = resolve))
+const relinkAsked = new Set<string>()
+
+/**
+ * A workspace folder with no tags or notes yet: if old data (under another path) clearly
+ * belongs to the same files, ask whether to move it here. Happens after renaming or moving
+ * the folder, a USB drive getting another letter, or opening the folder on another PC.
+ */
+async function offerRelink(root: Root): Promise<void> {
+  if (root.loose || !root.meta || !root.notes || relinkAsked.has(root.key) || !root.docs.length) return
+  if (Object.keys(root.meta.all()).length || Object.keys(root.notes.all()).length) return
+  relinkAsked.add(root.key)
+  const declined = new Set((await readDataInfo(root.key)).notThis ?? [])
+  let best: { key: string; path: string; matched: number; total: number } | null = null
+  for (const key of await fs.readdir(path.join(app.getPath('userData'), 'data')).catch(() => [] as string[])) {
+    if (key === root.key || declined.has(key) || roots.some((r) => r.key === key)) continue
+    const info = await readDataInfo(key)
+    if (!info.path || info.mergedInto || info.loose) continue
+    const entries = { ...(await readStoredDocs(key, 'meta.json')), ...(await readStoredDocs(key, 'notes.json')) }
+    const score = matchScore(entries, root.docs)
+    if (looksLikeSameFolder(score) && (!best || score.matched > best.matched)) best = { key, path: info.path, matched: score.matched, total: score.total }
+  }
+  if (!best) return
+  await uiReadyPromise
+  if (!roots.includes(root)) return
+  const answer = await askInWindow({
+    message: t('Thư mục "{0}" có phải là "{1}" trước đây không?', { 0: root.name, 1: best.path }),
+    detail: t('{0}/{1} bài có tag hoặc ghi chú ở đó trùng với file trong thư mục này (thư mục đã đổi tên, chuyển chỗ, ổ USB đổi ký tự, hoặc mở trên máy khác). Chuyển tag và ghi chú sang đây?', { 0: best.matched, 1: best.total }),
+    buttons: [t('Chuyển sang đây'), t('Không phải')],
+    cancelId: 1
+  })
+  if (answer !== 0) {
+    await writeDataInfo(root, { notThis: [...declined, best.key] })
+    return
+  }
+  const oldMeta = await MetaStore.open(dataDirOf(best.key))
+  const oldNotes = await NotesStore.open(dataDirOf(best.key))
+  await root.meta.importDocs(remapEntries(oldMeta.all(), root.docs))
+  await root.notes.importDocs(remapEntries(oldNotes.all(), root.docs))
+  // The old data stays on disk (nothing is deleted), marked so it isn't offered again.
+  await writeDataInfo({ key: best.key, path: best.path, loose: false }, { mergedInto: root.path })
   await pushSnapshot()
 }
 
@@ -584,13 +657,6 @@ async function importData(raw: string): Promise<number> {
   for (const folder of backup.folders) {
     if (typeof folder?.path !== 'string') continue
     const key = rootKeyOf(folder.path)
-    const open = roots.find((r) => r.key === key)
-    if (!open) {
-      await fs.mkdir(dataDirOf(key), { recursive: true })
-      await writeDataInfo({ key, path: normalizeRoot(folder.path), loose: !!folder.loose })
-    }
-    const meta = open?.meta ?? (await MetaStore.open(dataDirOf(key)))
-    const notes = open?.notes ?? (await NotesStore.open(dataDirOf(key)))
     const cleanMeta: Record<string, DocMeta> = {}
     for (const [rel, m] of Object.entries(folder.meta ?? {})) {
       const v = m as Partial<DocMeta>
@@ -623,8 +689,37 @@ async function importData(raw: string): Promise<number> {
         ...(typeof v.name === 'string' ? { name: v.name } : {})
       }
     }
-    await meta.importDocs(cleanMeta)
-    await notes.importDocs(cleanNotes)
+
+    // Where it goes: the folder at that path; else (another PC, a renamed folder...) a folder
+    // of the workspace whose files match, if you pick it; else kept under the old path.
+    let target = roots.find((r) => r.key === key)
+    if (!target) {
+      const entries: Record<string, Remembered> = { ...cleanMeta, ...cleanNotes }
+      const candidates = folderRoots()
+        .filter((r) => r.meta)
+        .map((r) => ({ r, score: matchScore(entries, r.docs) }))
+        .filter((c) => looksLikeSameFolder(c.score))
+        .sort((a, b) => b.score.matched - a.score.matched)
+        .slice(0, 3)
+      if (candidates.length) {
+        const answer = await askInWindow({
+          message: t('Bản sao lưu có dữ liệu của "{0}", thư mục này không có trong workspace.', { 0: folder.path }),
+          detail: t('Các thư mục dưới đây có file trùng với dữ liệu đó. Gắn tag và ghi chú vào thư mục nào?'),
+          buttons: [...candidates.map((c) => c.r.name), t('Giữ theo đường dẫn cũ')],
+          cancelId: candidates.length
+        })
+        target = candidates[answer]?.r
+      }
+    }
+    const moved = !!target && target.key !== key
+    if (!target) {
+      await fs.mkdir(dataDirOf(key), { recursive: true })
+      await writeDataInfo({ key, path: normalizeRoot(folder.path), loose: !!folder.loose })
+    }
+    const meta = target?.meta ?? (await MetaStore.open(dataDirOf(key)))
+    const notes = target?.notes ?? (await NotesStore.open(dataDirOf(key)))
+    await meta.importDocs(moved ? remapEntries(cleanMeta, target!.docs) : cleanMeta)
+    await notes.importDocs(moved ? remapEntries(cleanNotes, target!.docs) : cleanNotes)
     n += new Set([...Object.keys(cleanMeta), ...Object.keys(cleanNotes)]).size
   }
   return n
@@ -808,6 +903,7 @@ function registerIpc(): void {
   ipcMain.handle('library:get', async () => {
     const snap = await snapshot()
     uiReady = true
+    uiIsReady()
     setTimeout(openPendingFile, 0) // after the UI got the library, so the document is in its list
     return snap
   })

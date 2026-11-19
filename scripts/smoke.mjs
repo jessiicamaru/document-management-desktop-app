@@ -1150,6 +1150,37 @@ try {
   check(asked >= 8 && buttons.join('|') === 'Bỏ khỏi workspace|Huỷ' && (await page.locator('.root-row').count()) === 2, `questions use the app's own dialog (${asked} so far; buttons: ${buttons.join(', ')})`)
   await setAnswer('dismiss')
 
+  // Review point 2: a folder at a new path (renamed, moved, other drive letter, other PC)
+  // gets its old tags and notes back. The "notes" folder left the workspace in step 18; its
+  // data is still under its old path. A copy of it elsewhere is added now.
+  step('28. A moved folder finds its tags and notes again')
+  const movedNotes = path.join(workDir, 'notes moved')
+  cpSync(notes, movedNotes, { recursive: true })
+  await setAnswer('accept') // "Chuyển sang đây"
+  const askedBeforeMove = await page.evaluate(() => window.__smokeAsked)
+  await app.evaluate(({ dialog }, folder) => {
+    globalThis.__realOpen3 = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+  }, movedNotes)
+  await page.click('.sidebar-head .icon-btn[title="Thêm thư mục vào workspace"]')
+  await page.waitForFunction(() => document.querySelectorAll('.root-row').length === 3, null, { timeout: 15000 })
+  await page.waitForFunction((before) => window.__smokeAsked > before, askedBeforeMove, { timeout: 15000 }).catch(() => {})
+  await page.waitForTimeout(800)
+  const movedMeta = () => JSON.parse(readFileSync(path.join(dataDir(movedNotes), 'meta.json'), 'utf8')).docs
+  const oldInfo = JSON.parse(readFileSync(path.join(dataDir(notes), 'info.json'), 'utf8'))
+  check(movedMeta()['devops/Docker cơ bản.md']?.tags?.includes('devops') && oldInfo.mergedInto === movedNotes, 'a moved folder is recognised by its files; after asking, its tags move to the new path')
+
+  // Restoring a backup made when the folder had its old path: you pick where the data goes.
+  await page.evaluate((id) => window.api.updateMeta(id, { tags: [] }), (await page.evaluate(async () => (await window.api.getLibrary()).docs.find((d) => d.name === 'Docker cơ bản.md').path)))
+  await page.waitForTimeout(300)
+  await app.evaluate(({ dialog }, file) => (dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })), backupFile)
+  const askedBeforeRestore = await page.evaluate(() => window.__smokeAsked)
+  await page.evaluate(() => window.api.importData()) // the first choice offered is the matching folder
+  const restoreAsks = (await page.evaluate(() => window.__smokeAsked)) - askedBeforeRestore
+  check(restoreAsks >= 1 && movedMeta()['devops/Docker cơ bản.md']?.tags?.includes('devops'), `restoring a backup from the old path asks which folder gets the data (${restoreAsks} asked)`)
+  await app.evaluate(({ dialog }) => (dialog.showOpenDialog = globalThis.__realOpen3))
+  await setAnswer('dismiss')
+
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {
   console.error(err)

@@ -182,6 +182,16 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
   return (
     <div className="md-scroll" ref={scrollRef}>
       {content?.note && <div className="article-note">{content.note}</div>}
+      {doc.kind === 'docx' && content && (
+        // Only the text and its structure come through (mammoth); say so, and offer Word.
+        <div className="article-note docx-note">
+          <span className="beta-badge">{t('Xem đơn giản')}</span>
+          <span>{t('Chỉ hiện chữ, tiêu đề, danh sách, bảng và ảnh. Bố cục, màu, khung và căn lề của Word không được giữ.')}</span>
+          <button className="btn small" onClick={() => window.api.openPath(doc.path).catch(cb.current.onError)}>
+            {t('Mở bằng Word')}
+          </button>
+        </div>
+      )}
       <article ref={articleRef} className={`markdown article-${doc.kind}`} dangerouslySetInnerHTML={{ __html: content?.html ?? '' }} />
     </div>
   )
