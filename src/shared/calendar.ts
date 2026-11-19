@@ -42,15 +42,18 @@ export interface CalOccurrence extends Omit<CalEventData, 'exdates'> {
 /** Which occurrences a change to a repeating event applies to. */
 export type EditScope = 'this' | 'following' | 'all'
 
-/** A document linked to an event, as shown in the app. */
+/** A document (or a folder of documents) linked to an event, as shown in the app. */
 export interface CalLinkView {
-  /** Document id, or null when the file can't be found right now. */
+  kind: 'file' | 'folder'
+  /** Document id (a folder: its id in the sidebar tree), or null when it can't be found right now. */
   id: string | null
   /** Absolute path, as stored. */
   path: string
   title: string
   /** 'series': linked to every class (course material); 'this': to this class only. */
   scope: 'series' | 'this'
+  /** A folder: the documents in it now. */
+  docs?: { id: string; title: string; kind: string }[]
 }
 
 /** An event with everything the event panel shows. */
@@ -75,6 +78,8 @@ export interface CalDocRef {
   /** Its start. */
   start: string
   allDay: boolean
+  /** Linked through this folder (the document is inside it), not on its own. */
+  folder: string | null
 }
 
 // ---------- colours ----------

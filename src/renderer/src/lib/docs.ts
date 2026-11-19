@@ -111,3 +111,37 @@ export function kindLabel(kind: DocEntry['kind']): string {
 
 /** Drag data type of a document dragged from the sidebar (dropped on a calendar event to link it). */
 export const DOC_DRAG_TYPE = 'application/x-studydocs-doc'
+/** Drag data type of a folder dragged from the sidebar tree (its id there: "<root key>/<sub/folder>"). */
+export const FOLDER_DRAG_TYPE = 'application/x-studydocs-folder'
+
+/** A folder of the workspace that can be linked to a calendar event. */
+export interface FolderChoice {
+  /** Id in the sidebar tree: "<root key>" or "<root key>/<sub/folder>". */
+  id: string
+  name: string
+  /** Path inside the workspace folder ('' for the workspace folder itself). */
+  rel: string
+  rootName: string
+  /** Documents inside it, sub-folders included. */
+  count: number
+}
+
+/** Every workspace folder and every folder with documents inside one, by path. */
+export function folderChoices(docs: DocEntry[], roots: { key: string; name: string; loose: boolean }[]): FolderChoice[] {
+  const out = new Map<string, FolderChoice>()
+  for (const r of roots) if (!r.loose) out.set(r.key, { id: r.key, name: r.name, rel: '', rootName: r.name, count: 0 })
+  for (const d of docs) {
+    const root = out.get(d.root)
+    if (!root) continue
+    root.count++
+    const parts = d.rel.split('/').slice(0, -1)
+    for (let i = 1; i <= parts.length; i++) {
+      const rel = parts.slice(0, i).join('/')
+      const id = `${d.root}/${rel}`
+      const f = out.get(id) ?? { id, name: parts[i - 1], rel, rootName: root.rootName, count: 0 }
+      f.count++
+      out.set(id, f)
+    }
+  }
+  return [...out.values()].sort((a, b) => a.rootName.localeCompare(b.rootName, 'vi') || a.rel.localeCompare(b.rel, 'vi'))
+}

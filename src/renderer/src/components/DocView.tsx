@@ -532,7 +532,12 @@ function ClassChips({ docId, onOpen }: { docId: string; onOpen: (ref: CalDocRef)
           key={`${r.uid}|${r.rid ?? ''}`}
           className="class-chip"
           style={{ '--chip': colorHex(r.color) ?? 'var(--accent)' } as React.CSSProperties}
-          title={r.rid ? t('Tài liệu của buổi học này. Bấm để xem trong lịch.') : t('Tài liệu của cả môn. Bấm để xem buổi tới trong lịch.')}
+          title={[
+            r.rid ? t('Tài liệu của buổi học này. Bấm để xem trong lịch.') : t('Tài liệu của cả môn. Bấm để xem buổi tới trong lịch.'),
+            r.folder ? t('Gắn qua thư mục "{0}".', { 0: r.folder }) : ''
+          ]
+            .filter(Boolean)
+            .join('\n')}
           onClick={() => onOpen(r)}
         >
           {r.summary} · {r.rid ? formatShortDate(r.start) : t('cả môn')}

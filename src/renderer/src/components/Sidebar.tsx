@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import type { AppInfo, DocEntry, LibrarySnapshot, RootInfo, SearchResult, SearchStatus } from '../../../shared/types'
-import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder, DOC_DRAG_TYPE } from '../lib/docs'
+import { buildTree, kindLabel, loadLocal, metaOf, saveLocal, STATUSES, type TreeFolder, DOC_DRAG_TYPE, FOLDER_DRAG_TYPE } from '../lib/docs'
 import { timeAgo } from '../lib/ui'
 import type { StatusFilter } from '../App'
 import { t } from '../../../shared/i18n'
@@ -252,6 +252,8 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
               className="row folder"
               style={{ paddingLeft: 10 + depth * 14 }}
               onClick={() => toggle(f.path)}
+              draggable
+              onDragStart={(e) => dragFolder(e, f.path)}
               data-folder={open ? 'open' : 'closed'}
               data-depth={depth}
               aria-expanded={open}
@@ -288,6 +290,8 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
                 className="row folder root"
                 onClick={() => toggle(root.key)}
                 title={root.path}
+                draggable={!root.loose}
+                onDragStart={(e) => dragFolder(e, root.key)}
                 data-folder={open ? 'open' : 'closed'}
                 data-depth={0}
                 aria-expanded={open}
@@ -359,6 +363,12 @@ function LooseFiles({
       })}
     </div>
   )
+}
+
+/** A folder dropped on a calendar event links every document in it to that class. */
+function dragFolder(e: React.DragEvent, id: string): void {
+  e.dataTransfer.setData(FOLDER_DRAG_TYPE, id)
+  e.dataTransfer.effectAllowed = 'link'
 }
 
 function DocRow({ doc, depth, selected, onOpen, title }: { doc: DocEntry; depth: number; selected: boolean; onOpen: (p: string) => void; title?: string }) {

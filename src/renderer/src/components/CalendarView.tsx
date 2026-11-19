@@ -5,7 +5,7 @@
 // The events themselves live in the main process (data\calendar.ics, see calendar-store.ts);
 // this page asks for the occurrences of the dates on screen.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Calendar, type EventDropArg, type EventInput } from '@fullcalendar/core'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -27,9 +27,9 @@ import {
   type CalOccurrence,
   type EditScope
 } from '../../../shared/calendar'
-import type { DocEntry } from '../../../shared/types'
+import type { DocEntry, RootInfo } from '../../../shared/types'
 import { getLanguage, t } from '../../../shared/i18n'
-import { DOC_DRAG_TYPE, loadLocal, saveLocal } from '../lib/docs'
+import { DOC_DRAG_TYPE, FOLDER_DRAG_TYPE, folderChoices, kindLabel, loadLocal, saveLocal } from '../lib/docs'
 import { ask, confirmDialog } from '../lib/ask'
 import EventDialog, { askScope, type EditTarget } from './EventDialog'
 import DocPicker from './DocPicker'
@@ -47,6 +47,8 @@ export const CALENDAR_CHANGED = 'studydocs:calendar-changed'
 
 interface Props {
   docs: DocEntry[]
+  /** Workspace folders, so whole folders can be linked. */
+  roots: RootInfo[]
   focus: CalendarFocus | null
   onOpenDoc: (id: string) => void
   onError: (err: unknown) => void
@@ -56,7 +58,8 @@ interface Props {
 type ViewType = 'timeGridWeek' | 'dayGridMonth'
 const keyOf = (uid: string, rid: string): string => `${uid}|${rid}`
 
-export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }: Props) {
+export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, onInfo }: Props) {
+  const folders = useMemo(() => folderChoices(docs, roots), [docs, roots])
   const hostRef = useRef<HTMLDivElement>(null)
   const calRef = useRef<Calendar | null>(null)
   const [title, setTitle] = useState('')
@@ -85,7 +88,7 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
     select: (_o: { uid: string; rid: string }) => {},
     newEvent,
     move: async (_arg: EventDropArg | EventResizeDoneArg) => {},
-    dropDoc: async (_o: CalOccurrence, _id: string) => {}
+    dropDoc: async (_o: CalOccurrence, _id: string, _kind: 'file' | 'folder') => {}
   })
   const selectedKey = selected ? keyOf(selected.uid, selected.rid) : ''
   const selectedKeyRef = useRef(selectedKey)
@@ -122,11 +125,15 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
     }
   }
 
-  handlers.current.dropDoc = async (o, id) => {
+  handlers.current.dropDoc = async (o, id, kind) => {
     let rid: string | null = o.rid
+    const name = kind === 'folder' ? (folders.find((f) => f.id === id)?.name ?? id) : (docs.find((d) => d.path === id)?.title ?? id)
     if (o.recurring) {
       const answer = await ask({
-        message: t('Gắn tài liệu vào buổi {0} hay cả môn "{1}"?', { 0: formatShortDate(o.start), 1: o.summary }),
+        message:
+          kind === 'folder'
+            ? t('Gắn thư mục "{0}" vào buổi {1} hay cả môn "{2}"?', { 0: name, 1: formatShortDate(o.start), 2: o.summary })
+            : t('Gắn tài liệu vào buổi {0} hay cả môn "{1}"?', { 0: formatShortDate(o.start), 1: o.summary }),
         buttons: [t('Buổi này'), t('Cả môn'), t('Huỷ')],
         cancelId: 2,
         defaultId: 0
@@ -135,9 +142,9 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
       rid = answer === 0 ? o.rid : null
     } else rid = null
     try {
-      await window.api.calendarLink(o.uid, rid, id)
-      const doc = docs.find((d) => d.path === id)
-      onInfo(t('Đã gắn "{0}" vào "{1}".', { 0: doc?.title ?? id, 1: o.summary }))
+      if (kind === 'folder') await window.api.calendarLinkFolder(o.uid, rid, id)
+      else await window.api.calendarLink(o.uid, rid, id)
+      onInfo(t('Đã gắn "{0}" vào "{1}".', { 0: name, 1: o.summary }))
       setSelected({ uid: o.uid, rid: o.rid })
       refresh()
     } catch (err) {
@@ -200,7 +207,7 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
         el.dataset.key = keyOf(o.uid, o.rid)
         el.classList.toggle('is-selected', el.dataset.key === selectedKeyRef.current)
         el.title = `${o.summary}\n${formatTimeRange(o.start, o.end, o.allDay)}${o.location ? `\n${o.location}` : ''}`
-        const accepts = (e: DragEvent): boolean => !!e.dataTransfer?.types.includes(DOC_DRAG_TYPE)
+        const accepts = (e: DragEvent): boolean => !!e.dataTransfer && (e.dataTransfer.types.includes(DOC_DRAG_TYPE) || e.dataTransfer.types.includes(FOLDER_DRAG_TYPE))
         el.addEventListener('dragover', (e) => {
           if (!accepts(e)) return
           e.preventDefault()
@@ -210,11 +217,12 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
         el.addEventListener('dragleave', () => el.classList.remove('drop-target'))
         el.addEventListener('drop', (e) => {
           el.classList.remove('drop-target')
-          const id = e.dataTransfer?.getData(DOC_DRAG_TYPE)
-          if (!id) return
+          const doc = e.dataTransfer?.getData(DOC_DRAG_TYPE)
+          const folder = e.dataTransfer?.getData(FOLDER_DRAG_TYPE)
+          if (!doc && !folder) return
           e.preventDefault()
           e.stopPropagation()
-          void handlers.current.dropDoc(o, id)
+          void handlers.current.dropDoc(o, (doc || folder)!, doc ? 'file' : 'folder')
         })
       },
       eventClick: (arg) => {
@@ -437,11 +445,20 @@ export default function CalendarView({ docs, focus, onOpenDoc, onError, onInfo }
       {picker && detail && (
         <DocPicker
           docs={docs}
+          folders={folders}
           recurring={detail.occurrence.recurring}
           onClose={() => setPicker(false)}
           onPick={(id, scope) => {
             setPicker(false)
             run(() => window.api.calendarLink(detail.occurrence.uid, scope === 'this' ? detail.occurrence.rid : null, id))
+          }}
+          onPickFolder={(id, scope) => {
+            setPicker(false)
+            run(() => window.api.calendarLinkFolder(detail.occurrence.uid, scope === 'this' ? detail.occurrence.rid : null, id))
+          }}
+          onPickFiles={(scope) => {
+            setPicker(false)
+            run(() => window.api.calendarLinkFiles(detail.occurrence.uid, scope === 'this' ? detail.occurrence.rid : null))
           }}
         />
       )}
@@ -539,7 +556,7 @@ function EventPanel({ detail, onClose, onEdit, onDelete, onOpenDoc, onAddDoc, on
           t('Lần đầu bấm "Ghi chép buổi này", app sẽ hỏi lưu ghi chép của môn ở thư mục nào.')
         )}
       </p>
-      <p className="hint">{t('Mẹo: kéo một tài liệu từ thanh bên thả vào sự kiện để gắn nhanh.')}</p>
+      <p className="hint">{t('Mẹo: kéo một tài liệu hoặc thư mục từ thanh bên thả vào sự kiện để gắn nhanh.')}</p>
     </aside>
   )
 }
@@ -548,7 +565,10 @@ function LinkList({ links, onOpenDoc, onUnlink }: { links: CalLinkView[]; onOpen
   if (!links.length) return <p className="hint">{t('Chưa có tài liệu nào.')}</p>
   return (
     <ul className="event-links">
-      {links.map((l) => (
+      {links.map((l) =>
+        l.kind === 'folder' ? (
+          <FolderLink key={`${l.scope}:${l.path}`} link={l} onOpenDoc={onOpenDoc} onUnlink={onUnlink} />
+        ) : (
         <li key={`${l.scope}:${l.path}`}>
           {l.id ? (
             <button className="link-btn" title={l.path} onClick={() => onOpenDoc(l.id!)}>
@@ -563,7 +583,45 @@ function LinkList({ links, onOpenDoc, onUnlink }: { links: CalLinkView[]; onOpen
             ×
           </button>
         </li>
-      ))}
+        )
+      )}
     </ul>
+  )
+}
+
+/** A linked folder: its name, then the documents in it now (folded after a few). */
+function FolderLink({ link, onOpenDoc, onUnlink }: { link: CalLinkView; onOpenDoc: (id: string) => void; onUnlink: (l: CalLinkView) => void }) {
+  const [open, setOpen] = useState(false)
+  const docs = link.docs ?? []
+  const shown = open ? docs : docs.slice(0, 5)
+  return (
+    <li className="folder-link">
+      <div className="folder-link-head">
+        <span className="kind kind-folder">{t('THƯ MỤC')}</span>
+        <span className={link.id ? 'folder-name' : 'missing'} title={link.path}>
+          {link.title} {link.id ? `· ${t('{0} tài liệu', { 0: docs.length })}` : t('(không tìm thấy)')}
+        </span>
+        <button className="icon-btn small" aria-label={t('Bỏ liên kết')} title={t('Bỏ liên kết (thư mục không bị xoá)')} onClick={() => onUnlink(link)}>
+          ×
+        </button>
+      </div>
+      {shown.length > 0 && (
+        <ul className="folder-docs">
+          {shown.map((d) => (
+            <li key={d.id}>
+              <span className={`kind kind-${d.kind}`}>{kindLabel(d.kind as DocEntry['kind'])}</span>
+              <button className="link-btn" onClick={() => onOpenDoc(d.id)}>
+                {d.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {docs.length > 5 && (
+        <button className="link-btn small" onClick={() => setOpen(!open)}>
+          {open ? t('Thu gọn') : t('Xem cả {0} tài liệu', { 0: docs.length })}
+        </button>
+      )}
+    </li>
   )
 }

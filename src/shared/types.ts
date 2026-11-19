@@ -285,6 +285,11 @@ export interface DocsApi {
   calendarPreview(data: CalEventData): Promise<string[]>
   /** Links a document to the course (rid null) or to one class. */
   calendarLink(uid: string, rid: string | null, docId: string): Promise<void>
+  /** Links a folder of the workspace (its id in the sidebar tree): every document in it, also ones added later. */
+  calendarLinkFolder(uid: string, rid: string | null, folderId: string): Promise<void>
+  /** Picks files anywhere on the PC, opens them (outside the workspace: "File lẻ") and links them. Resolves with how many. */
+  calendarLinkFiles(uid: string, rid: string | null): Promise<number>
+  /** Removes a linked document or folder (by its stored path). */
   calendarUnlink(uid: string, rid: string | null, filePath: string): Promise<void>
   /** The classes and courses a document is linked to. */
   calendarForDoc(docId: string): Promise<CalDocRef[]>

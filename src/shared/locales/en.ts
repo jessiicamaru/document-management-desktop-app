@@ -451,5 +451,18 @@ export const EN: Record<string, string> = {
   'Ngày kết thúc lặp lại': 'Repeat end date',
   'Số lần': 'Number of times',
   'lần': 'times',
-  'Lịch học': 'Calendar'
+  'Lịch học': 'Calendar',
+  'Thư mục này không nằm trong workspace.': 'This folder isn\'t in the workspace.',
+  'Chọn tài liệu để gắn vào lịch': 'Choose documents to link to the calendar',
+  'Tìm tài liệu hoặc thư mục…': 'Search documents or folders…',
+  'Thư mục (gồm cả tài liệu thêm vào sau)': 'Folders (documents added later are included)',
+  'THƯ MỤC': 'FOLDER',
+  'File ngoài workspace sẽ được thêm vào "File lẻ".': 'Files outside the workspace are added to "Single files".',
+  'Chọn file trên máy…': 'Choose files on this PC…',
+  'Gắn thư mục "{0}" vào buổi {1} hay cả môn "{2}"?': 'Link the folder "{0}" to the class on {1}, or to the whole course "{2}"?',
+  'Bỏ liên kết (thư mục không bị xoá)': 'Unlink (the folder is not deleted)',
+  'Thu gọn': 'Show less',
+  'Xem cả {0} tài liệu': 'Show all {0} documents',
+  'Mẹo: kéo một tài liệu hoặc thư mục từ thanh bên thả vào sự kiện để gắn nhanh.': 'Tip: drag a document or a folder from the sidebar onto an event to link it.',
+  'Gắn qua thư mục "{0}".': 'Linked through the folder "{0}".'
 }

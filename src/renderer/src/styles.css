@@ -685,3 +685,13 @@ dialog.doc-picker { width: min(620px, calc(100vw - 32px)); height: min(560px, ca
 .class-chip:hover { background: color-mix(in srgb, var(--chip) 22%, transparent); }
 .class-chip.more { cursor: default; --chip: var(--ink-faint); }
 @media (max-width: 1100px) { .event-panel { width: 280px; } }
+.kind.kind-folder { background: color-mix(in srgb, var(--ink-soft) 16%, transparent); color: var(--ink-soft); }
+.picker-group { margin: 8px 6px 4px; font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); }
+dialog.doc-picker footer .hint { margin: 0; }
+.folder-link { display: flex; flex-direction: column; align-items: stretch !important; gap: 2px; }
+.folder-link-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.folder-link-head .folder-name, .folder-link-head .missing { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-docs { list-style: none; margin: 0; padding: 0 0 0 14px; display: flex; flex-direction: column; gap: 1px; }
+.folder-docs li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.folder-docs .link-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.link-btn.small { font-size: 12px; align-self: flex-start; margin-left: 14px; }

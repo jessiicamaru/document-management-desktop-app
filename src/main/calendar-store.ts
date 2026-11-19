@@ -36,6 +36,8 @@ export interface StoredLink {
   path: string
   name: string
   hash?: string
+  /** A folder of the workspace: every document inside it (also ones added later). */
+  kind?: 'folder'
 }
 
 interface LinkEntry {
@@ -583,7 +585,7 @@ export class CalendarStore {
     for (const e of Object.values(this.links)) {
       for (const list of [e.series ?? [], ...Object.values(e.occ ?? {})]) {
         for (const l of list) {
-          if (l.path === oldPath) {
+          if (l.path === oldPath && l.kind !== 'folder') {
             Object.assign(l, next)
             changed = true
           }
@@ -640,7 +642,12 @@ export class CalendarStore {
       const add = (list: StoredLink[], extra: unknown): StoredLink[] => {
         for (const l of Array.isArray(extra) ? extra : []) {
           if (l && typeof l.path === 'string' && !list.some((x) => x.path === l.path))
-            list.push({ path: l.path, name: String(l.name ?? path.basename(l.path)), ...(typeof l.hash === 'string' ? { hash: l.hash } : {}) })
+            list.push({
+              path: l.path,
+              name: String(l.name ?? path.basename(l.path)),
+              ...(typeof l.hash === 'string' ? { hash: l.hash } : {}),
+              ...(l.kind === 'folder' ? { kind: 'folder' as const } : {})
+            })
         }
         return list
       }

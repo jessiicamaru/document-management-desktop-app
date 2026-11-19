@@ -21,7 +21,7 @@ import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 import { setLanguage, t } from '../shared/i18n'
 import { CalendarStore, nextStart, previewStarts, type CalendarBackup, type StoredLink } from './calendar-store'
-import { formatDate, formatTimeRange, type CalDocRef, type CalEventData, type CalEventDetail, type EditScope } from '../shared/calendar'
+import { formatDate, formatTimeRange, type CalDocRef, type CalEventData, type CalEventDetail, type CalLinkView, type EditScope } from '../shared/calendar'
 
 // Tests run with their own settings folder so they never touch your real settings.
 if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
@@ -680,14 +680,43 @@ function resolveLink(l: StoredLink): { id: string; title: string; abs: string } 
   return null
 }
 
+/** A folder of the workspace by its id in the sidebar tree ("<root key>" or "<root key>/<sub/folder>"). */
+async function folderLink(folderId: string): Promise<StoredLink> {
+  const [key, ...rest] = String(folderId).split('/')
+  const root = folderRoots().find((r) => r.key === key)
+  const rel = rest.join('/')
+  const abs = root && (rel ? resolveInLibrary(root.path, rel) : root.path)
+  const isDir = abs ? await fs.stat(abs).then((st) => st.isDirectory(), () => false) : false
+  if (!root || !abs || !isDir) throw new Error(t('Thư mục này không nằm trong workspace.'))
+  return { path: abs, name: rel ? path.basename(abs) : root.name, kind: 'folder' }
+}
+
+/** The documents in a linked folder now (it must be in a workspace folder). */
+function resolveFolder(l: StoredLink): { id: string; docs: { id: string; title: string; kind: string }[] } | null {
+  const root = folderRoots()
+    .filter((r) => isSameOrInside(l.path, r.path))
+    .sort((a, b) => b.path.length - a.path.length)[0]
+  if (!root) return null
+  const rel = relOf(root, l.path)
+  const docs = root.docs
+    .filter((d) => !rel || d.path.startsWith(`${rel}/`))
+    .sort((a, b) => a.path.localeCompare(b.path, 'vi'))
+    .map((d) => ({ id: `${root.key}/${d.path}`, title: d.title, kind: d.kind }))
+  return { id: rel ? `${root.key}/${rel}` : root.key, docs }
+}
+
 function calendarDetail(uid: string, rid: string): CalEventDetail {
   const store = cal()
   const occurrence = store.occurrence(uid, rid)
   const series = store.series(uid)
   if (!occurrence || !series) throw new Error(t('Sự kiện này không còn trong lịch.'))
-  const links = store.linksOf(uid, rid).map(({ scope, link }) => {
+  const links = store.linksOf(uid, rid).map(({ scope, link }): CalLinkView => {
+    if (link.kind === 'folder') {
+      const folder = resolveFolder(link)
+      return { kind: 'folder', id: folder?.id ?? null, path: link.path, title: link.name, scope, docs: folder?.docs ?? [] }
+    }
     const found = resolveLink(link)
-    return { id: found?.id ?? null, path: found?.abs ?? link.path, title: found?.title ?? link.name, scope }
+    return { kind: 'file', id: found?.id ?? null, path: found?.abs ?? link.path, title: found?.title ?? link.name, scope }
   })
   return { occurrence, series, links, notesFolder: store.notesFolder(uid) }
 }
@@ -698,11 +727,16 @@ function calendarRefsFor(id: string): CalDocRef[] {
   const loc = locate(String(id))
   if (!loc) return []
   const hash = loc.root.docs.find((d) => d.path === loc.rel)?.hash
-  const refs = calendar.refsTo((l) => samePath(l.path, loc.abs) || (!!hash && l.hash === hash && resolveLink(l)?.abs === loc.abs))
+  const own = (l: StoredLink): boolean => l.kind !== 'folder' && (samePath(l.path, loc.abs) || (!!hash && l.hash === hash && resolveLink(l)?.abs === loc.abs))
+  const inFolder = (l: StoredLink): boolean => l.kind === 'folder' && isSameOrInside(loc.abs, l.path) && !loc.root.loose
   const out: CalDocRef[] = []
-  for (const { uid, rid } of refs) {
+  for (const { uid, rid } of calendar.refsTo((l) => own(l) || inFolder(l))) {
     const occ = rid ? calendar.occurrence(uid, rid) : nextStart(calendar, uid)
-    if (occ) out.push({ uid, rid, at: occ.rid, summary: occ.summary, color: occ.color, start: occ.start, allDay: occ.allDay })
+    if (!occ || out.some((r) => r.uid === uid && r.rid === rid)) continue
+    // Linked on its own, or only through a folder it is in (the chip then names the folder).
+    const here = calendar.linksOf(uid, rid ?? '').filter((x) => x.scope === (rid ? 'this' : 'series')).map((x) => x.link)
+    const viaFolder = here.some(own) ? null : (here.find(inFolder)?.name ?? null)
+    out.push({ uid, rid, at: occ.rid, summary: occ.summary, color: occ.color, start: occ.start, allDay: occ.allDay, folder: viaFolder })
   }
   return out.sort((a, b) => (a.start < b.start ? -1 : 1))
 }
@@ -774,6 +808,24 @@ function registerCalendarIpc(): void {
   ipcMain.handle('calendar:delete', (_e, uid: string, rid: string, scope: EditScope) => cal().delete(str(uid), str(rid), scopeOf(scope)))
   ipcMain.handle('calendar:preview', (_e, data: CalEventData) => previewStarts(data))
   ipcMain.handle('calendar:link', (_e, uid: string, rid: string | null, docId: string) => cal().link(str(uid), rid ? str(rid) : null, linkOfDoc(docId), samePath))
+  ipcMain.handle('calendar:linkFolder', async (_e, uid: string, rid: string | null, folderId: string) =>
+    cal().link(str(uid), rid ? str(rid) : null, await folderLink(str(folderId)), samePath)
+  )
+  // Files from anywhere on the PC: opened like Ctrl+O (outside the workspace they go to "File lẻ"), then linked.
+  ipcMain.handle('calendar:linkFiles', async (_e, uid: string, rid: string | null) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win!, {
+      title: t('Chọn tài liệu để gắn vào lịch'),
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: t('Tài liệu'), extensions: ['md', 'markdown', 'html', 'htm', 'pdf', 'docx', 'txt', 'epub', 'mobi', 'azw3', 'azw'] },
+        { name: t('Ảnh'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }
+      ]
+    })
+    if (canceled || !filePaths.length) return 0
+    const ids = await addFiles(filePaths)
+    for (const id of ids) await cal().link(str(uid), rid ? str(rid) : null, linkOfDoc(id), samePath)
+    return ids.length
+  })
   ipcMain.handle('calendar:unlink', (_e, uid: string, rid: string | null, file: string) => cal().unlink(str(uid), rid ? str(rid) : null, str(file), samePath))
   ipcMain.handle('calendar:forDoc', (_e, id: string) => calendarRefsFor(id))
   ipcMain.handle('calendar:classNotes', (_e, uid: string, rid: string) => classNotes(str(uid), str(rid)))

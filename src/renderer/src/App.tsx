@@ -462,7 +462,7 @@ export default function App() {
           </div>
         ))}
         {view === 'calendar' ? (
-          <CalendarView docs={docs} focus={calendarFocus} onOpenDoc={(id) => void openDoc(id)} onError={notify} onInfo={inform} />
+          <CalendarView docs={docs} roots={lib?.roots ?? []} focus={calendarFocus} onOpenDoc={(id) => void openDoc(id)} onError={notify} onInfo={inform} />
         ) : current ? (
           <DocView
             key={current.path}

@@ -89,7 +89,8 @@ Status: **milestone 1 is built**, plus importing and exporting `.ics` files from
 - Sharing calendars, invites, time zones other than the PC's.
 - Spaced-repetition review schedule (declined earlier).
 
-## Open questions
+## Decided along the way
 
-- Default folder for "Notes for this class": ask on first use, then remember? Or one setting per course?
-- Should an event be able to link to a whole folder (all of a course's docs), not just single files?
+- "Notes for this class" asks for a folder the first time, per course, and remembers it (it can be changed in the event panel).
+- An event can link a whole folder of the workspace: every document in it, also ones added later. Documents inside show the class chip ("linked through the folder").
+- Files anywhere on the PC can be linked from the picker ("Choose files on this PC…"); outside the workspace they are added to "Single files".

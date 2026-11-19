@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { buildRrule, describeRrule, parseRrule, repeatPresets, type CalEventData } from '../src/shared/calendar'
 import { CalendarStore, nextStart } from '../src/main/calendar-store'
 import { setLanguage } from '../src/shared/i18n'
+import { folderChoices } from '../src/renderer/src/lib/docs'
+import type { DocEntry } from '../src/shared/types'
 
 const dirs: string[] = []
 const tmp = (): string => {
@@ -221,5 +223,28 @@ describe('CalendarStore', () => {
     const store = await CalendarStore.open(tmp())
     const uid = await store.create(lesson())
     expect(nextStart(store, uid, new Date(2026, 10, 12, 12))?.start).toBe('2026-11-17T07:00')
+  })
+})
+
+describe('linking folders', () => {
+  it('lists every workspace folder and sub-folder with how many documents it holds', () => {
+    const doc = (root: string, rel: string): DocEntry => ({ path: `${root}/${rel}`, root, rel, name: rel.split('/').pop()!, kind: 'md', title: rel, size: 1, mtime: 1 })
+    const docs = [doc('a1', 'mang/b1.md'), doc('a1', 'mang/lab/l1.md'), doc('a1', 'x.md'), doc('lo', 'y.md')]
+    const list = folderChoices(docs, [
+      { key: 'a1', name: 'Học kỳ 1', loose: false },
+      { key: 'lo', name: 'Downloads', loose: true }
+    ])
+    expect(list.map((f) => `${f.id} ${f.count}`)).toEqual(['a1 3', 'a1/mang 2', 'a1/mang/lab 1'])
+    expect(list[1]).toMatchObject({ name: 'mang', rel: 'mang', rootName: 'Học kỳ 1' })
+  })
+
+  it('a folder link is kept as a folder, also through a backup', async () => {
+    const a = await CalendarStore.open(tmp())
+    const uid = await a.create(lesson())
+    await a.link(uid, null, { path: 'D:/hk1/mang', name: 'mang', kind: 'folder' }, same)
+    await a.updateLinkPath('D:/hk1/mang', { path: 'D:/other', name: 'other' }) // only files follow a move by content
+    const b = await CalendarStore.open(tmp())
+    await b.merge(a.backup())
+    expect(b.linksOf(uid, '2026-11-03T07:00')).toEqual([{ scope: 'series', link: { path: 'D:/hk1/mang', name: 'mang', kind: 'folder' } }])
   })
 })

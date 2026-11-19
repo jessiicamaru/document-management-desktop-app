@@ -1272,6 +1272,43 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.event-panel section')[1]?.querySelectorAll('.event-links li').length === 1)
   check(calLinks()[eventUid]?.series?.[0]?.path === file(REACT), 'a document picked for the whole course is linked to every class')
 
+  // A whole folder, dragged from the sidebar tree: every document in it, also ones added later.
+  check((await page.getAttribute('.doc-list .row.folder:has-text("frontend")', 'draggable')) === 'true', 'folders in the sidebar can be dragged')
+  const frontendId = await page.evaluate(async () => {
+    const lib = await window.api.getLibrary()
+    const d = lib.docs.find((x) => x.rel.startsWith('frontend/'))
+    return `${d.root}/frontend`
+  })
+  await setAnswer('accept') // "Buổi này"
+  await page.evaluate((id) => {
+    const dt = new DataTransfer()
+    dt.setData('application/x-studydocs-folder', id)
+    document.querySelector('.fc-event[data-key$="|2030-03-05T07:00"]').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+  }, frontendId)
+  await page.waitForSelector('.event-panel .folder-link')
+  const folderCount = await page.locator('.event-panel .folder-link .folder-docs li').count()
+  check(calLinks()[eventUid]?.occ?.['2030-03-05T07:00']?.some((l) => l.kind === 'folder' && l.path === path.join(library, 'frontend')) && folderCount >= 3, `a folder dropped on a class is linked, with its documents listed (${folderCount})`)
+  writeFileSync(file('frontend/Bài mới.md'), '# Bài mới\n\nThêm sau khi gắn thư mục.')
+  const folderHas = (title) =>
+    page.evaluate(async ({ uid, title }) => (await window.api.calendarDetail(uid, '2030-03-05T07:00')).links.some((l) => l.kind === 'folder' && l.docs.some((d) => d.title === title)), { uid: eventUid, title })
+  for (let i = 0; i < 50 && !(await folderHas('Bài mới')); i++) await page.waitForTimeout(100)
+  const folderDocs = (await folderHas('Bài mới')) ? ['Bài mới'] : []
+  check(folderDocs.includes('Bài mới'), 'a document added to the folder later belongs to the class too')
+
+  // Files anywhere on the PC, picked from the dialog: opened as single files and linked.
+  const outside = path.join(workDir, 'Đề cương môn.md')
+  writeFileSync(outside, '# Đề cương môn\n\nTuần 1–15.')
+  await app.evaluate(({ dialog }, f) => {
+    globalThis.__realOpen5 = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] })
+  }, outside)
+  await page.click('.event-panel >> text=+ Gắn tài liệu…')
+  await page.click('dialog.doc-picker .segmented >> text=Cả môn')
+  await page.click('dialog.doc-picker >> text=Chọn file trên máy…')
+  await page.waitForFunction(() => [...document.querySelectorAll('.event-panel .event-links li')].some((li) => li.textContent.includes('Đề cương môn')))
+  await app.evaluate(({ dialog }) => (dialog.showOpenDialog = globalThis.__realOpen5))
+  check(calLinks()[eventUid]?.series?.some((l) => l.path === outside) && (await page.locator('.loose-group .row.doc:has-text("Đề cương môn")').count()) === 1, 'a file picked anywhere on the PC goes to "Single files" and is linked')
+
   // Notes for this class: a Markdown file from a template, opened and linked.
   const classNotesDir = path.join(library, 'ghi-chep')
   await app.evaluate(({ dialog }, dir) => {
@@ -1316,7 +1353,7 @@ try {
   await app.evaluate(({ dialog }, file) => (dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })), calBackup)
   await page.evaluate(() => window.api.exportData())
   const withCal = JSON.parse(readFileSync(calBackup, 'utf8'))
-  check(withCal.calendar?.ics?.includes(`UID:${eventUid}`) && withCal.calendar?.links?.[eventUid]?.series?.length === 1, 'backups include the calendar and its links')
+  check(withCal.calendar?.ics?.includes(`UID:${eventUid}`) && withCal.calendar?.links?.[eventUid]?.series?.length === 2, 'backups include the calendar and its links')
   await app.evaluate(({ dialog }) => {
     dialog.showOpenDialog = globalThis.__realOpen4
     dialog.showSaveDialog = globalThis.__realSave
