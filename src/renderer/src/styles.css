@@ -425,11 +425,8 @@ dialog.settings section.recovery { background: color-mix(in srgb, var(--accent) 
 /* Always reachable, also deep inside a long report. */
 .md-scroll > .docx-note { position: sticky; top: 8px; z-index: 2; backdrop-filter: blur(6px); background: color-mix(in srgb, var(--accent) 12%, var(--paper)); box-shadow: 0 2px 8px rgba(0, 0, 0, .12); }
 .docx-note .segmented { flex: none; }
-/* Word laid out in pages (docx-preview): pages on a grey desk, like the PDF view. */
-.docx-layout { margin-top: 12px; }
-.docx-layout .docx-wrapper { background: #525659; padding: 24px 16px 4px; border-radius: 0; }
-.docx-layout .docx-wrapper > section.docx { box-shadow: 0 1px 4px rgba(0, 0, 0, .35); margin-bottom: 20px; color: #000; }
-.docx-layout ::selection { background: rgba(0, 90, 255, .28); }
+/* Word laid out in pages (docx-preview), inside a frame that can't run scripts (ArticleView). */
+.docx-frame { display: block; width: 100%; height: 400px; margin-top: 12px; border: none; background: #525659; }
 .docx-note > span:nth-child(2) { flex: 1; }
 .docx-note .btn { flex: none; }
 .beta-badge { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }

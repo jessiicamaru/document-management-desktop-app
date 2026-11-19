@@ -98,6 +98,8 @@ interface DataInfo {
   mergedInto?: string
   /** Keys of old data you said do not belong to this folder. */
   notThis?: string[]
+  /** Tags/notes of v0.8 and older (.docs-*.json in the folder) were read in. */
+  legacyImported?: boolean
 }
 async function readDataInfo(key: string): Promise<DataInfo> {
   try {
@@ -329,11 +331,31 @@ async function openRoot(root: Root): Promise<void> {
     root.warning = t('Không mở được thư mục này (bị xoá, đổi tên hoặc ổ đĩa chưa cắm). Nếu không dùng nữa, bỏ nó khỏi workspace trong Cài đặt.')
     return
   }
+  await importLegacyData(root)
   root.docs = await scanRoot(root, [])
   await reconcileStores(root)
   // The folder may have been removed from the workspace while it was being scanned:
   // then don't start watching it, nobody would ever stop the watcher (issue #9).
   if (roots.includes(root)) watchRoot(root)
+}
+
+/**
+ * Up to v0.8 tags and notes were kept inside the documents' folder (.docs-meta.json,
+ * .docs-notes.json). Read them once into the app's data, so updating keeps everything.
+ * The old files are left untouched (the app no longer writes into documents' folders);
+ * info.json remembers it was done, so they are not read again.
+ */
+async function importLegacyData(root: Root): Promise<void> {
+  if (root.loose || !root.meta || !root.notes) return
+  if ((await readDataInfo(root.key)).legacyImported) return
+  const read = async (name: string): Promise<string | null> => fs.readFile(path.join(root.path, name), 'utf8').catch(() => null)
+  const [meta, notes] = await Promise.all([read('.docs-meta.json'), read('.docs-notes.json')])
+  // recover() also reads files with a Git conflict or a stray comma.
+  const metaDocs = meta ? root.meta.recover(meta) : null
+  const notesDocs = notes ? root.notes.recover(notes) : null
+  if (metaDocs) await root.meta.importDocs(metaDocs)
+  if (notesDocs) await root.notes.importDocs(notesDocs)
+  await writeDataInfo(root, { legacyImported: true })
 }
 
 /** The documents of a root: the whole folder, or only the files opened on their own. */

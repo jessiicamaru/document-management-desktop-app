@@ -26,6 +26,11 @@ cpSync(path.join(projectRoot, 'sample-library'), library, {
 const notes = path.join(workDir, 'notes')
 mkdirSync(path.join(notes, 'devops'), { recursive: true })
 writeFileSync(path.join(notes, 'devops', 'Docker cơ bản.md'), '# Docker cơ bản\n\nContainer chạy một tiến trình cô lập.\n')
+// Tags and notes as v0.8 and older kept them: inside the documents' folder (review: migration).
+writeFileSync(path.join(notes, 'devops', 'Kubernetes.md'), '# Kubernetes\n\nĐiều phối nhiều container.\n')
+const legacyMeta = JSON.stringify({ version: 1, docs: { 'devops/Kubernetes.md': { tags: ['k8s'], status: 'review' } } })
+writeFileSync(path.join(notes, '.docs-meta.json'), legacyMeta)
+writeFileSync(path.join(notes, '.docs-notes.json'), JSON.stringify({ version: 1, docs: { 'devops/Kubernetes.md': { items: [], docNote: { text: 'Ghi chú từ bản cũ', updated: 1 } } } }))
 // A web server on this PC, standing in for "the internet" in the safety checks.
 const webHits = []
 const web = createServer((req, res) => {
@@ -196,6 +201,15 @@ try {
   await page.waitForTimeout(300)
   const notesMeta = JSON.parse(readFileSync(path.join(dataDir(notes), 'meta.json'), 'utf8')).docs
   check(notesMeta['devops/Docker cơ bản.md']?.tags?.[0] === 'devops', "tags are stored in the app's data folder, per workspace folder")
+  const notesNotes = JSON.parse(readFileSync(path.join(dataDir(notes), 'notes.json'), 'utf8')).docs
+  check(
+    notesMeta['devops/Kubernetes.md']?.tags?.[0] === 'k8s' && notesMeta['devops/Kubernetes.md']?.status === 'review' && notesNotes['devops/Kubernetes.md']?.docNote?.text === 'Ghi chú từ bản cũ',
+    'tags, status and notes of v0.8 and older (.docs-*.json in the folder) are read in'
+  )
+  check(
+    readFileSync(path.join(notes, '.docs-meta.json'), 'utf8') === legacyMeta && JSON.parse(readFileSync(path.join(dataDir(notes), 'info.json'), 'utf8')).legacyImported === true,
+    'the old files are left untouched, and not read again'
+  )
   check(JSON.parse(readFileSync(path.join(dataDir(notes), 'info.json'), 'utf8')).path === notes, 'the data folder says which folder it belongs to')
   await page.screenshot({ path: shot('0-two-folders') })
 
@@ -744,15 +758,31 @@ try {
   await page.fill('.search input', '')
   // Word layout (docx-preview) by default: pages, Word's headings in the outline.
   await openDoc('CSS Flexbox — ghi chú')
-  await page.waitForSelector('.docx-layout section.docx', { timeout: 20000 })
+  await page.waitForSelector('iframe.docx-frame', { timeout: 20000 })
+  const inDocx = (selector) => page.waitForFunction((sel) => !!document.querySelector('iframe.docx-frame')?.contentDocument?.querySelector(sel), selector, { timeout: 20000 })
+  await inDocx('section.docx')
+  // The .docx's own CSS stays inside the frame, where no script can run and nothing loads from outside.
+  const isolation = await page.evaluate(() => ({
+    sandbox: document.querySelector('iframe.docx-frame').getAttribute('sandbox'),
+    leaked: [...document.querySelectorAll('style')].some((st) => st.textContent.includes('docx-wrapper'))
+  }))
+  check(isolation.sandbox === 'allow-same-origin' && !isolation.leaked, `Word layout is drawn in an isolated frame (sandbox: ${isolation.sandbox}; styles in the app page: ${isolation.leaked})`)
   await page.click('.panel-tabs >> text=Mục lục')
   await page.waitForFunction(() => document.querySelectorAll('.outline-item').length === 3, null, { timeout: 10000 })
   const outlineTexts = await page.locator('.outline-item').allTextContents()
   check(outlineTexts.join('|') === 'CSS Flexbox|Trục chính và trục phụ|Khi nào dùng Grid', `Word layout: pages drawn, headings in the outline (${outlineTexts.join(', ')})`)
-  await selectText(page, '.docx-layout span', 'CSS Grid')
+  await page.evaluate((txt) => {
+    const doc = document.querySelector('iframe.docx-frame').contentDocument
+    const span = [...doc.querySelectorAll('span')].find((e) => e.textContent === txt)
+    const range = doc.createRange()
+    range.selectNodeContents(span)
+    doc.getSelection().removeAllRanges()
+    doc.getSelection().addRange(range)
+    span.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }))
+  }, 'CSS Grid')
   await page.waitForSelector('.hl-toolbar')
   await page.click('.hl-toolbar .hl-swatch[title="Highlight vàng"]')
-  await page.waitForSelector('.docx-layout mark[data-sd-ann]')
+  await inDocx('mark[data-sd-ann]')
   const docxNotes = JSON.parse(readFileSync(notesFile, 'utf8')).docs['frontend/CSS Flexbox.docx']?.items ?? []
   check(docxNotes.length === 1 && docxNotes[0].quote === 'CSS Grid', 'Word: highlights are saved (the file is not changed)')
   await page.keyboard.press('Control+F')
@@ -768,7 +798,7 @@ try {
   check((await page.textContent('.article-docx strong')) === 'một trục', 'Word simple view: headings, bold text, and the same highlight')
   await page.screenshot({ path: shot('15b-docx-simple') })
   await page.click('.docx-note >> text=Bố cục Word')
-  await page.waitForSelector('.docx-layout section.docx')
+  await page.waitForSelector('iframe.docx-frame')
 
   await openDoc('Lệnh Git hay dùng')
   await page.waitForSelector('.article-txt pre.plain-text')
@@ -1165,7 +1195,7 @@ try {
   // data is still under its old path. A copy of it elsewhere is added now.
   step('28. A moved folder finds its tags and notes again')
   const movedNotes = path.join(workDir, 'notes moved')
-  cpSync(notes, movedNotes, { recursive: true })
+  cpSync(notes, movedNotes, { recursive: true, filter: (src) => !path.basename(src).startsWith('.docs-') }) // no old .docs-* files: only the moved data can match
   await setAnswer('accept') // "Chuyển sang đây"
   const askedBeforeMove = await page.evaluate(() => window.__smokeAsked)
   await app.evaluate(({ dialog }, folder) => {

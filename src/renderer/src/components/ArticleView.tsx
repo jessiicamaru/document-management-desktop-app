@@ -4,7 +4,9 @@
 //
 // Word has two views:
 //  - "Bố cục Word" (default): docx-preview lays the document out in pages, with its fonts,
-//    colours, table borders, alignment, headers and footers.
+//    colours, table borders, alignment, headers and footers. It is drawn inside an iframe
+//    that can't run scripts or load anything from the internet, so the CSS a .docx brings
+//    stays in there and can't restyle the app (review: Word layout).
 //  - "Xem đơn giản": mammoth keeps only the text and its structure, as a reading page.
 // If docx-preview can't draw a file, the simple view is used instead.
 
@@ -14,7 +16,7 @@ import type { Annotation, DocEntry } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 import { decodeText } from '../../../shared/text'
 import { loadLocal, saveLocal } from '../lib/docs'
-import type { FindResult, ReaderCallbacks, ReaderHandle } from './reader'
+import type { FindResult, ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
 import { t } from '../../../shared/i18n'
 
 const anchoring = createAnchoring()
@@ -32,6 +34,21 @@ type Content = { mode: 'html'; html: string; note?: string } | { mode: 'layout';
 
 const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const arrayBufferOf = (bytes: Uint8Array): ArrayBuffer => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+
+/**
+ * The page the Word layout is drawn into. No scripts can run (sandbox without allow-scripts);
+ * same origin only so the app can draw into it and find highlights there. Nothing can be
+ * loaded from outside (CSP): pictures and fonts of the file are data:/blob: URLs.
+ */
+const FRAME_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:">
+<style>
+html, body { margin: 0; background: #525659; }
+body { overflow-y: hidden; overflow-x: auto; }
+.docx-wrapper { background: #525659 !important; padding: 24px 16px 4px !important; }
+.docx-wrapper > section.docx { box-shadow: 0 1px 4px rgba(0, 0, 0, .35); margin-bottom: 20px !important; color: #000; }
+::selection { background: rgba(0, 90, 255, .28); }
+</style></head><body><div id="sd-styles"></div><div id="sd-body"></div></body></html>`
 
 /** What to show for the document. */
 async function load(doc: DocEntry, view: WordView): Promise<Content> {
@@ -80,8 +97,10 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
   const cb = useRef(props)
   cb.current = props
   const scrollRef = useRef<HTMLDivElement>(null)
-  const articleRef = useRef<HTMLElement>(null)
-  const stylesRef = useRef<HTMLDivElement>(null)
+  /** The element holding the text: the article, or the body of the Word layout frame. */
+  const articleRef = useRef<HTMLElement | null>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const [frameDoc, setFrameDoc] = useState<Document | null>(null)
   const headings = useRef<HTMLElement[]>([])
   const annotations = useRef<Annotation[]>([])
   const [content, setContent] = useState<Content | null>(null)
@@ -93,6 +112,7 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
   useEffect(() => {
     let alive = true
     setContent(null)
+    setFrameDoc(null)
     load(doc, view)
       .then((c) => alive && setContent(c))
       .catch((err) => alive && cb.current.onError(err))
@@ -101,6 +121,13 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     }
   }, [doc.path, doc.mtime, doc.kind, view])
   useEffect(() => setLayoutFailed(false), [doc.path, doc.mtime])
+
+  /** A rectangle inside the frame, in app window coordinates. */
+  function toApp(r: ScreenRect, node: Node): ScreenRect {
+    if (node.ownerDocument === document || !frameRef.current) return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    const f = frameRef.current.getBoundingClientRect()
+    return { left: r.left + f.left, top: r.top + f.top, right: r.right + f.left, bottom: r.bottom + f.top }
+  }
 
   function drawAnnotations(): void {
     const el = articleRef.current
@@ -113,26 +140,41 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     const top = scroller.getBoundingClientRect().top
     let active = -1
     for (let i = 0; i < headings.current.length; i++) {
-      if (headings.current[i].getBoundingClientRect().top - top <= 90) active = i
+      const h = headings.current[i]
+      if (toApp(h.getBoundingClientRect(), h).top - top <= 90) active = i
       else break
     }
     cb.current.onReading(Math.round(scroller.scrollTop), active)
   }
 
-  // Draw (Word layout), then: links open in the browser, outline from the headings, highlights.
+  // Draw (Word layout, once its frame is ready), then: links open in the browser, outline
+  // from the headings, highlights.
   useEffect(() => {
-    const el = articleRef.current
-    if (!el || !content) return
+    if (!content) return
+    if (content.mode === 'layout' && !frameDoc) return
+    const el = content.mode === 'layout' ? frameDoc!.getElementById('sd-body') : articleRef.current
+    if (!el) return
+    articleRef.current = el
     let alive = true
+    let stopResize: (() => void) | undefined
     void (async () => {
-      if (content.mode !== 'layout' && stylesRef.current) stylesRef.current.textContent = '' // styles of a Word layout shown before
       if (content.mode === 'layout') {
         try {
-          await drawWordLayout(content.bytes, el, stylesRef.current!)
+          await drawWordLayout(content.bytes, el, frameDoc!.getElementById('sd-styles')!)
         } catch (err) {
           console.warn('Word layout failed, using the simple view', err)
           if (alive) setLayoutFailed(true)
           return
+        }
+        // The frame is as tall as the pages, so the view scrolls as one page with the bar above.
+        const frame = frameRef.current
+        const win = frameDoc!.defaultView as (Window & typeof globalThis) | null
+        if (frame && win) {
+          const fit = (): void => void (frame.style.height = `${frameDoc!.documentElement.scrollHeight}px`)
+          const ro = new win.ResizeObserver(fit)
+          ro.observe(frameDoc!.body)
+          fit()
+          stopResize = () => ro.disconnect()
         }
       }
       if (!alive) return
@@ -155,8 +197,9 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     })()
     return () => {
       alive = false
+      stopResize?.()
     }
-  }, [content])
+  }, [content, frameDoc])
 
   useEffect(() => {
     const scroller = scrollRef.current
@@ -170,40 +213,56 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     return () => scroller.removeEventListener('scroll', onScroll)
   }, [])
 
-  // Selecting text shows the highlight toolbar; clicking a highlight opens its note.
+  // Selecting text shows the highlight toolbar; clicking a highlight opens its note. In the
+  // Word frame, app shortcuts (Ctrl+F, Ctrl+K, Alt+←...) are passed on to the app.
   useEffect(() => {
-    const el = articleRef.current
+    const el = content?.mode === 'layout' ? frameDoc?.getElementById('sd-body') : articleRef.current
     if (!el) return
+    const win = el.ownerDocument.defaultView!
+    const selection = (): Selection | null => win.getSelection()
+    const info = () => {
+      const i = anchoring.selectionInfo(el, selection())
+      return i && { ...i, rect: toApp(i.rect, el) }
+    }
     const onMouseUp = (e: MouseEvent): void => {
       if (e.button !== 0) return
       const mark = (e.target as HTMLElement).closest('mark[data-sd-ann]')
-      const sel = getSelection()
+      const sel = selection()
       if (mark && (!sel || sel.isCollapsed)) {
-        cb.current.onAnnotationClick(mark.getAttribute('data-sd-ann')!, mark.getBoundingClientRect())
+        cb.current.onAnnotationClick(mark.getAttribute('data-sd-ann')!, toApp(mark.getBoundingClientRect(), mark))
         return
       }
-      setTimeout(() => cb.current.onSelection(anchoring.selectionInfo(el, getSelection())), 0)
+      setTimeout(() => cb.current.onSelection(info()), 0)
     }
     const onKeyUp = (e: KeyboardEvent): void => {
-      if (e.shiftKey) cb.current.onSelection(anchoring.selectionInfo(el, getSelection()))
+      if (e.shiftKey) cb.current.onSelection(info())
+    }
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (el.ownerDocument === document || !(e.ctrlKey || e.metaKey || e.altKey || e.key === 'Escape')) return
+      const copy = new KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, shiftKey: e.shiftKey, bubbles: true, cancelable: true })
+      window.dispatchEvent(copy)
+      if (copy.defaultPrevented) e.preventDefault()
     }
     el.addEventListener('mouseup', onMouseUp)
     el.addEventListener('keyup', onKeyUp)
+    el.ownerDocument.addEventListener('keydown', onKeyDown)
     return () => {
       el.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('keyup', onKeyUp)
+      el.ownerDocument.removeEventListener('keydown', onKeyDown)
     }
-  }, [content?.mode])
+  }, [content?.mode, frameDoc])
 
   // ---------- find (Ctrl+F) ----------
   const found = useRef<Range[]>([])
   const foundIndex = useRef(0)
+  const findDoc = (): Document => articleRef.current?.ownerDocument ?? document
   function showFound(): FindResult {
-    anchoring.showFind(document, found.current, foundIndex.current)
+    anchoring.showFind(findDoc(), found.current, foundIndex.current)
     const current = found.current[foundIndex.current]
     const scroller = scrollRef.current
     if (current && scroller) {
-      const r = current.getBoundingClientRect()
+      const r = toApp(current.getBoundingClientRect(), current.startContainer)
       const box = scroller.getBoundingClientRect()
       if (r.top < box.top + 40 || r.bottom > box.bottom - 40) scroller.scrollTop += r.top - box.top - scroller.clientHeight / 3
       // Long lines in plain text (or wide Word pages) scroll sideways too.
@@ -227,9 +286,9 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
       const mark = articleRef.current?.querySelector<HTMLElement>(`mark[data-sd-ann="${CSS.escape(id)}"]`)
       if (!mark) return
       mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      mark.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+      mark.animate([{ outline: '3px solid #b4531f' }, { outline: '3px solid transparent' }], { duration: 1400 })
     },
-    clearSelection: () => getSelection()?.removeAllRanges(),
+    clearSelection: () => articleRef.current?.ownerDocument.defaultView?.getSelection()?.removeAllRanges(),
     find: async (query) => {
       found.current = articleRef.current ? anchoring.findAll(articleRef.current, query) : []
       foundIndex.current = 0
@@ -242,7 +301,7 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
     },
     clearFind: () => {
       found.current = []
-      anchoring.showFind(document, [], 0)
+      anchoring.showFind(findDoc(), [], 0)
     }
   }))
 
@@ -277,11 +336,23 @@ const ArticleView = forwardRef<ReaderHandle, Props>(function ArticleView(props, 
           </button>
         </div>
       )}
-      <div ref={stylesRef} className="docx-styles" />
       {content?.mode === 'layout' ? (
-        <div key="layout" ref={articleRef as React.RefObject<HTMLDivElement>} className="docx-layout" />
+        <iframe
+          key="layout"
+          ref={frameRef}
+          className="docx-frame"
+          title={doc.title}
+          sandbox="allow-same-origin"
+          srcDoc={FRAME_HTML}
+          onLoad={(e) => setFrameDoc(e.currentTarget.contentDocument)}
+        />
       ) : (
-        <article key="html" ref={articleRef} className={`markdown article-${doc.kind}`} dangerouslySetInnerHTML={{ __html: content?.mode === 'html' ? content.html : '' }} />
+        <article
+          key="html"
+          ref={(node) => void (articleRef.current = node)}
+          className={`markdown article-${doc.kind}`}
+          dangerouslySetInnerHTML={{ __html: content?.mode === 'html' ? content.html : '' }}
+        />
       )}
     </div>
   )

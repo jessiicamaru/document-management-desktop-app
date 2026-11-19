@@ -78,6 +78,7 @@ Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, th
     notes.json   highlights, notes
   ```
   - The key is a short hash of the path, so removing a folder from the workspace and adding it again keeps its data.
+  - Versions up to 0.8 kept these in `.docs-meta.json` / `.docs-notes.json` inside the folder. They are read in once, automatically; the old files are left as they are.
   - If a folder's path changed (renamed or moved, a USB drive with another letter, another PC), the app recognises its old data by the files' content and names, and asks whether to move the tags and notes to the new path. The old data stays on disk.
   - **Settings → Data → Back up to a file…** saves everything to one `.json` file; **Restore from a file…** merges it back (nothing is deleted). Data of a folder that isn't in the workspace at its old path can go to the matching folder you pick. Use it when moving to another PC or reinstalling Windows.
   - If a data file is broken, the app first copies it to `meta.corrupt-<time>.json` and shows **Recover…**: fix the backup by hand, then click **Merge**; the current data is kept.
@@ -94,6 +95,7 @@ Uninstalling: double-click `uninstall.bat`. It closes the app, uninstalls it, th
 - When exporting to PDF, the page can't fetch other files (CSP), and the export window can't reach the internet at all, except the Google Fonts servers many pages use (pictures from the web are left out of the PDF). Hidden files and folders (names starting with a dot) are never served to a page, and the app's data is outside the documents' folders, out of reach of pages.
 - Opening a single file doesn't open its whole folder: only the files you opened, plus the pictures, styles, fonts and scripts a page needs around it, can be loaded.
 - A page can't flood the browser with tabs: two links opened within 10 seconds go through, the third asks, more are dropped.
+- Word documents in the Word layout are drawn inside a frame where no script runs and nothing loads from the internet, so a document's own styles can't change the app around it.
 - SVG pictures are shown with `<img>`, where their scripts never run. Kindle books are decoded by a copy of foliate-js's `mobi.js` taken unchanged from its author's repository (see `src/vendor/foliate/README.md`).
 
 ## Reading the code
