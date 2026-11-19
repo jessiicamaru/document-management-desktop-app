@@ -323,4 +323,25 @@ describe('time zones and long series', () => {
     expect(of(fast)).toEqual(of(slow))
     expect(of(fast)).not.toContain('2026-11-19T07:00')
   })
+
+  it('a Mon–Fri series never gains a weekend class when skipping ahead (also overnight and multi-day events)', async () => {
+    const store = await CalendarStore.open(tmp())
+    const cases = [
+      { start: '2014-01-06T22:00', end: '2014-01-07T02:00', allDay: false }, // Monday night to Tuesday 02:00
+      { start: '2014-01-06', end: '2014-01-08', allDay: true } // two whole days
+    ]
+    for (const c of cases) {
+      for (const rule of ['FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR', 'FREQ=DAILY;INTERVAL=3;BYDAY=MO,TU,WE,TH,FR']) {
+        const fast = await store.create(lesson({ ...c, rrule: rule }))
+        const slow = await store.create(lesson({ ...c, rrule: `${rule};COUNT=2000` }))
+        // Each starting day of the range is tried, so the skipped-to start lands on every weekday.
+        for (let d = 0; d < 7; d++) {
+          const from = `2016-02-0${d + 1}`
+          const of = (uid: string): string[] => store.occurrencesOf(uid, from, '2016-02-20').map((o) => o.start)
+          expect(of(fast)).toEqual(of(slow))
+          expect(of(fast).map((s) => new Date(`${s.slice(0, 10)}T12:00`).getDay()).filter((w) => w === 0 || w === 6)).toEqual([])
+        }
+      }
+    }
+  }, 30000)
 })

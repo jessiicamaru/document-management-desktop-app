@@ -197,7 +197,10 @@ function fastForward(master: ICAL.Component, from: string): ICAL.Component | nul
   // The weekday in the event's own time zone (1 = Sunday in ical.js).
   const first = timeProp(master, 'dtstart')!
   if (byDay.length && !byDay.includes(DAY_CODES[first.dayOfWeek() - 1])) return null
-  const period = (rule.interval || 1) * (rule.freq === 'WEEKLY' ? 7 : 1)
+  // The start always counts as a class (RFC 5545), even on a day BYDAY leaves out. So the new
+  // start must fall on the same weekday: with BYDAY, "every N days" moves by N whole weeks
+  // (a multiple of both N days and 7 days), or "Mon–Fri" could start a phantom Saturday class.
+  const period = (rule.interval || 1) * (rule.freq === 'WEEKLY' || byDay.length ? 7 : 1)
   // Whole periods to skip, keeping one period of margin before `from` (events lasting several days).
   const days = Math.floor(minutesBetween(start.slice(0, 10), from) / 1440)
   const skip = Math.floor(days / period) - 1
@@ -212,6 +215,9 @@ function fastForward(master: ICAL.Component, from: string): ICAL.Component | nul
     moved.adjust(skip * period, 0, 0, 0)
     prop!.setValue(moved)
   }
+  // Belt and braces: never start on a day the rule doesn't have.
+  const moved = timeProp(clone, 'dtstart')!
+  if (byDay.length && !byDay.includes(DAY_CODES[moved.dayOfWeek() - 1])) return null
   return clone
 }
 
