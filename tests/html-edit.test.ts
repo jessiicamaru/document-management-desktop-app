@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyHtmlEdits, HtmlEditError } from '../src/main/html-edit'
+import { applyHtmlEdits, editModeInjection, HtmlEditError, sanitizeInline } from '../src/main/html-edit'
 
 const page = `<!DOCTYPE html>
 <html lang="vi">
@@ -53,5 +53,31 @@ describe('applyHtmlEdits', () => {
 
   it('refuses a path that does not exist', () => {
     expect(() => applyHtmlEdits(page, [{ path: [1, 9], tag: 'p', html: 'X' }])).toThrow(HtmlEditError)
+  })
+})
+
+describe('editing HTML with formatting', () => {
+  it('the script added to the page in edit mode is valid JavaScript', () => {
+    const html = editModeInjection('n0nce')
+    const js = html.slice(html.indexOf('>', html.indexOf('<script')) + 1, html.lastIndexOf('</script>'))
+    expect(() => new Function(js)).not.toThrow()
+  })
+
+  it('keeps bold, links and pictures; drops scripts, handlers and javascript: links', () => {
+    expect(sanitizeInline('Lưu <b>chuỗi</b> <a href="https://x.dev" class="k">link</a> <img src="data:image/webp;base64,AAAA" alt="">')).toBe(
+      'Lưu <b>chuỗi</b> <a href="https://x.dev" class="k">link</a> <img src="data:image/webp;base64,AAAA" alt="">'
+    )
+    expect(sanitizeInline('a<script>alert(1)</script><img src=x onerror="alert(1)"><a href=" JaVaScript:alert(1)">b</a>')).toBe('a<img src="x"><a>b</a>')
+    expect(sanitizeInline('<div>trong <p>khối</p></div><!-- c -->')).toBe('trong khối')
+    expect(sanitizeInline('<a href="data:text/html,x">y</a>')).toBe('<a>y</a>')
+    expect(sanitizeInline('Đoạn mới<b></b><i><b></b></i> và<br>dòng')).toBe('Đoạn mới và<br>dòng')
+  })
+
+  it('new paragraphs (Enter) go right after their block, on their own lines, indented like it', () => {
+    const out = applyHtmlEdits(page, [{ path: [1, 1, 0], tag: 'p', html: 'Lưu <strong>chuỗi</strong> event &amp; replay.', after: [{ tag: 'p', html: 'Đoạn <b>mới</b>' }, { tag: 'p', html: 'Thêm nữa' }] }])
+    expect(out).toContain('    <p>Lưu <strong>chuỗi</strong> event &amp; replay.</p>\n    <p>Đoạn <b>mới</b></p>\n    <p>Thêm nữa</p>\n    <ul>')
+    const li = applyHtmlEdits(page, [{ path: [1, 1, 1, 0], tag: 'li', html: 'Một', after: [{ tag: 'li', html: 'Một rưỡi' }] }])
+    expect(li).toContain('<ul><li>Một</li>\n<li>Một rưỡi</li><li>Hai</li></ul>')
+    expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'div' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
   })
 })

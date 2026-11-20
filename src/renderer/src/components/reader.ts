@@ -30,6 +30,10 @@ export interface ReaderHandle {
   restoreScroll(y: number): void
   /** Collects in-place text edits. Throws if they can't be saved safely. */
   collectChanges(): Promise<DocChanges>
+  /** HTML edit mode: a formatting command on the last selection in the page (bold, createLink…). */
+  format?(cmd: string, value?: string): void
+  /** HTML edit mode: puts a picture where the caret was. */
+  insertImage?(src: string): void
   /** Draws these highlights (replacing the ones shown before). */
   setAnnotations(items: Annotation[]): void
   /** Scrolls to a highlight and makes it blink. */

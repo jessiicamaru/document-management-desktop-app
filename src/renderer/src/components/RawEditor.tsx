@@ -9,6 +9,7 @@ import type { DocEntry } from '../../../shared/types'
 import { detectEol, fromLf, toLf, type Eol } from '../lib/eol'
 import { t } from '../../../shared/i18n'
 import { confirmDialog } from '../lib/ask'
+import { imageExtensions } from '../lib/cm-images'
 
 interface Props {
   doc: DocEntry
@@ -70,6 +71,8 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
         extensions: [
           basicSetup,
           doc.kind === 'html' ? html() : markdown(),
+          // Pasted images go in the file; embedded ones show as a small label instead of base64.
+          imageExtensions(() => doc.path, doc.kind === 'html' ? 'html' : 'md', (err) => cb.current.onError(err)),
           EditorView.lineWrapping,
           theme.of(darkQuery.matches ? oneDark : []),
           keymap.of([{ key: 'Mod-s', preventDefault: true, run: () => (void saveRef.current(), true) }]),

@@ -132,7 +132,7 @@ app.process().stderr?.on('data', (d) => (mainLog += d))
 const page = await app.firstWindow()
 // Errors of the app itself. Messages from inside documents (doc://...) don't count: the test
 // library has a page that deliberately tries forbidden things, and those must fail.
-page.on('console', (m) => m.type() === 'error' && !m.location().url.startsWith('doc://') && !/doc:\/\/library\//.test(m.text()) && errors.push(m.text()))
+page.on('console', (m) => m.type() === 'error' && !m.location().url.startsWith('doc://') && !/doc:\/\/library\//.test(m.text()) && errors.push(`${m.text()} (${m.location().url})`))
 page.on('pageerror', (e) => errors.push(String(e)))
 let dialogAnswer = 'dismiss'
 /**
@@ -379,7 +379,7 @@ try {
   await editFrame.locator('.sub').click()
   await page.keyboard.press('Control+End')
   await page.keyboard.type(' Chúc học vui!')
-  await page.keyboard.press('Enter') // must be ignored: no new paragraphs
+  await page.keyboard.press('Enter') // a new paragraph, left empty: nothing is added to the file
   await page.screenshot({ path: shot('6-html-inline-edit') })
   await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
   await editBarGone()
@@ -387,7 +387,7 @@ try {
   const htmlAfter = read(ES)
   check(
     htmlAfter === htmlBefore.replace('<h1>Event Sourcing</h1>', '<h1>Event Sourcing cơ bản</h1>').replace('lên production.</p>', 'lên production. Chúc học vui!</p>'),
-    'HTML inline edit changes only the typed text (Enter ignored)'
+    'HTML inline edit changes only the typed text (an empty new paragraph is not saved)'
   )
   await page.frameLocator('iframe.html-frame').locator('h1 >> text=Event Sourcing cơ bản').waitFor()
   check(true, 'HTML view reloads with the saved text')
@@ -422,6 +422,7 @@ try {
   // 12. Edit refused if the file changed on disk meanwhile.
   step("12. Edit refused if the file changed on disk meanwhile.")
   await openDoc('Lộ trình Backend')
+  await docPathIs(ROADMAP) // or "Sửa chữ" may still belong to the document before
   await page.click('.doc-controls >> text=Sửa chữ')
   await page.frameLocator('iframe.html-frame.editing').locator('h1[data-sd-block]').click()
   await page.keyboard.type('!')
@@ -1370,6 +1371,202 @@ try {
   })
   await setAnswer('dismiss')
   await page.screenshot({ path: shot('calendar') })
+
+  step('30. Files: new notes (.md / .html), folders, rename, move, Recycle Bin')
+  const libKey = keyOf(library)
+  const metaOfLib = () => JSON.parse(readFileSync(metaFile, 'utf8')).docs
+  const menuOn = async (selector, item) => {
+    await page.click(selector, { button: 'right' })
+    await page.click(`.tree-menu >> text=${item}`)
+  }
+  const nameDialog = async (values, kind) => {
+    await page.waitForSelector('dialog.name-dialog[open]')
+    const inputs = page.locator('dialog.name-dialog input')
+    for (let i = 0; i < values.length; i++) await inputs.nth(i).fill(values[i])
+    if (kind) await page.click(`dialog.name-dialog .name-kind button:has-text("${kind === 'md' ? 'Markdown' : 'HTML'}")`)
+    await page.click('dialog.name-dialog footer .btn.primary')
+  }
+  const backendRow = `.doc-list .row.folder[data-folder-id="${libKey}/backend"]`
+
+  await menuOn(backendRow, 'Bài mới…')
+  await nameDialog(['Ghi chép HTML'], 'html')
+  await docPathIs('backend/Ghi chép HTML.html')
+  const newHtml = read('backend/Ghi chép HTML.html')
+  check(newHtml.startsWith('<!doctype html>') && newHtml.includes('<h1>Ghi chép HTML</h1>') && newHtml.includes('<meta charset="utf-8">'), 'a new HTML note: a small page with its title, opened right away')
+
+  // Ctrl+N: next to the open note, and the last type chosen is the default.
+  await page.click('.sidebar-head .library-name')
+  await page.keyboard.press('Control+N')
+  await page.waitForSelector('dialog.name-dialog[open]')
+  const defaultKind = await page.textContent('dialog.name-dialog .name-kind button.active')
+  await nameDialog(['Bài mới tạo'], 'md')
+  await docPathIs('backend/Bài mới tạo.md')
+  check(defaultKind.includes('HTML') && read('backend/Bài mới tạo.md') === '# Bài mới tạo\n\n', `Ctrl+N creates a note next to the open one; the last type is remembered (${defaultKind})`)
+  // A name that is taken: the dialog stays open and says so.
+  await page.keyboard.press('Control+N')
+  await nameDialog(['Bài mới tạo'], 'md')
+  await page.waitForSelector('dialog.name-dialog .name-error')
+  check((await page.textContent('dialog.name-dialog .name-error')).includes('Đã có'), 'a name already used is refused, in the dialog')
+  await page.click('dialog.name-dialog footer >> text=Huỷ')
+
+  // F2 renames; tags follow.
+  await page.fill('.tag-editor input', 'moi')
+  await page.press('.tag-editor input', 'Enter')
+  await page.waitForTimeout(300)
+  await page.focus(`.doc-list .row.doc[data-id="${libKey}/backend/Bài mới tạo.md"]`)
+  await page.keyboard.press('F2')
+  await nameDialog(['Bài đã đổi tên'])
+  await docPathIs('backend/Bài đã đổi tên.md')
+  check(!existsSync(file('backend/Bài mới tạo.md')) && metaOfLib()['backend/Bài đã đổi tên.md']?.tags?.includes('moi'), 'F2 renames a note (the extension is kept), its tags follow, it stays open')
+
+  // Dragged onto another folder of the tree: moved there.
+  await page.evaluate(({ id, target }) => {
+    const dt = new DataTransfer()
+    dt.setData('application/x-studydocs-doc', id)
+    document.querySelector(`.doc-list .row.folder[data-folder-id="${target}"]`).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+  }, { id: `${libKey}/backend/Bài đã đổi tên.md`, target: `${libKey}/frontend` })
+  await docPathIs('frontend/Bài đã đổi tên.md')
+  check(existsSync(file('frontend/Bài đã đổi tên.md')) && metaOfLib()['frontend/Bài đã đổi tên.md']?.tags?.includes('moi'), 'a note dragged onto a folder moves there, with its tags')
+
+  // A new folder starts with a note; renaming the folder keeps the open note open.
+  await menuOn(`.doc-list .row.folder[data-folder-id="${libKey}/frontend"]`, 'Thư mục mới…')
+  await nameDialog(['Chương 1', 'Mở đầu'], 'md')
+  await docPathIs('frontend/Chương 1/Mở đầu.md')
+  await menuOn(`.doc-list .row.folder[data-folder-id="${libKey}/frontend/Chương 1"]`, 'Đổi tên…')
+  await nameDialog(['Chương một'])
+  await docPathIs('frontend/Chương một/Mở đầu.md')
+  check(existsSync(file('frontend/Chương một/Mở đầu.md')) && !existsSync(file('frontend/Chương 1')), 'new folder (with a first note), then renamed: the open note follows')
+
+  // Delete goes to the Recycle Bin, after asking (the test deletes for real instead of filling your Recycle Bin).
+  await app.evaluate(({ shell }) => {
+    globalThis.__realTrash = shell.trashItem
+    globalThis.__trashed = []
+    shell.trashItem = async (p) => {
+      globalThis.__trashed.push(p)
+      process.getBuiltinModule('fs').rmSync(p, { recursive: true })
+    }
+  })
+  await setAnswer('accept') // "Xoá"
+  await menuOn(`.doc-list .row.doc[data-id="${libKey}/frontend/Bài đã đổi tên.md"]`, 'Xoá (vào Thùng rác)')
+  await page.waitForSelector(`.doc-list .row.doc[data-id="${libKey}/frontend/Bài đã đổi tên.md"]`, { state: 'detached' })
+  const trashed = await app.evaluate(({ shell }) => ((shell.trashItem = globalThis.__realTrash), globalThis.__trashed))
+  check(trashed.length === 1 && trashed[0] === file('frontend/Bài đã đổi tên.md'), 'delete asks, then moves the note to the Recycle Bin')
+  await setAnswer('dismiss')
+
+  step('31. Pasting images: embedded in the file (base64), or saved in assets/')
+  // A 2000 × 1000 picture on the clipboard, pasted into Raw.
+  const pasteImage = () =>
+    page.evaluate(async () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 2000
+      canvas.height = 1000
+      const g = canvas.getContext('2d')
+      g.fillStyle = '#2f5d8a'
+      g.fillRect(0, 0, 2000, 1000)
+      g.fillStyle = '#fff'
+      g.fillRect(200, 200, 600, 300)
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'))
+      const dt = new DataTransfer()
+      dt.items.add(new File([blob], 'chup.png', { type: 'image/png' }))
+      document.querySelector('.raw-host .cm-content').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+    })
+  await menuOn('.root-row:has-text("library") .row.folder.root', 'Bài mới…')
+  await nameDialog(['Ảnh dán'], 'md')
+  await docPathIs('Ảnh dán.md')
+  await page.click('.doc-controls >> text=Raw')
+  await page.waitForSelector('.raw-host .cm-content')
+  await page.click('.raw-host .cm-content')
+  await page.keyboard.press('Control+End')
+  await pasteImage()
+  await page.waitForSelector('.raw-host .cm-data-url')
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.raw-toolbar .dirty-dot'))
+  const embedded = read('Ảnh dán.md')
+  const b64 = /!\[\]\(data:image\/webp;base64,([A-Za-z0-9+/=]+)\)/.exec(embedded)?.[1] ?? ''
+  check(b64.length > 100, `a pasted image is embedded in the file as WebP base64 (${Math.round((b64.length * 3) / 4 / 1024)} KB)`)
+  check((await page.textContent('.raw-host .cm-data-url')).startsWith('[ảnh '), 'Raw shows a label instead of the base64 text')
+  await page.click('.raw-toolbar >> text=Đóng raw')
+  await page.waitForSelector('.md-scroll img[src^="data:image/webp"]')
+  check(await page.evaluate(() => document.querySelector('.md-scroll img[src^="data:image/webp"]').naturalWidth === 1600), 'the note shows the embedded image, shrunk from 2000 to 1600 px')
+
+  // Settings → Library → "Save in assets/": the image goes next to the note.
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Thư viện')
+  await page.click('dialog.settings >> text=Lưu vào assets/')
+  await page.click('dialog.settings >> text=Xong')
+  await page.click('.doc-controls >> text=Raw')
+  await page.waitForSelector('.raw-host .cm-content')
+  await page.click('.raw-host .cm-content')
+  await page.keyboard.press('Control+End')
+  await pasteImage()
+  await page.waitForFunction(() => document.querySelector('.raw-host .cm-content').textContent.includes('assets/'))
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.raw-toolbar .dirty-dot'))
+  check(read('Ảnh dán.md').includes('![](assets/Ảnh-dán-1.webp)') && existsSync(file('assets/Ảnh-dán-1.webp')), 'with "Save in assets/", the image is a file next to the note')
+  await page.click('.raw-toolbar >> text=Đóng raw')
+  await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
+  await settingsTab('Thư viện')
+  await page.click('dialog.settings >> text=Nhúng vào file')
+  await page.click('dialog.settings >> text=Xong')
+
+  step('32. Writing Markdown: live preview, shortcuts, lists, checkboxes')
+  await menuOn('.root-row:has-text("library") .row.folder.root', 'Bài mới…')
+  await nameDialog(['Viết thử'], 'md')
+  await docPathIs('Viết thử.md')
+  await page.waitForSelector('.md-editor .cm-content')
+  check(true, 'a new Markdown note opens in the editor')
+  await page.waitForFunction(() => document.querySelector('.md-editor .cm-content').textContent.includes('Viết thử'))
+  await page.keyboard.type('Chữ ')
+  await page.keyboard.press('Control+B')
+  await page.keyboard.type('đậm')
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('- [ ] việc')
+  await page.keyboard.press('Enter') // continues the list: "- [ ] "
+  await page.keyboard.type('việc 2')
+  await page.waitForSelector('.md-editor .cm-md-strong')
+  const editorLook = await page.evaluate(() => ({
+    heading: !!document.querySelector('.md-editor .cm-line.cm-md-h1'),
+    hiddenHash: !document.querySelector('.md-editor .cm-line.cm-md-h1').textContent.startsWith('#'),
+    boxes: document.querySelectorAll('.md-editor .cm-md-task').length
+  }))
+  check(editorLook.heading && editorLook.hiddenHash && editorLook.boxes === 1, `live preview: big heading without "#", bold, a checkbox for the other line (${JSON.stringify(editorLook)})`)
+  await page.click('.md-editor .cm-md-task')
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'))
+  check(read('Viết thử.md') === '# Viết thử\n\nChữ **đậm**\n- [x] việc\n- [ ] việc 2', `what is typed is exactly what is saved; Ctrl+B, Enter in a list, ticking a box (${JSON.stringify(read('Viết thử.md'))})`)
+  await page.click('.md-toolbar >> text=Xong')
+  await page.waitForSelector('.md-scroll strong')
+  check((await page.locator('.md-scroll strong:has-text("đậm")').count()) === 1, 'after "Done" the note is shown as before')
+
+  step('33. Writing HTML: bold, Enter for a new paragraph, only that part of the file changes')
+  await openDoc('Ghi chép HTML')
+  await docPathIs('backend/Ghi chép HTML.html')
+  const noteBefore = read('backend/Ghi chép HTML.html')
+  await page.click('.doc-controls >> text=Sửa chữ')
+  await page.waitForSelector('.html-format')
+  let noteFrame = null
+  for (let i = 0; i < 100 && !noteFrame; i++) {
+    noteFrame = page.frames().find((fr) => fr.url().includes('?edit=1')) ?? null
+    if (!noteFrame) await page.waitForTimeout(100)
+  }
+  await noteFrame.waitForSelector('p[data-sd-block]')
+  await noteFrame.click('p[data-sd-block]')
+  await page.keyboard.press('Control+A')
+  await page.keyboard.type('Một câu ')
+  await page.keyboard.press('Control+B')
+  await page.keyboard.type('đậm')
+  await page.keyboard.press('Control+B')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Đoạn mới')
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
+  const noteAfter = read('backend/Ghi chép HTML.html')
+  const noteBody = (h) => h.slice(h.indexOf('<body>'))
+  check(
+    /<p>Một câu( |&nbsp;)<b>đậm<\/b><\/p>\n<p>Đoạn mới<\/p>/.test(noteAfter) && noteAfter.slice(0, noteAfter.indexOf('<body>')) === noteBefore.slice(0, noteBefore.indexOf('<body>')),
+    `HTML: bold kept, Enter made a new paragraph, the rest of the file is unchanged (${JSON.stringify(noteBody(noteAfter).slice(0, 160))})`
+  )
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

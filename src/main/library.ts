@@ -33,6 +33,9 @@ const READ_CONCURRENCY = 16
 
 /** Files up to this size are hashed (to recognise a renamed file by its content). */
 const MAX_HASH_BYTES = 5 * 1024 * 1024
+/** Notes (.md, .html) with embedded pictures get big; their text is still read up to this size. */
+const MAX_NOTE_BYTES = 50 * 1024 * 1024
+const maxRead = (kind: DocKind): number => (kind === 'md' || kind === 'html' ? MAX_NOTE_BYTES : MAX_HASH_BYTES)
 /** At most this much text of a book is indexed for search. */
 const MAX_BOOK_TEXT = 3 * 1024 * 1024
 
@@ -147,7 +150,7 @@ async function readEntry(
     const fallbackTitle = name.replace(/\.[^.]+$/, '')
     let title = ''
     let hash: string | undefined
-    if (stat.size <= MAX_HASH_BYTES) {
+    if (stat.size <= maxRead(kind)) {
       const buffer = await fs.readFile(abs)
       hash = createHash('sha1').update(buffer).digest('hex')
       if (kind === 'html') title = extractHtml(buffer.toString('utf8')).title
@@ -183,7 +186,7 @@ export async function extractText(abs: string, kind: DocKind): Promise<string> {
   }
   if (kind === 'pdf') return (await import('./pdf-text')).pdfText(abs, MAX_BOOK_TEXT)
   const stat = await fs.stat(abs)
-  if (stat.size > MAX_HASH_BYTES) return ''
+  if (stat.size > maxRead(kind)) return ''
   const source = await fs.readFile(abs, 'utf8')
   return kind === 'html' ? extractHtml(source).text : extractMarkdown(source).text
 }

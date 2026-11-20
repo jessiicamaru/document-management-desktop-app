@@ -23,11 +23,7 @@ export default function PrintPage({ id, withNotes }: { id: string; withNotes: bo
         setLanguage(ui.language)
         document.title = lib.docs.find((d) => d.path === id)?.title ?? 'Study Docs' // becomes the PDF title
         const el = ref.current!
-        el.innerHTML = renderMarkdown(source)
-        el.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
-          const src = img.getAttribute('src')!
-          if (!/^(https?:|data:|doc:)/i.test(src)) img.src = new URL(src, docUrl(id)).href
-        })
+        el.innerHTML = renderMarkdown(source, docUrl(id))
         const diagrams = el.querySelectorAll<HTMLElement>('pre.mermaid')
         if (diagrams.length) {
           const mermaid = await loadMermaid()

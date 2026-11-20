@@ -31,6 +31,16 @@ describe('extractMarkdown', () => {
   })
 })
 
+describe('embedded images', () => {
+  const b64 = 'A'.repeat(5000)
+  it('their base64 is not searchable text (Markdown and HTML)', () => {
+    const md = extractMarkdown(`# Bài\n\nTrước ![sơ đồ TCP](data:image/webp;base64,${b64}) sau`)
+    expect(md.text).toBe('Bài Trước sơ đồ TCP sau')
+    const html = extractHtml(`<p>Trước <img src="data:image/webp;base64,${b64}" alt="x"> sau</p>`)
+    expect(html.text).not.toContain('AAAA')
+  })
+})
+
 describe('resolveInLibrary', () => {
   const root = path.resolve('/lib')
   it('allows paths inside the library', () => {

@@ -3,12 +3,15 @@ import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta,
 import { errorMessage, kindLabel, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
 import { pruneReadingPositions } from './lib/positions'
-import Sidebar, { type SearchHit } from './components/Sidebar'
+import Sidebar, { type FileActions, type SearchHit } from './components/Sidebar'
+import NameDialog, { type NameDialogOptions } from './components/NameDialog'
 import DocView from './components/DocView'
 import SettingsDialog, { type SettingsTab } from './components/SettingsDialog'
 import { setLanguage, t } from '../../shared/i18n'
 import { ask, confirmDialog } from './lib/ask'
 import AskHost from './components/AskHost'
+import { setCurrentUi } from './lib/settings'
+import { requestWriting } from './lib/write-request'
 import CalendarView, { type CalendarFocus } from './components/CalendarView'
 import type { CalDocRef } from '../../shared/calendar'
 
@@ -47,6 +50,7 @@ export default function App() {
   // The main area shows documents or the calendar.
   const [view, setView] = useState<'docs' | 'calendar'>(() => loadLocal<'docs' | 'calendar'>('view', 'docs'))
   const [calendarFocus, setCalendarFocus] = useState<CalendarFocus | null>(null)
+  const [nameDialog, setNameDialog] = useState<NameDialogOptions | null>(null)
   const changeView = (next: 'docs' | 'calendar'): void => {
     setView(next)
     saveLocal('view', next)
@@ -127,6 +131,7 @@ export default function App() {
   useEffect(() => applyUiSettings(ui), [ui])
   // Before drawing anything, so every t() below uses the chosen language.
   setLanguage(ui.language)
+  setCurrentUi(ui)
   const saveUiTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   // Closing the window with unsaved edits: the main process asks what to do.
   const setDirty = useCallback((dirty: boolean) => {
@@ -279,6 +284,7 @@ export default function App() {
       } else if (key === 'ctrl+e') setRecentOpen((o) => !o)
       else if (key === 'ctrl+,') setSettingsOpen(true)
       else if (key === 'ctrl+o') void openFiles()
+      else if (key === 'ctrl+n') newNoteRef.current()
       // Ctrl+F: the open document shows its find bar (DocView listens for this event).
       else if (key === 'ctrl+f') window.dispatchEvent(new Event('studydocs:find'))
       else if (key === 'back' || key === 'forward') goHistory(key)
@@ -288,7 +294,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       let key: string | null = null
-      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f', 'o'].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
+      if ((e.ctrlKey || e.metaKey) && ['k', 'p', 'e', ',', 'f', 'o', 'n'].includes(e.key.toLowerCase())) key = `ctrl+${e.key.toLowerCase()}`
       if (e.altKey && e.key === 'ArrowLeft') key = 'back'
       if (e.altKey && e.key === 'ArrowRight') key = 'forward'
       if (!key) return
@@ -382,6 +388,118 @@ export default function App() {
 
   const current = docs.find((d) => d.path === selected) ?? null
 
+  // ---------- files: new note, new folder, rename, move, Recycle Bin ----------
+
+  /** The open document is inside `id` (a document, or a folder and everything below it). */
+  const touches = useCallback((id: string, isFolder: boolean) => !!selected && (selected === id || (isFolder && selected.startsWith(`${id}/`))), [selected])
+  /** Unsaved edits of the open document: ask before renaming, moving or deleting it. */
+  const okToChange = useCallback(
+    async (id: string, isFolder: boolean): Promise<boolean> => {
+      if (!touches(id, isFolder) || !dirtyRef.current) return true
+      const yes = await confirmDialog({
+        message: t('Bài đang mở có thay đổi chưa lưu. Tiếp tục và bỏ các thay đổi đó?'),
+        ok: t('Bỏ thay đổi'),
+        cancel: t('Ở lại'),
+        danger: true
+      })
+      if (yes) setDirty(false)
+      return yes
+    },
+    [setDirty, touches]
+  )
+  /** After a rename or move, the open document stays open at its new place. */
+  const follow = useCallback(
+    (oldId: string, newId: string, isFolder: boolean) => {
+      if (!selected || oldId === newId) return
+      if (selected === oldId) void openDoc(newId)
+      else if (isFolder && selected.startsWith(`${oldId}/`)) void openDoc(newId + selected.slice(oldId.length))
+    },
+    [openDoc, selected]
+  )
+
+  const files: FileActions = useMemo(
+    () => ({
+      newNote: (folderId) =>
+        setNameDialog({
+          title: t('Bài mới'),
+          fields: [{ label: t('Tên bài'), value: '', placeholder: t('Ví dụ: Bài 3 - TCP và UDP') }],
+          kind: ui.newNoteKind,
+          okLabel: t('Tạo'),
+          onSubmit: async ([name], kind) => {
+            const id = await window.api.newNote(folderId, name, kind)
+            if (kind !== ui.newNoteKind) changeUi({ ...ui, newNoteKind: kind })
+            requestWriting(id)
+            await openDoc(id)
+          }
+        }),
+      newFolder: (folderId) =>
+        setNameDialog({
+          title: t('Thư mục mới'),
+          fields: [
+            { label: t('Tên thư mục'), value: '', placeholder: t('Ví dụ: Lập trình mạng') },
+            { label: t('Bài đầu tiên trong thư mục'), value: t('Ghi chú') }
+          ],
+          kind: ui.newNoteKind,
+          hint: t('Thư mục trống không hiện trong danh sách, nên app tạo luôn một bài trong đó.'),
+          okLabel: t('Tạo'),
+          onSubmit: async ([folderName, noteName], kind) => {
+            const id = await window.api.newFolder(folderId, folderName, noteName, kind)
+            if (kind !== ui.newNoteKind) changeUi({ ...ui, newNoteKind: kind })
+            requestWriting(id)
+            await openDoc(id)
+          }
+        }),
+      rename: (id, isFolder, name) =>
+        setNameDialog({
+          title: isFolder ? t('Đổi tên thư mục') : t('Đổi tên bài'),
+          fields: [{ label: t('Tên mới'), value: name }],
+          hint: isFolder ? undefined : t('Bỏ phần đuôi (.md, .html…) thì app giữ đuôi cũ. Tag, ghi chú và lịch đi theo bài.'),
+          okLabel: t('Đổi tên'),
+          onSubmit: async ([next]) => {
+            if (!(await okToChange(id, isFolder))) return
+            follow(id, await window.api.renameItem(id, isFolder, next), isFolder)
+          }
+        }),
+      move: async (id, isFolder, targetFolderId) => {
+        if (!(await okToChange(id, isFolder))) return
+        try {
+          const newId = await window.api.moveItem(id, isFolder, targetFolderId)
+          if (newId !== id) inform(t('Đã chuyển sang thư mục khác.'))
+          follow(id, newId, isFolder)
+        } catch (err) {
+          notify(err)
+        }
+      },
+      trash: async (id, isFolder, name) => {
+        const yes = await confirmDialog({
+          message: isFolder ? t('Chuyển thư mục "{0}" và mọi file trong đó vào Thùng rác?', { 0: name }) : t('Chuyển "{0}" vào Thùng rác?', { 0: name }),
+          detail: t('Có thể khôi phục lại từ Thùng rác của Windows.'),
+          ok: t('Xoá'),
+          cancel: t('Huỷ'),
+          danger: true
+        })
+        if (!yes) return
+        if (touches(id, isFolder)) setDirty(false)
+        window.api.trashItem(id, isFolder).catch(notify)
+      }
+    }),
+    [changeUi, follow, inform, notify, okToChange, openDoc, setDirty, touches, ui]
+  )
+
+  /** Ctrl+N: a new note next to the open document, else in the first workspace folder. */
+  const newNoteHere = useCallback(() => {
+    const roots = (lib?.roots ?? []).filter((r) => !r.loose && r.available)
+    const inWorkspace = current && roots.some((r) => r.key === current.root)
+    const folderId = inWorkspace ? (current.rel.includes('/') ? `${current.root}/${current.rel.replace(/\/[^/]*$/, '')}` : current.root) : roots[0]?.key
+    if (!folderId) {
+      notify(new Error(t('Hãy thêm một thư mục vào workspace trước: bài mới được lưu trong thư mục đó.')))
+      return
+    }
+    files.newNote(folderId)
+  }, [current, files, lib?.roots, notify])
+  const newNoteRef = useRef(newNoteHere)
+  newNoteRef.current = newNoteHere
+
   /** Shows the calendar; a document with unsaved edits asks first (it is closed). */
   const showCalendar = useCallback(
     async (focus?: Omit<CalendarFocus, 'n'>) => {
@@ -430,6 +548,7 @@ export default function App() {
         onToggleCalendar={() => (view === 'calendar' ? changeView('docs') : void showCalendar())}
         onOpenFiles={openFiles}
         onRemoveLoose={(p) => window.api.removeLooseFile(p).catch(notify)}
+        files={files}
         sort={ui.sidebarSort}
       />
       <main className="content">
@@ -505,6 +624,7 @@ export default function App() {
           lib={lib}
         />
       )}
+      {nameDialog && <NameDialog options={nameDialog} onClose={() => setNameDialog(null)} />}
       <AskHost />
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (

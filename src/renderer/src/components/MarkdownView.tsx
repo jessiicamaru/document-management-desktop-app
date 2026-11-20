@@ -64,11 +64,30 @@ md.core.ruler.push('heading_ids', (state) => {
   })
 })
 
-/** Renders a whole .md file (front matter skipped) to safe HTML with source ranges. */
-export function renderMarkdown(source: string): string {
+/**
+ * Renders a whole .md file (front matter skipped) to safe HTML with source ranges.
+ * `base` (the note's doc:// URL) makes relative picture paths ("assets/a.webp") absolute right
+ * away: the browser starts loading pictures as soon as the HTML is inserted, and would otherwise
+ * look for them next to the app.
+ */
+export function renderMarkdown(source: string, base?: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
   const env = { lineStarts: lineStartsOf(body), offset: source.length - body.length, length: body.length, source: body }
-  return DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true } })
+  const html = DOMPurify.sanitize(md.render(body, env), { USE_PROFILES: { html: true, svg: true, svgFilters: true, mathMl: true } })
+  if (!base || !/<img\b/i.test(html)) return html
+  // A <template> is inert: nothing in it loads while the paths are fixed.
+  const tpl = document.createElement('template')
+  tpl.innerHTML = html
+  tpl.content.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
+    const src = img.getAttribute('src')!
+    if (/^(https?:|data:|doc:|blob:)/i.test(src)) return
+    try {
+      img.setAttribute('src', new URL(src, base).href)
+    } catch {
+      img.removeAttribute('src')
+    }
+  })
+  return tpl.innerHTML
 }
 
 /** Blocks you can edit as text. Paragraphs with formulas are left alone: their text isn't the source. */
@@ -133,7 +152,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
   }, [doc.path, doc.mtime, editing])
 
   const shown = editing ? source : (sourceOverride ?? source)
-  const html = useMemo(() => (shown === null ? '' : renderMarkdown(shown)), [shown])
+  const html = useMemo(() => (shown === null ? '' : renderMarkdown(shown, docUrl(doc.path))), [shown, doc.path])
 
   // After rendering: fix relative image paths and draw Mermaid diagrams.
   useEffect(() => {
@@ -301,7 +320,7 @@ const MarkdownView = forwardRef<ReaderHandle, Props>(function MarkdownView(props
 
     // Safety check: the new file must render to exactly the text you see now.
     const check = document.createElement('div')
-    check.innerHTML = renderMarkdown(next)
+    check.innerHTML = renderMarkdown(next, docUrl(doc.path))
     const after = editableBlocks(check).map((e) => plainText(e).trim())
     const expected = blocks.current.map((b) => plainText(b.el).trim())
     if (after.length !== expected.length || after.some((t, i) => t !== expected[i])) {

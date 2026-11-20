@@ -658,6 +658,38 @@ export class CalendarStore {
     return this.notesFolders[uid] ?? null
   }
 
+  /**
+   * A file or folder was renamed or moved in the app: links to it (or to anything below it)
+   * and notes folders follow. `key` makes paths comparable (case on Windows).
+   */
+  async movePath(from: string, to: string, key: (p: string) => string): Promise<void> {
+    const sep = from.includes('\\') ? '\\' : '/'
+    const moved = (p: string): string | null => {
+      if (key(p) === key(from)) return to
+      return key(p).startsWith(key(from + sep)) ? to + p.slice(from.length) : null
+    }
+    let changed = false
+    for (const e of Object.values(this.links)) {
+      for (const list of [e.series ?? [], ...Object.values(e.occ ?? {})]) {
+        for (const l of list) {
+          const next = moved(l.path)
+          if (next === null) continue
+          l.path = next
+          if (key(next) === key(to)) l.name = to.split(/[\\/]/).pop() ?? l.name
+          changed = true
+        }
+      }
+    }
+    for (const [uid, folder] of Object.entries(this.notesFolders)) {
+      const next = moved(folder)
+      if (next !== null) {
+        this.notesFolders[uid] = next
+        changed = true
+      }
+    }
+    if (changed) await this.save()
+  }
+
   async setNotesFolder(uid: string, folder: string): Promise<void> {
     this.notesFolders[uid] = folder
     await this.save()

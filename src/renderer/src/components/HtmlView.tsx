@@ -3,6 +3,8 @@ import type { DocEntry, HtmlBlockEdit } from '../../../shared/types'
 import { docUrl } from '../lib/docs'
 import type { FindResult, ReaderCallbacks, ReaderHandle, ScreenRect } from './reader'
 import { t } from '../../../shared/i18n'
+import { imageSource } from '../lib/paste-image'
+import { currentUi } from '../lib/settings'
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -14,6 +16,9 @@ interface Props extends ReaderCallbacks {
   onCancelShortcut: () => void
   /** App shortcuts typed while the page has the keyboard focus. */
   onShortcut: (key: string) => void
+  /** Edit mode: Ctrl+K in the page asks for a link. */
+  onLinkRequest?: () => void
+  onError?: (err: unknown) => void
 }
 
 /**
@@ -103,6 +108,19 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
           pending.current.get(msg.id)?.(msg.edits)
           pending.current.delete(msg.id)
           break
+        case 'link':
+          p.onLinkRequest?.()
+          break
+        case 'image':
+          // A picture pasted in the page: shrunk and embedded (or saved in assets/) here, then sent back.
+          if (!(msg.file instanceof Blob)) break
+          imageSource(p.doc.path, msg.file, currentUi().pasteImages)
+            .then((src) => post({ type: 'image-src', id: msg.id, src }))
+            .catch((err) => {
+              post({ type: 'image-src', id: msg.id, src: null })
+              p.onError?.(err)
+            })
+          break
       }
     }
     window.addEventListener('message', onMessage)
@@ -126,6 +144,8 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
     find: (query) => askPage({ type: 'find', query }),
     findStep: (dir) => askPage({ type: 'find-step', dir }),
     clearFind: () => post({ type: 'find-clear' }),
+    format: (cmd, value) => post({ type: 'format', cmd, value }),
+    insertImage: (src) => post({ type: 'insert-image', src }),
     collectChanges: () =>
       new Promise((resolve, reject) => {
         const win = frameRef.current?.contentWindow

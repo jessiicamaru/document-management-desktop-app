@@ -178,6 +178,26 @@ export abstract class DocStore<V extends DocKeyed> {
   }
 
   /**
+   * A file or folder was renamed or moved in the app: its entries follow, from `from` to `to`
+   * (paths in this folder; a folder takes everything below it). Returns how many moved.
+   */
+  moveEntries(from: string, to: string): Promise<number> {
+    return this.enqueue(async () => {
+      const next = { ...this.docs }
+      let n = 0
+      for (const [p, entry] of Object.entries(this.docs)) {
+        const moved = p === from ? to : p.startsWith(`${from}/`) ? `${to}${p.slice(from.length)}` : null
+        if (moved === null) continue
+        delete next[p]
+        next[moved] = next[moved] ? this.mergeEntry(next[moved], entry) : entry
+        n++
+      }
+      if (n) await this.write(next)
+      return n
+    })
+  }
+
+  /**
    * Called after every scan. Moves entries of files that disappeared onto new files
    * that are clearly the same document (same content hash, or same file name), and
    * remembers hash/name for entries that don't have them yet.

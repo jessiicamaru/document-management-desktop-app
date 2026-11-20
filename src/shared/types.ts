@@ -151,6 +151,10 @@ export interface UiSettings {
   showImages: boolean
   /** Interface language (see shared/i18n.ts). */
   language: 'vi' | 'en'
+  /** Type of a new note (the last one chosen). */
+  newNoteKind: 'md' | 'html'
+  /** Pasted images: embedded in the file (base64) or saved in an assets/ folder next to it. */
+  pasteImages: 'embed' | 'assets'
 }
 
 export const DEFAULT_UI: UiSettings = {
@@ -162,7 +166,9 @@ export const DEFAULT_UI: UiSettings = {
   sidebarSort: 'name',
   epubSpread: 'auto',
   showImages: true,
-  language: 'vi'
+  language: 'vi',
+  newNoteKind: 'md',
+  pasteImages: 'embed'
 }
 
 /** One edited block of an HTML document: which element (by position) and its new inner HTML. */
@@ -172,6 +178,8 @@ export interface HtmlBlockEdit {
   /** Lower-case tag name, checked before writing so a wrong match is never saved. */
   tag: string
   html: string
+  /** New paragraphs or list items typed after this block (Enter), in order. */
+  after?: { tag: 'p' | 'li'; html: string }[]
 }
 
 /** Auto-update progress (see src/main/updater.ts). */
@@ -271,6 +279,20 @@ export interface DocsApi {
   writeDoc(path: string, content: string, expectedMtime: number): Promise<number>
   /** Applies inline text edits to an HTML document without touching the rest of the file. */
   saveHtmlEdits(path: string, edits: HtmlBlockEdit[], expectedMtime: number): Promise<number>
+
+  // ---------- files (only inside workspace folders) ----------
+  /** Creates a note (.md or .html) in a folder (its id in the sidebar tree). Resolves with the note's id. */
+  newNote(folderId: string, name: string, kind: 'md' | 'html'): Promise<string>
+  /** Creates a folder with a first note in it (an empty folder wouldn't show in the tree). Resolves with the note's id. */
+  newFolder(folderId: string, folderName: string, noteName: string, kind: 'md' | 'html'): Promise<string>
+  /** Renames a document or folder; tags, notes and calendar links follow. Resolves with the new id. */
+  renameItem(id: string, isFolder: boolean, name: string): Promise<string>
+  /** Moves a document or folder into another folder of the same workspace folder. Resolves with the new id. */
+  moveItem(id: string, isFolder: boolean, targetFolderId: string): Promise<string>
+  /** Moves a document or folder to the Recycle Bin. */
+  trashItem(id: string, isFolder: boolean): Promise<void>
+  /** Saves a pasted image in an assets/ folder next to a note. Resolves with the path to write in it ("assets/…"). */
+  saveAsset(docId: string, bytes: Uint8Array, ext: string): Promise<string>
 
   // ---------- calendar (see shared/calendar.ts) ----------
   /** Occurrences that overlap [from, to), local dates "YYYY-MM-DD". */

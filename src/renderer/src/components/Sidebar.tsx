@@ -6,6 +6,19 @@ import type { StatusFilter } from '../App'
 import { t } from '../../../shared/i18n'
 import { confirmDialog } from '../lib/ask'
 
+/** What the sidebar can do to files of the workspace (null when there is no workspace folder). */
+export interface FileActions {
+  newNote: (folderId: string) => void
+  newFolder: (folderId: string) => void
+  rename: (id: string, isFolder: boolean, name: string) => void
+  move: (id: string, isFolder: boolean, targetFolderId: string) => void
+  trash: (id: string, isFolder: boolean, name: string) => void
+}
+
+/** What was right-clicked: a folder (by its tree id) or a document. */
+type MenuItem = { kind: 'folder'; id: string; name: string; isRoot: boolean } | { kind: 'doc'; doc: DocEntry }
+type MenuTarget = MenuItem & { x: number; y: number }
+
 export interface SearchHit {
   doc: DocEntry
   /** Text around the match; null when only the title, file name or a tag matched. */
@@ -38,6 +51,7 @@ interface Props {
   sort: 'name' | 'modified'
   onOpenFiles: () => void
   onRemoveLoose: (path: string) => void
+  files: FileActions
 }
 
 export default function Sidebar(props: Props) {
@@ -51,6 +65,13 @@ export default function Sidebar(props: Props) {
   const rootNames = Object.fromEntries((lib?.roots ?? []).map((r) => [r.key, r.name]))
   const looseFiles = lib?.looseFiles ?? []
   const listRef = useRef<HTMLDivElement>(null)
+  const [menu, setMenu] = useState<MenuTarget | null>(null)
+  const openMenu = (e: React.MouseEvent, target: MenuItem): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ ...target, x: e.clientX, y: e.clientY } as MenuTarget)
+  }
+  const tree = { files: props.files, openMenu }
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { all: allDocs.length }
@@ -141,12 +162,30 @@ export default function Sidebar(props: Props) {
         </div>
       )}
 
-      <div className="doc-list" ref={listRef} onKeyDown={(e) => onListKey(e, props.searchRef)}>
+      <div
+        className="doc-list"
+        ref={listRef}
+        onKeyDown={(e) => {
+          // F2 renames the document or folder that has the focus (like Explorer).
+          const el = document.activeElement as HTMLElement | null
+          if (e.key === 'F2' && el?.dataset.id) {
+            e.preventDefault()
+            props.files.rename(el.dataset.id, !!el.dataset.folderId, el.dataset.name ?? '')
+            return
+          }
+          onListKey(e, props.searchRef)
+        }}
+        // Right-click on the empty part of the list: the workspace folder (when there is one).
+        onContextMenu={(e) => {
+          if (roots.length === 1 && !hits) openMenu(e, { kind: 'folder', id: roots[0].key, name: roots[0].name, isRoot: true })
+        }}
+        {...(roots.length === 1 && !hits ? dropTarget(roots[0].key, props.files) : {})}
+      >
         {hits ? (
           <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 || looseFiles.length ? rootNames : null} />
         ) : (
           <div className="group">
-            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} />
+            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} actions={tree} />
             {docs.length === 0 && roots.length > 0 && <div className="empty">{t('Không có tài liệu nào khớp.')}</div>}
             {looseFiles.length > 0 && (
               <LooseFiles files={looseFiles} docs={docs} selected={selected} onOpen={onOpen} onRemove={props.onRemoveLoose} />
@@ -154,6 +193,8 @@ export default function Sidebar(props: Props) {
           </div>
         )}
       </div>
+
+      {menu && <TreeMenu target={menu} files={props.files} onClose={() => setMenu(null)} />}
 
       {props.appInfo && (
         <div className="sidebar-foot">
@@ -226,13 +267,14 @@ interface TreeProps {
   onOpen: (p: string) => void
   onRemoveRoot: (key: string) => void
   sort: 'name' | 'modified'
+  actions: { files: FileActions; openMenu: (e: React.MouseEvent, target: MenuItem) => void }
 }
 
 /**
  * One folder: its documents as a plain tree, like before.
  * Several folders: each one is a top-level node (like a VS Code multi-root workspace).
  */
-function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) {
+function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort, actions }: TreeProps) {
   // Remember which folders you collapsed. Folder ids start with their root key, so they never clash.
   const storageKey = 'collapsed:workspace'
   const [collapsed, setCollapsed] = useState<string[]>(() => loadLocal(storageKey, []))
@@ -254,6 +296,11 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
               onClick={() => toggle(f.path)}
               draggable
               onDragStart={(e) => dragFolder(e, f.path)}
+              onContextMenu={(e) => actions.openMenu(e, { kind: 'folder', id: f.path, name: f.name, isRoot: false })}
+              {...dropTarget(f.path, actions.files)}
+              data-id={f.path}
+              data-folder-id={f.path}
+              data-name={f.name}
               data-folder={open ? 'open' : 'closed'}
               data-depth={depth}
               aria-expanded={open}
@@ -266,7 +313,7 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
         )
       })}
       {folder.docs.map((d) => (
-        <DocRow key={d.path} doc={d} depth={depth} selected={selected === d.path} onOpen={onOpen} />
+        <DocRow key={d.path} doc={d} depth={depth} selected={selected === d.path} onOpen={onOpen} onMenu={(e) => actions.openMenu(e, { kind: 'doc', doc: d })} />
       ))}
     </>
   )
@@ -292,6 +339,8 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort }: TreeProps) 
                 title={root.path}
                 draggable={!root.loose}
                 onDragStart={(e) => dragFolder(e, root.key)}
+                onContextMenu={(e) => actions.openMenu(e, { kind: 'folder', id: root.key, name: root.name, isRoot: true })}
+                {...dropTarget(root.key, actions.files)}
                 data-folder={open ? 'open' : 'closed'}
                 data-depth={0}
                 aria-expanded={open}
@@ -365,25 +414,129 @@ function LooseFiles({
   )
 }
 
-/** A folder dropped on a calendar event links every document in it to that class. */
+/** A folder dropped on a calendar event links every document in it; on another folder it moves there. */
 function dragFolder(e: React.DragEvent, id: string): void {
   e.dataTransfer.setData(FOLDER_DRAG_TYPE, id)
-  e.dataTransfer.effectAllowed = 'link'
+  e.dataTransfer.effectAllowed = 'linkMove'
 }
 
-function DocRow({ doc, depth, selected, onOpen, title }: { doc: DocEntry; depth: number; selected: boolean; onOpen: (p: string) => void; title?: string }) {
+/** Props that make a folder row accept documents and folders dragged from the tree (they move into it). */
+function dropTarget(folderId: string, files: FileActions) {
+  const dragged = (e: React.DragEvent): boolean => e.dataTransfer.types.includes(DOC_DRAG_TYPE) || e.dataTransfer.types.includes(FOLDER_DRAG_TYPE)
+  return {
+    onDragOver: (e: React.DragEvent) => {
+      if (!dragged(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+      e.dataTransfer.dropEffect = 'move'
+      ;(e.currentTarget as HTMLElement).classList.add('drop-into')
+    },
+    onDragLeave: (e: React.DragEvent) => (e.currentTarget as HTMLElement).classList.remove('drop-into'),
+    onDrop: (e: React.DragEvent) => {
+      ;(e.currentTarget as HTMLElement).classList.remove('drop-into')
+      const doc = e.dataTransfer.getData(DOC_DRAG_TYPE)
+      const folder = e.dataTransfer.getData(FOLDER_DRAG_TYPE)
+      if (!doc && !folder) return
+      e.preventDefault()
+      e.stopPropagation()
+      const id = doc || folder
+      if (id === folderId) return
+      files.move(id, !doc, folderId)
+    }
+  }
+}
+
+/** The right-click menu of the tree. */
+function TreeMenu({ target, files, onClose }: { target: MenuTarget; files: FileActions; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onDown = (e: MouseEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) onClose()
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('blur', onClose)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('blur', onClose)
+    }
+  }, [onClose])
+  // Keep the menu inside the window.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    if (r.bottom > window.innerHeight) el.style.top = `${Math.max(4, window.innerHeight - r.height - 4)}px`
+    if (r.right > window.innerWidth) el.style.left = `${Math.max(4, window.innerWidth - r.width - 4)}px`
+  }, [])
+  const run = (f: () => void) => () => {
+    onClose()
+    f()
+  }
+  const folderId = target.kind === 'folder' ? target.id : target.doc.rel.includes('/') ? `${target.doc.root}/${target.doc.rel.replace(/\/[^/]*$/, '')}` : target.doc.root
+  return (
+    <div ref={ref} className="popover menu tree-menu" role="menu" style={{ left: target.x, top: target.y }}>
+      <button role="menuitem" onClick={run(() => files.newNote(folderId))}>
+        {t('Bài mới…')}
+        <kbd>Ctrl+N</kbd>
+      </button>
+      <button role="menuitem" onClick={run(() => files.newFolder(folderId))}>
+        {t('Thư mục mới…')}
+      </button>
+      {!(target.kind === 'folder' && target.isRoot) && (
+        <>
+          <hr />
+          <button role="menuitem" onClick={run(() => (target.kind === 'doc' ? files.rename(target.doc.path, false, target.doc.name) : files.rename(target.id, true, target.name)))}>
+            {t('Đổi tên…')}
+            <kbd>F2</kbd>
+          </button>
+          <button
+            role="menuitem"
+            className="danger"
+            onClick={run(() => (target.kind === 'doc' ? files.trash(target.doc.path, false, target.doc.name) : files.trash(target.id, true, target.name)))}
+          >
+            {t('Xoá (vào Thùng rác)')}
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+function DocRow({
+  doc,
+  depth,
+  selected,
+  onOpen,
+  title,
+  onMenu
+}: {
+  doc: DocEntry
+  depth: number
+  selected: boolean
+  onOpen: (p: string) => void
+  title?: string
+  onMenu?: (e: React.MouseEvent) => void
+}) {
   return (
     <button
       className={`row doc ${selected ? 'selected' : ''}`}
       style={{ paddingLeft: 10 + depth * 14 + 14 }}
       onClick={() => onOpen(doc.path)}
+      onContextMenu={onMenu}
       title={title ?? doc.rel}
       data-depth={depth}
+      data-id={onMenu ? doc.path : undefined}
+      data-name={doc.name}
       draggable
       onDragStart={(e) => {
-        // Dropped on a calendar event, it links the document to that class.
+        // Dropped on a calendar event it links the document; on a folder of the tree it moves there.
         e.dataTransfer.setData(DOC_DRAG_TYPE, doc.path)
-        e.dataTransfer.effectAllowed = 'link'
+        e.dataTransfer.effectAllowed = 'linkMove'
       }}
     >
       <span className={`kind kind-${doc.kind}`}>{kindLabel(doc.kind)}</span>

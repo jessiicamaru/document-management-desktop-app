@@ -93,7 +93,9 @@ export function sanitizeUi(ui: Partial<UiSettings>): UiSettings {
     sidebarSort: pick(ui.sidebarSort, ['name', 'modified'] as const, DEFAULT_UI.sidebarSort),
     epubSpread: pick(ui.epubSpread, ['single', 'auto'] as const, DEFAULT_UI.epubSpread),
     showImages: typeof ui.showImages === 'boolean' ? ui.showImages : DEFAULT_UI.showImages,
-    language: pick(ui.language, ['vi', 'en'] as const, DEFAULT_UI.language)
+    language: pick(ui.language, ['vi', 'en'] as const, DEFAULT_UI.language),
+    newNoteKind: pick(ui.newNoteKind, ['md', 'html'] as const, DEFAULT_UI.newNoteKind),
+    pasteImages: pick(ui.pasteImages, ['embed', 'assets'] as const, DEFAULT_UI.pasteImages)
   }
 }
 

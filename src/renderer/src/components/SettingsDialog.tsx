@@ -257,6 +257,31 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
           </Row>
           <p className="hint">{t('Bấm vào danh sách bài rồi dùng ↑/↓ để chọn, Enter để mở, ←/→ để thu/mở thư mục. Ẩn ảnh nếu thư mục ghi chú có nhiều ảnh minh hoạ.')}</p>
         </section>
+
+        <section>
+          <h3>{t('Viết bài')}</h3>
+          <Row label={t('Loại bài mới')}>
+            <Segmented
+              value={ui.newNoteKind}
+              options={[
+                ['md', 'Markdown (.md)'],
+                ['html', 'HTML (.html)']
+              ]}
+              onChange={(v) => set('newNoteKind', v)}
+            />
+          </Row>
+          <Row label={t('Ảnh dán vào bài')}>
+            <Segmented
+              value={ui.pasteImages}
+              options={[
+                ['embed', t('Nhúng vào file')],
+                ['assets', t('Lưu vào assets/')]
+              ]}
+              onChange={(v) => set('pasteImages', v)}
+            />
+          </Row>
+          <p className="hint">{t('Ctrl+N tạo bài mới; chuột phải vào thư mục hoặc bài để tạo, đổi tên (F2), xoá; kéo bài hoặc thư mục thả vào thư mục khác để chuyển. Ảnh nhúng vào file được thu nhỏ và nén, nên một bài luôn đi kèm đủ ảnh của nó.')}</p>
+        </section>
         </>
       )}
       {tab === 'data' && (

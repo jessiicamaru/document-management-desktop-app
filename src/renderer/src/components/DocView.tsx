@@ -5,6 +5,10 @@ import type { ScrollTarget } from '../App'
 import HtmlView from './HtmlView'
 import MarkdownView from './MarkdownView'
 import RawEditor from './RawEditor'
+import MarkdownEditor from './MarkdownEditor'
+import { takeWritingRequest } from '../lib/write-request'
+import { imageSource } from '../lib/paste-image'
+import { currentUi } from '../lib/settings'
 import EpubView from './EpubView'
 import PdfView from './PdfView'
 import ArticleView from './ArticleView'
@@ -18,7 +22,8 @@ import { colorHex, formatShortDate, type CalDocRef } from '../../../shared/calen
 import { CALENDAR_CHANGED } from './CalendarView'
 
 /** view = read; edit = change text in place; raw = source editor next to a preview. */
-type Mode = 'view' | 'edit' | 'raw'
+/** view: reading; edit: text edits on the page; raw: source; write: the Markdown editor. */
+type Mode = 'view' | 'edit' | 'raw' | 'write'
 
 interface Props {
   doc: DocEntry
@@ -61,6 +66,9 @@ export default function DocView(props: Props) {
   const [activeHeading, setActiveHeading] = useState(-1)
   const [outlineOpen, setOutlineOpen] = useState(() => loadLocal('outline-open', true))
   const [exporting, setExporting] = useState(false)
+  // HTML edit mode: the link being typed (Ctrl+K or the toolbar), null when closed.
+  const [linkInput, setLinkInput] = useState<string | null>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const readerRef = useRef<ReaderHandle>(null)
   const [selection, setSelection] = useState<TextSelection | null>(null)
   const [noteEditor, setNoteEditor] = useState<{ id: string; rect: ScreenRect } | null>(null)
@@ -84,6 +92,16 @@ export default function DocView(props: Props) {
     setEditMtime(doc.mtime)
     setMode('edit')
   }
+  // A note just created opens ready for writing.
+  useEffect(() => {
+    if (!takeWritingRequest(doc.path)) return
+    if (doc.kind === 'md') setMode('write')
+    else if (doc.kind === 'html') {
+      setEditMtime(doc.mtime)
+      setMode('edit')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.path])
   const stopEdit = useCallback((): void => {
     setMode('view')
     setEditMtime(null)
@@ -274,6 +292,8 @@ export default function DocView(props: Props) {
         onSaveShortcut={() => void saveEdit()}
         onCancelShortcut={cancelEdit}
         onShortcut={props.onShortcut}
+        onLinkRequest={() => setLinkInput('https://')}
+        onError={onError}
       />
     ) : (
       <MarkdownView
@@ -319,8 +339,72 @@ export default function DocView(props: Props) {
 
         {mode === 'edit' ? (
           <div className="doc-controls edit-bar">
-            <span className="edit-hint">
-              <b>{t('Đang sửa chữ.')}</b>{' '}{t('Bấm vào đoạn văn (hoặc chữ trong sơ đồ) để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.')}</span>
+            {doc.kind === 'html' ? (
+              <div className="html-format" role="toolbar" aria-label={t('Định dạng')}>
+                {(
+                  [
+                    ['B', 'bold', t('Đậm (Ctrl+B)')],
+                    ['I', 'italic', t('Nghiêng (Ctrl+I)')],
+                    ['U', 'underline', t('Gạch chân (Ctrl+U)')],
+                    ['S', 'strikeThrough', t('Gạch ngang')]
+                  ] as const
+                ).map(([label, cmd, title]) => (
+                  <button key={cmd} className={`md-tool fmt-${cmd}`} title={title} aria-label={title} onMouseDown={(e) => e.preventDefault()} onClick={() => readerRef.current?.format?.(cmd)}>
+                    {label}
+                  </button>
+                ))}
+                <button className="md-tool" title={t('Link (Ctrl+K)')} onMouseDown={(e) => e.preventDefault()} onClick={() => setLinkInput('https://')}>
+                  {t('Link')}
+                </button>
+                <button className="md-tool" title={t('Chèn ảnh (hoặc dán ảnh bằng Ctrl+V)')} onMouseDown={(e) => e.preventDefault()} onClick={() => imageInputRef.current?.click()}>
+                  {t('Ảnh')}
+                </button>
+                <button className="md-tool" title={t('Bỏ định dạng')} onMouseDown={(e) => e.preventDefault()} onClick={() => readerRef.current?.format?.('removeFormat')}>
+                  T̸
+                </button>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    e.target.value = ''
+                    if (!file) return
+                    imageSource(doc.path, file, currentUi().pasteImages)
+                      .then((src) => src && readerRef.current?.insertImage?.(src))
+                      .catch(onError)
+                  }}
+                />
+                {linkInput !== null && (
+                  <form
+                    className="link-form"
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      const url = linkInput.trim()
+                      readerRef.current?.format?.(url && url !== 'https://' ? 'createLink' : 'unlink', url)
+                      setLinkInput(null)
+                    }}
+                  >
+                    <input
+                      autoFocus
+                      value={linkInput}
+                      aria-label={t('Địa chỉ link')}
+                      onChange={(e) => setLinkInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        e.stopPropagation()
+                        if (e.key === 'Escape') setLinkInput(null)
+                      }}
+                    />
+                    <button className="btn small">{t('Gắn link')}</button>
+                  </form>
+                )}
+                <span className="edit-hint">{t('Enter: đoạn mới · Shift+Enter: xuống dòng · bố cục khác thì dùng Raw.')}</span>
+              </div>
+            ) : (
+              <span className="edit-hint">
+                <b>{t('Đang sửa chữ.')}</b>{' '}{t('Bấm vào đoạn văn (hoặc chữ trong sơ đồ) để sửa; Enter và định dạng bị tắt. Muốn đổi bố cục thì dùng Raw.')}</span>
+            )}
             <div className="spacer" />
             {dirty && <span className="dirty-dot" title={t('Chưa lưu')} />}
             <button className="btn small" onClick={cancelEdit}>{t('Huỷ (Esc)')}</button>
@@ -345,6 +429,11 @@ export default function DocView(props: Props) {
             <div className="spacer" />
             <button className={`btn ${showOutline ? 'active' : ''}`} onClick={toggleOutline} disabled={mode !== 'view'} title={t('Hiện/ẩn mục lục và ghi chú')}>{t('Mục lục')}{annotations.length > 0 && t(' · {0} ghi chú', { 0: annotations.length })}
             </button>
+            {doc.kind === 'md' && (
+              <button className="btn primary-soft" onClick={() => setMode('write')} disabled={mode === 'raw'} title={t('Viết và định dạng bài (Markdown, xem trước ngay khi gõ)')}>
+                {t('Viết')}
+              </button>
+            )}
             {canEdit && (
               <>
                 <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title={t('Sửa chữ ngay trên bài')}>{t('Sửa chữ')}</button>
@@ -362,7 +451,13 @@ export default function DocView(props: Props) {
         )}
       </header>
 
-      {mode === 'raw' ? (
+      {mode === 'write' ? (
+        <div className="doc-body">
+          <div className="pane">
+            <MarkdownEditor doc={doc} onClose={() => setMode('view')} onDirty={updateDirty} onError={onError} />
+          </div>
+        </div>
+      ) : mode === 'raw' ? (
         <div className="doc-body split">
           <div className="pane">{preview}</div>
           <div className="pane">

@@ -21,6 +21,7 @@ import { decodeUtf8Strict } from './text-file'
 import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate } from './updater'
 import { setLanguage, t } from '../shared/i18n'
 import { CalendarStore, nextStart, previewStarts, type CalendarBackup, type StoredLink } from './calendar-store'
+import { checkName, noteFileName, noteTemplate, renamedFileName, type NoteKind } from './file-ops'
 import { formatDate, formatTimeRange, type CalDocRef, type CalEventData, type CalEventDetail, type CalLinkView, type EditScope } from '../shared/calendar'
 
 // Tests run with their own settings folder so they never touch your real settings.
@@ -648,6 +649,140 @@ function watchRoot(root: Root): void {
     console.error('Cannot watch folder', err)
     if (!root.loose) root.warning = t('Không theo dõi được thư mục này; app sẽ không tự cập nhật khi file trong đó thay đổi.')
   }
+}
+
+// ---------- files: new notes, folders, rename, move, Recycle Bin ----------
+
+/** A folder of the workspace by its id in the sidebar tree ("<root key>" or "<root key>/<sub/folder>"). */
+function folderOf(folderId: string): { root: Root; rel: string; abs: string } {
+  const [key, ...rest] = String(folderId).split('/')
+  const root = folderRoots().find((r) => r.key === key && !!r.meta)
+  const rel = rest.join('/')
+  const abs = root && (rel ? resolveInLibrary(root.path, rel) : root.path)
+  if (!root || !abs) throw new Error(t('Thư mục này không nằm trong workspace.'))
+  return { root, rel, abs }
+}
+
+/** A document, or a folder below a workspace folder, by id. Only inside workspace folders. */
+function itemOf(id: string, isFolder: boolean): { root: Root; rel: string; abs: string } {
+  if (isFolder) {
+    const f = folderOf(id)
+    if (!f.rel) throw new Error(t('Không đổi được chính thư mục gốc của workspace; hãy làm trong Explorer.'))
+    return f
+  }
+  const loc = locate(String(id))
+  if (!loc || loc.root.loose || !loc.root.meta) throw new Error(t('Chỉ làm được với file trong thư mục workspace.'))
+  return loc
+}
+
+const exists = (p: string): Promise<boolean> => fs.stat(p).then(() => true, () => false)
+
+/** Reads a folder again right away (the watcher would too, a moment later) and tells the window. */
+async function refreshRoot(root: Root): Promise<void> {
+  root.docs = await scanRoot(root)
+  await reconcileStores(root)
+  syncSearch()
+  await pushSnapshot()
+}
+
+/** Tags, notes and calendar links follow a file or folder that the app renamed or moved. */
+async function followMove(root: Root, fromRel: string, toRel: string, fromAbs: string, toAbs: string): Promise<void> {
+  for (const store of storesOf(root)) await store.moveEntries(fromRel, toRel)
+  await calendar?.movePath(fromAbs, toAbs, pathKey)
+}
+
+/** Creates a note in a folder. Resolves with its id. */
+async function newNote(folderId: string, name: string, kind: NoteKind): Promise<string> {
+  const folder = folderOf(folderId)
+  const file = noteFileName(name, kind)
+  const abs = path.join(folder.abs, file)
+  if (await exists(abs)) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: file }))
+  await fs.mkdir(folder.abs, { recursive: true })
+  await fs.writeFile(abs, noteTemplate(file, kind), { encoding: 'utf8', flag: 'wx' })
+  await refreshRoot(folder.root)
+  return `${folder.root.key}/${relOf(folder.root, abs)}`
+}
+
+async function renameItem(id: string, isFolder: boolean, name: string): Promise<string> {
+  const item = itemOf(id, isFolder)
+  const next = isFolder ? checkName(name) : renamedFileName(name, path.basename(item.abs))
+  const target = path.join(path.dirname(item.abs), next)
+  if (target === item.abs) return id
+  // Only the letter case changes: same file on Windows, so no clash.
+  if (pathKey(target) !== pathKey(item.abs) && (await exists(target))) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: next }))
+  await fs.rename(item.abs, target)
+  const toRel = relOf(item.root, target)
+  await followMove(item.root, item.rel, toRel, item.abs, target)
+  await refreshRoot(item.root)
+  return `${item.root.key}/${toRel}`
+}
+
+async function moveItem(id: string, isFolder: boolean, targetFolderId: string): Promise<string> {
+  const item = itemOf(id, isFolder)
+  const folder = folderOf(targetFolderId)
+  if (folder.root !== item.root) throw new Error(t('Chỉ chuyển được bên trong cùng một thư mục workspace.'))
+  if (isFolder && isSameOrInside(folder.abs, item.abs)) throw new Error(t('Không chuyển được thư mục vào chính nó.'))
+  const target = path.join(folder.abs, path.basename(item.abs))
+  if (pathKey(target) === pathKey(item.abs)) return id
+  if (await exists(target)) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: path.basename(item.abs) }))
+  await fs.rename(item.abs, target)
+  const toRel = relOf(item.root, target)
+  await followMove(item.root, item.rel, toRel, item.abs, target)
+  await refreshRoot(item.root)
+  return `${item.root.key}/${toRel}`
+}
+
+/** To the Recycle Bin (can be restored from there; tags and notes are kept until cleaned up). */
+async function trashItem(id: string, isFolder: boolean): Promise<void> {
+  const item = itemOf(id, isFolder)
+  await shell.trashItem(item.abs)
+  await refreshRoot(item.root)
+}
+
+/**
+ * A pasted image saved next to a note (Settings: "save in assets/"): <note folder>\assets\<note>-<n>.<ext>.
+ * Resolves with the path to write in the note ("assets/…", forward slashes).
+ */
+async function saveAsset(docId: string, bytes: Uint8Array, ext: string): Promise<string> {
+  const loc = locate(String(docId))
+  if (!loc || !loc.root.docs.some((d) => d.path === loc.rel)) throw new Error(t('Không tìm thấy tài liệu này.'))
+  if (!['webp', 'png', 'jpg', 'gif'].includes(ext)) throw new Error(t('Định dạng ảnh không được hỗ trợ.'))
+  if (!(bytes instanceof Uint8Array) || bytes.length > 50 * 1024 * 1024) throw new Error(t('Ảnh quá lớn.'))
+  const dir = path.join(path.dirname(loc.abs), 'assets')
+  await fs.mkdir(dir, { recursive: true })
+  // Spaces and brackets would need escaping in a Markdown link.
+  const base = path.basename(loc.abs).replace(/\.[^.]+$/, '').replace(/[\s#?%()[\]<>"'`]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'image'
+  for (let n = 1; n < 10000; n++) {
+    const name = `${base}-${n}.${ext}`
+    try {
+      await fs.writeFile(path.join(dir, name), bytes, { flag: 'wx' })
+      return `assets/${name}`
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+    }
+  }
+  throw new Error(t('Không lưu được ảnh.'))
+}
+
+function registerFileIpc(): void {
+  ipcMain.handle('doc:saveAsset', (_e, docId: string, bytes: Uint8Array, ext: string) => saveAsset(String(docId), bytes, String(ext)))
+  const str = (v: unknown): string => String(v ?? '')
+  const kindOfNote = (v: unknown): NoteKind => (v === 'html' ? 'html' : 'md')
+  ipcMain.handle('fs:newNote', (_e, folderId: string, name: string, kind: NoteKind) => newNote(str(folderId), str(name), kindOfNote(kind)))
+  // An empty folder doesn't show in the tree (it lists documents), so a new folder starts with a note.
+  ipcMain.handle('fs:newFolder', async (_e, folderId: string, folderName: string, noteName: string, kind: NoteKind) => {
+    const folder = folderOf(str(folderId))
+    const name = checkName(str(folderName))
+    const abs = path.join(folder.abs, name)
+    if (await exists(abs)) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: name }))
+    noteFileName(str(noteName), kindOfNote(kind)) // check the note's name before creating anything
+    await fs.mkdir(abs)
+    const rel = relOf(folder.root, abs)
+    return newNote(`${folder.root.key}/${rel}`, str(noteName), kindOfNote(kind))
+  })
+  ipcMain.handle('fs:rename', (_e, id: string, isFolder: boolean, name: string) => renameItem(str(id), !!isFolder, str(name)))
+  ipcMain.handle('fs:move', (_e, id: string, isFolder: boolean, targetFolderId: string) => moveItem(str(id), !!isFolder, str(targetFolderId)))
+  ipcMain.handle('fs:trash', (_e, id: string, isFolder: boolean) => trashItem(str(id), !!isFolder))
 }
 
 // ---------- calendar ----------
@@ -1566,6 +1701,7 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpc()
     registerCalendarIpc()
+    registerFileIpc()
     blockNetworkForPrinting()
     const startUi = await loadUiSettings()
     nativeTheme.themeSource = startUi.theme
