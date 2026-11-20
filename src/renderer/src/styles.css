@@ -810,3 +810,4 @@ dialog.subs-dialog { width: min(560px, calc(100vw - 32px)); height: auto; max-he
 }
 .pdf-ocr-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ocr-layer span { font-family: sans-serif; }
+.subs-warning { margin: 0; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; background: color-mix(in srgb, #d9a94a 18%, transparent); color: var(--ink); }

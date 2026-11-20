@@ -1045,6 +1045,36 @@ async function classNotes(uid: string, rid: string): Promise<string | null> {
 
 // ---------- calendars followed by link ----------
 
+/** A calendar bigger than this is refused (a link to the wrong file must not fill the memory). */
+const MAX_SUBSCRIPTION_BYTES = 20 * 1024 * 1024
+
+/**
+ * The body of a response as text, read piece by piece: stops (and cancels the download) as soon
+ * as it is bigger than `max` bytes, instead of reading it all first.
+ */
+async function readLimited(res: Response, max: number, controller: AbortController): Promise<string> {
+  const declared = Number(res.headers.get('content-length') ?? 0)
+  if (declared > max) {
+    controller.abort()
+    throw new Error(t('Lịch quá lớn.'))
+  }
+  const reader = res.body?.getReader()
+  if (!reader) return ''
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      controller.abort()
+      throw new Error(t('Lịch quá lớn.'))
+    }
+    chunks.push(value)
+  }
+  return new TextDecoder('utf-8').decode(Buffer.concat(chunks))
+}
+
 /** Downloads one subscribed calendar (webcal:// is https://). Never throws; the error is kept. */
 async function fetchSubscription(id: string): Promise<void> {
   const sub = calendar?.subscriptions().find((s) => s.id === id)
@@ -1052,13 +1082,18 @@ async function fetchSubscription(id: string): Promise<void> {
   try {
     const url = new URL(sub.url.replace(/^webcals?:\/\//i, 'https://'))
     if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(t('Chỉ theo dõi được link http(s) hoặc webcal.'))
-    const res = await net.fetch(url.href, { signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) throw new Error(t('Máy chủ trả về lỗi {0}.', { 0: res.status }))
-    const ics = await res.text()
-    if (ics.length > 20 * 1024 * 1024) throw new Error(t('Lịch quá lớn.'))
-    await calendar.setSubscriptionData(id, { ics })
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 30_000)
+    try {
+      const res = await net.fetch(url.href, { signal: controller.signal })
+      if (!res.ok) throw new Error(t('Máy chủ trả về lỗi {0}.', { 0: res.status }))
+      const ics = await readLimited(res, MAX_SUBSCRIPTION_BYTES, controller)
+      await calendar.setSubscriptionData(id, { ics })
+    } finally {
+      clearTimeout(timer)
+    }
   } catch (err) {
-    await calendar.setSubscriptionData(id, { error: err instanceof Error && err.name !== 'TimeoutError' ? err.message : t('Không tải được (mất mạng hoặc link sai).') })
+    await calendar.setSubscriptionData(id, { error: err instanceof Error && err.name !== 'TimeoutError' && err.name !== 'AbortError' ? err.message : t('Không tải được (mất mạng hoặc link sai).') })
   }
 }
 
@@ -1069,8 +1104,8 @@ async function refreshSubscriptions(): Promise<void> {
 
 // ---------- reminders ----------
 
-/** Reminders already shown in this run (uid|rid|minutes). */
-const remindersShown = new Set<string>()
+/** Reminders already shown in this run (uid|rid|minutes -> when it was due), forgotten after two days. */
+const remindersShown = new Map<string, number>()
 
 /**
  * Shows a Windows notification for every class whose reminder time has come (in the last five
@@ -1083,13 +1118,14 @@ function checkReminders(): void {
   const today = new Date()
   const from = ymd(new Date(now - 86_400_000))
   const to = ymd(new Date(now + 2 * 86_400_000))
+  for (const [key, at] of remindersShown) if (now - at > 2 * 86_400_000) remindersShown.delete(key)
   for (const o of calendar.occurrences(from, to)) {
     if (o.reminder < 0) continue
     const start = new Date(o.allDay ? `${o.start}T00:00` : o.start).getTime()
     const at = start - o.reminder * 60_000
     const key = `${o.uid}|${o.rid}|${o.reminder}`
     if (now < at || now - at > 5 * 60_000 || remindersShown.has(key)) continue
-    remindersShown.add(key)
+    remindersShown.set(key, at)
     const when = o.allDay ? formatShortDate(o.start) : `${o.start.slice(0, 10) === ymd(today) ? '' : `${formatShortDate(o.start)} `}${formatTimeRange(o.start, o.end, false)}`
     const note = new Notification({ title: o.summary, body: [when, o.location].filter(Boolean).join(' · '), silent: false })
     note.on('click', () => {

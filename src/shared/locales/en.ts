@@ -600,5 +600,6 @@ export const EN: Record<string, string> = {
   'Chữ của bản scan này do OCR đọc (có thể sai vài chỗ).': 'The text of this scan was read by OCR (it may have a few mistakes).',
   'Nhận dạng lại': 'Read again',
   'Bản PDF này là ảnh scan: chưa tìm, chọn hay highlight được chữ.': 'This PDF is a scan: its text can\'t be found, selected or highlighted yet.',
-  'Nhận dạng chữ (OCR)': 'Recognise text (OCR)'
+  'Nhận dạng chữ (OCR)': 'Recognise text (OCR)',
+  'Link http:// không được mã hoá: trên Wi-Fi công cộng, người khác có thể đọc hoặc sửa lịch trên đường tải. Dùng https:// nếu trang có.': 'An http:// link is not encrypted: on public Wi-Fi, others could read or change the calendar on its way. Use https:// if the site has it.'
 }

@@ -48,7 +48,18 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
     cb.current.onDirty(value)
   }
 
-  const save = async (auto = false): Promise<boolean> => {
+  // The save being written, if any. Saves run one after another: each one starts from the file
+  // version the one before it wrote, or the second would look like a change made outside the app.
+  const inFlight = useRef<Promise<boolean> | null>(null)
+  const save = (auto = false): Promise<boolean> => {
+    const run = (inFlight.current ?? Promise.resolve(true)).then(() => writeNow(auto))
+    inFlight.current = run
+    void run.finally(() => {
+      if (inFlight.current === run) inFlight.current = null
+    })
+    return run
+  }
+  const writeNow = async (auto: boolean): Promise<boolean> => {
     const view = viewRef.current
     if (!view) return false
     if (auto && autoOff.current) return false

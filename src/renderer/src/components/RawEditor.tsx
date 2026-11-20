@@ -41,7 +41,18 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
     cb.current.onDirty(value)
   }
 
-  const save = async (): Promise<void> => {
+  // Saves run one after another (Ctrl+S twice quickly): each starts from the version the one
+  // before wrote, or the second would look like a change made outside the app.
+  const inFlight = useRef<Promise<void> | null>(null)
+  const save = (): Promise<void> => {
+    const run = (inFlight.current ?? Promise.resolve()).then(writeNow)
+    inFlight.current = run
+    void run.finally(() => {
+      if (inFlight.current === run) inFlight.current = null
+    })
+    return run
+  }
+  const writeNow = async (): Promise<void> => {
     const view = viewRef.current
     if (!view) return
     const content = view.state.doc.toString()
@@ -50,7 +61,8 @@ export default function RawEditor({ doc, onClose, onDirty, onDraft, onError }: P
     try {
       const mtime = await window.api.writeDoc(doc.path, fromLf(content, eol.current), base.current.mtime)
       base.current = { content, mtime }
-      markDirty(false)
+      // Typed more while saving: still unsaved.
+      markDirty(view.state.doc.toString() !== content)
     } catch (err) {
       cb.current.onError(err)
     } finally {

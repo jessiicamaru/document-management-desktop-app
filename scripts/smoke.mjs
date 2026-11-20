@@ -35,6 +35,21 @@ writeFileSync(path.join(notes, '.docs-notes.json'), JSON.stringify({ version: 1,
 const webHits = []
 const SUB_ICS = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Trường//TKB//VI', 'BEGIN:VEVENT', 'UID:tkb-toan@truong', 'DTSTAMP:20300101T000000Z', 'DTSTART:20300306T130000', 'DTEND:20300306T153000', 'SUMMARY:Toán rời rạc', 'LOCATION:C2', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
 const web = createServer((req, res) => {
+  if (req.url === '/huge.ics') {
+    res.writeHead(200, { 'Content-Type': 'text/calendar' })
+    const mb = Buffer.alloc(1024 * 1024, 'A')
+    let sent = 0
+    const more = () => {
+      while (sent < 22) {
+        sent++
+        if (!res.write(mb)) return void res.once('drain', more)
+      }
+      res.end()
+    }
+    res.on('close', () => (sent = 99))
+    more()
+    return
+  }
   if (req.url === '/lich.ics') {
     res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8' })
     res.end(SUB_ICS)
@@ -397,6 +412,19 @@ try {
   await page.waitForSelector('.md-toolbar .saved-note', { timeout: 5000 })
   await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'), null, { timeout: 5000 })
   check(read(REACT) === mdAfter.replace('lần render đầu tiên |', 'lần render đầu tiên! |'), 'the editor saves by itself shortly after you stop typing')
+  const errorsBefore = await page.locator('.toast.error').count()
+  await page.keyboard.type('?')
+  await page.waitForTimeout(1150) // the editor's own save is about to start
+  await page.keyboard.press('Control+S')
+  await page.keyboard.press('Control+S')
+  await page.keyboard.type('?')
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'), null, { timeout: 5000 })
+  await page.waitForTimeout(1500)
+  check(
+    (await page.locator('.toast.error').count()) === errorsBefore && read(REACT).includes('lần render đầu tiên!?? |'),
+    'saves that overlap (Ctrl+S during the automatic save) run one after another: no false "changed outside the app"'
+  )
   writeFileSync(file(REACT), mdAfter)
   await page.click('.md-toolbar >> text=Xong')
   await page.waitForSelector('.md-editor', { state: 'detached' })
@@ -1727,8 +1755,17 @@ try {
   await page.waitForSelector('dialog.subs-dialog[open]')
   await page.fill('dialog.subs-dialog input[aria-label="Tên lịch"]', 'Trường')
   await page.fill('dialog.subs-dialog input[aria-label="Link lịch (iCal)"]', `${WEB}/lich.ics`)
+  check(await page.isVisible('dialog.subs-dialog .subs-warning'), 'an http:// link gets a warning (not encrypted)')
   await page.click('dialog.subs-dialog .subs-buttons .btn.primary')
   await page.waitForSelector('dialog.subs-dialog .subs-list li >> text=1 sự kiện')
+  // A link to something huge: refused while downloading, not read whole into memory.
+  await page.fill('dialog.subs-dialog input[aria-label="Tên lịch"]', 'To quá')
+  await page.fill('dialog.subs-dialog input[aria-label="Link lịch (iCal)"]', `${WEB}/huge.ics`)
+  await page.click('dialog.subs-dialog .subs-buttons .btn.primary')
+  await page.waitForSelector('dialog.subs-dialog .subs-list li:has-text("To quá") .subs-error', { timeout: 30000 })
+  check((await page.textContent('dialog.subs-dialog .subs-list li:has-text("To quá") .subs-error')).includes('Lịch quá lớn'), 'a calendar over 20 MB is refused while it downloads')
+  await page.click('dialog.subs-dialog .subs-list li:has-text("To quá") >> text=Bỏ theo dõi')
+  await page.waitForSelector('dialog.subs-dialog .subs-list li:has-text("To quá")', { state: 'detached' })
   await page.click('dialog.subs-dialog header .icon-btn')
   const subbed = await page.evaluate(() => window.api.calendarRange('2030-03-06', '2030-03-07'))
   const toan = subbed.find((o) => o.summary === 'Toán rời rạc')

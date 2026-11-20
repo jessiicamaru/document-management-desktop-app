@@ -102,6 +102,9 @@ export default function SubscriptionsDialog({ onClose, onChanged }: Props) {
           <h3>{t('Thêm lịch')}</h3>
           <input placeholder={t('Tên, ví dụ: Thời khoá biểu')} aria-label={t('Tên lịch')} value={name} onChange={(e) => setName(e.target.value)} />
           <input placeholder="https://… / webcal://…" aria-label={t('Link lịch (iCal)')} value={url} onChange={(e) => setUrl(e.target.value)} />
+          {/^http:\/\//i.test(url.trim()) && (
+            <p className="subs-warning">{t('Link http:// không được mã hoá: trên Wi-Fi công cộng, người khác có thể đọc hoặc sửa lịch trên đường tải. Dùng https:// nếu trang có.')}</p>
+          )}
           <div className="swatches" role="radiogroup" aria-label={t('Màu')}>
             {EVENT_COLORS.map((c) => (
               <button type="button" role="radio" aria-checked={color === c.name} key={c.name} className={`swatch ${color === c.name ? 'active' : ''}`} style={{ background: c.hex }} title={c.name} onClick={() => setColor(c.name)} />
