@@ -183,11 +183,15 @@ export interface HtmlBlockEdit {
   html?: string
   /** New paragraphs or list items typed after this element (Enter), in order. */
   after?: { tag: NewBlockTag; html: string }[]
+  /** New blocks typed before this element (when nothing of the file comes before them). */
+  before?: { tag: NewBlockTag; html: string }[]
+  /** Deleted while editing (a table row or column). */
+  remove?: boolean
   /** Its children in a new order (dragged): their indexes in the file, and blocks typed while editing. */
   order?: ({ i: number } | { tag: NewBlockTag; html: string })[]
 }
 
-export type NewBlockTag = 'p' | 'li' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol'
+export type NewBlockTag = 'p' | 'li' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol' | 'table' | 'tr' | 'td' | 'th'
 
 /** Auto-update progress (see src/main/updater.ts). */
 export interface UpdateStatus {

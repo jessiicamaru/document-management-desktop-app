@@ -111,6 +111,9 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
         case 'link':
           p.onLinkRequest?.()
           break
+        case 'notice':
+          if (typeof msg.text === 'string') p.onError?.(new Error(msg.text))
+          break
         case 'block-refused':
           p.onError?.(new Error(t('Chỉ đổi kiểu được đoạn vừa thêm (bấm Enter để thêm). Đoạn có sẵn trong trang thì đổi trong Raw.')))
           break
@@ -149,6 +152,10 @@ const HtmlView = forwardRef<ReaderHandle, Props>(function HtmlView(props, ref) {
     clearFind: () => post({ type: 'find-clear' }),
     format: (cmd, value) => post({ type: 'format', cmd, value }),
     insertImage: (src) => post({ type: 'insert-image', src }),
+    insertTable: () => {
+      frameRef.current?.focus()
+      post({ type: 'insert-table' })
+    },
     setBlockType: (tag) => {
       // The paragraph-type menu took the focus: give it back to the page, where the caret is.
       frameRef.current?.focus()

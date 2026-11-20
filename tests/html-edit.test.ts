@@ -77,7 +77,7 @@ describe('editing HTML with formatting', () => {
     const out = applyHtmlEdits(page, [{ path: [1, 1, 0], tag: 'p', html: 'Lưu <strong>chuỗi</strong> event &amp; replay.', after: [{ tag: 'p', html: 'Đoạn <b>mới</b>' }, { tag: 'p', html: 'Thêm nữa' }] }])
     expect(out).toContain('    <p>Lưu <strong>chuỗi</strong> event &amp; replay.</p>\n    <p>Đoạn <b>mới</b></p>\n    <p>Thêm nữa</p>\n    <ul>')
     const li = applyHtmlEdits(page, [{ path: [1, 1, 1, 0], tag: 'li', html: 'Một', after: [{ tag: 'li', html: 'Một rưỡi' }] }])
-    expect(li).toContain('<ul><li>Một</li>\n<li>Một rưỡi</li><li>Hai</li></ul>')
+    expect(li).toContain('<ul><li>Một</li><li>Một rưỡi</li><li>Hai</li></ul>')
     expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'div' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
   })
 })
@@ -99,7 +99,7 @@ describe('new headings and lists typed while editing', () => {
   })
 
   it('refuses other block types', () => {
-    expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'table' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
+    expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'div' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
   })
 })
 
@@ -126,6 +126,72 @@ describe('dragging blocks into a new order', () => {
     const mixed = page.replace('<ul>', 'chữ lẻ <ul>')
     expect(() => applyHtmlEdits(mixed, [{ path: [1, 1], tag: 'section', order: [{ i: 1 }, { i: 0 }] }])).toThrow(HtmlEditError)
     expect(() => applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 0 }, { i: 0 }] }])).toThrow(HtmlEditError)
-    expect(() => applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 0 }] }])).toThrow(HtmlEditError)
+    expect(() => applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 0 }, { i: 5 }] }])).toThrow(HtmlEditError)
+  })
+
+  it('a child left out of the new order is deleted', () => {
+    const out = applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 1 }] }])
+    expect(out).toContain('<section>\n    <ul><li>Một</li><li>Hai</li></ul>\n  </section>')
   })
 })
+
+describe('tables while editing', () => {
+  const withTable = `<!doctype html>
+<html>
+<body>
+  <p>Trước</p>
+  <table>
+    <tr><th>Giao thức</th><th>Tin cậy</th></tr>
+    <tr><td>TCP</td><td>Có</td></tr>
+    <tr><td>UDP</td><td></td></tr>
+  </table>
+</body>
+</html>
+`
+  // body = [1], p = [1,0], table = [1,1], tbody (added by the parser) = [1,1,0], rows [1,1,0,i]
+
+  it('a new table is written after its block, a row per line', () => {
+    const out = applyHtmlEdits(withTable, [
+      { path: [1, 0], tag: 'p', after: [{ tag: 'table', html: '<thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td><b>2</b><script>x</script></td></tr></tbody>' }] }
+    ])
+    expect(out).toContain(
+      '  <p>Trước</p>\n  <table>\n    <thead>\n      <tr><th>A</th><th>B</th></tr>\n    </thead>\n    <tbody>\n      <tr><td>1</td><td><b>2</b></td></tr>\n    </tbody>\n  </table>\n  <table>'
+    )
+  })
+
+  it('an empty cell of the file can be filled', () => {
+    const out = applyHtmlEdits(withTable, [{ path: [1, 1, 0, 2, 1], tag: 'td', html: 'Không' }])
+    expect(out).toBe(withTable.replace('<td>UDP</td><td></td>', '<td>UDP</td><td>Không</td>'))
+  })
+
+  it('a new row goes on its own line after a row; a new column cell on the same line as its neighbour', () => {
+    const out = applyHtmlEdits(withTable, [
+      { path: [1, 1, 0, 1], tag: 'tr', after: [{ tag: 'tr', html: '<td>QUIC</td><td>Có</td>' }] },
+      { path: [1, 1, 0, 0, 1], tag: 'th', after: [{ tag: 'th', html: 'Ghi chú' }] },
+      { path: [1, 1, 0, 1, 1], tag: 'td', after: [{ tag: 'td', html: '' }] }
+    ])
+    expect(out).toContain(
+      '    <tr><th>Giao thức</th><th>Tin cậy</th><th>Ghi chú</th></tr>\n    <tr><td>TCP</td><td>Có</td><td></td></tr>\n    <tr><td>QUIC</td><td>Có</td></tr>\n    <tr><td>UDP</td><td></td></tr>'
+    )
+  })
+
+  it('a deleted row takes its line with it; a deleted cell only itself', () => {
+    const out = applyHtmlEdits(withTable, [
+      { path: [1, 1, 0, 1], tag: 'tr', remove: true },
+      { path: [1, 1, 0, 0, 1], tag: 'th', remove: true },
+      { path: [1, 1, 0, 2, 1], tag: 'td', remove: true }
+    ])
+    expect(out).toContain('  <table>\n    <tr><th>Giao thức</th></tr>\n    <tr><td>UDP</td></tr>\n  </table>')
+  })
+
+  it('rows dragged into a new order (the parser added the <tbody>, it is not in the file)', () => {
+    const out = applyHtmlEdits(withTable, [{ path: [1, 1, 0], tag: 'tbody', order: [{ i: 0 }, { i: 2 }, { i: 1 }] }])
+    expect(out).toContain('    <tr><th>Giao thức</th><th>Tin cậy</th></tr>\n    <tr><td>UDP</td><td></td></tr>\n    <tr><td>TCP</td><td>Có</td></tr>\n  </table>')
+  })
+
+  it('new blocks before the first element of a container', () => {
+    const out = applyHtmlEdits(withTable, [{ path: [1, 0], tag: 'p', before: [{ tag: 'h2', html: 'Đầu' }] }])
+    expect(out).toContain('<body>\n  <h2>Đầu</h2>\n  <p>Trước</p>')
+  })
+})
+

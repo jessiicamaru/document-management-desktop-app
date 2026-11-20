@@ -1739,6 +1739,51 @@ try {
     `a new item at the end of an existing list becomes a paragraph after it; a dragged item moves in the file (${JSON.stringify(dragged.slice(dragged.indexOf('<ul>'), dragged.indexOf('</body>')))})`
   )
 
+  step('34c. HTML: a table is inserted, filled with Tab, gets a column; later a row of it is deleted')
+  const openEditFrame = async () => {
+    await page.click('.doc-controls >> text=Sửa chữ')
+    await page.waitForSelector('.html-format')
+    let fr = null
+    for (let i = 0; i < 100 && !fr; i++) {
+      fr = page.frames().find((x) => x.url().includes('?edit=1')) ?? null
+      if (!fr) await page.waitForTimeout(100)
+    }
+    return fr
+  }
+  let tableFrame = await openEditFrame()
+  await tableFrame.waitForSelector('p[data-sd-block] >> text=Kết thúc')
+  await tableFrame.click('p[data-sd-block] >> text=Kết thúc')
+  await page.click('.html-format >> text=Bảng')
+  await tableFrame.waitForSelector('table[data-sd-new-table]')
+  await page.keyboard.type('A')
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('B')
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('1')
+  await tableFrame.waitForSelector('.sd-table-tools', { state: 'visible' })
+  await tableFrame.click('.sd-table-tools [data-action="col-add"]')
+  await page.keyboard.type('x')
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
+  const withTable = read('backend/Ghi chép HTML.html')
+  check(
+    withTable.includes(
+      '<p>Kết thúc</p>\n<table>\n  <thead>\n    <tr><th>A</th><th></th><th>B</th></tr>\n  </thead>\n  <tbody>\n    <tr><td>1</td><td>x</td><td></td></tr>\n    <tr><td></td><td></td><td></td></tr>\n  </tbody>\n</table>'
+    ),
+    `"Bảng" inserts a table after the block; Tab moves between cells; "+ Cột" adds a column (${JSON.stringify(withTable.slice(withTable.indexOf('<p>Kết thúc'), withTable.indexOf('</body>')))})`
+  )
+  tableFrame = await openEditFrame()
+  await tableFrame.waitForSelector('td[data-sd-block] >> text=x')
+  await tableFrame.click('td[data-sd-block] >> text=x')
+  await tableFrame.click('.sd-table-tools [data-action="row-del"]')
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
+  const rowGone = read('backend/Ghi chép HTML.html')
+  check(
+    rowGone.includes('  <tbody>\n    <tr><td></td><td></td><td></td></tr>\n  </tbody>') && !rowGone.includes('<td>x</td>'),
+    `"− Hàng" deletes a row of a table in the file, with its line (${JSON.stringify(rowGone.slice(rowGone.indexOf('<table>'), rowGone.indexOf('</body>')))})`
+  )
+
   step('35. Empty folders show in the tree; notes move to another workspace folder with their tags')
   await menuOn('.root-row:has-text("library") .row.folder.root', 'Thư mục mới…')
   await nameDialog(['Trống'])

@@ -36,7 +36,41 @@ type ChildNode = DefaultTreeAdapterMap['childNode']
 const INLINE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'del', 'dfn', 'em', 'i', 'img', 'ins', 'kbd', 'mark', 'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr'])
 
 /** What a block added while editing may be. */
-const NEW_BLOCK_TAGS = new Set(['p', 'li', 'h2', 'h3', 'h4', 'ul', 'ol'])
+const NEW_BLOCK_TAGS = new Set(['p', 'li', 'h2', 'h3', 'h4', 'ul', 'ol', 'table', 'tr', 'td', 'th'])
+
+/** The cells of a row: only <td>/<th>, each cleaned like a block, on one line. */
+function sanitizeCells(row: Element | undefined): string {
+  if (!row) return ''
+  return row.childNodes
+    .filter((c): c is Element => isElement(c) && (c.tagName === 'td' || c.tagName === 'th'))
+    .map((c) => `<${c.tagName}>${sanitizeInline(serialize(c))}</${c.tagName}>`)
+    .join('')
+}
+
+/** The rows of a table typed while editing, sorted into header rows and body rows. */
+function rowsOf(html: string): { head: string[]; body: string[] } {
+  const table = parseFragment(`<table>${html}</table>`).childNodes.find(isElement)
+  const head: string[] = []
+  const body: string[] = []
+  const walk = (el: Element, into: string[]): void => {
+    for (const c of el.childNodes) {
+      if (!isElement(c)) continue
+      if (c.tagName === 'tr') into.push(sanitizeCells(c))
+      else if (c.tagName === 'thead') walk(c, head)
+      else if (c.tagName === 'tbody' || c.tagName === 'tfoot') walk(c, body)
+    }
+  }
+  if (table) walk(table, body)
+  return { head, body }
+}
+
+/** A table typed while editing: header rows in <thead>, the others in <tbody>, a row per line. */
+export function sanitizeTable(html: string, indent: string): string {
+  const { head, body } = rowsOf(html)
+  const part = (tag: string, rows: string[]): string =>
+    rows.length ? `\n${indent}  <${tag}>${rows.map((r) => `\n${indent}    <tr>${r}</tr>`).join('')}\n${indent}  </${tag}>` : ''
+  return part('thead', head) + part('tbody', body)
+}
 
 /** The items of a new list, one per line: only <li>, each cleaned like a block. */
 export function sanitizeList(html: string, indent: string): string {
@@ -101,16 +135,22 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
   const html = doc.childNodes.find(isElement)
   if (!html) throw new HtmlEditError(t('File HTML không có thẻ <html>.'))
 
-  /** Indent of the line an element starts on (when only spaces come before it). */
-  const indentOf = (offset: number): string => {
+  /** Indent of the line an element starts on; null when something else comes before it on that line. */
+  const lineIndent = (offset: number): string | null => {
     const lineStart = text.lastIndexOf('\n', offset - 1) + 1
     const lead = text.slice(lineStart, offset)
-    return /^[ \t]*$/.test(lead) ? lead : ''
+    return /^[ \t]*$/.test(lead) ? lead : null
   }
+  const indentOf = (offset: number): string => lineIndent(offset) ?? ''
   /** A paragraph, heading, list item or list typed while editing, as HTML. */
   const newBlock = (b: { tag: string; html: string }, indent: string): string => {
     if (!NEW_BLOCK_TAGS.has(b.tag)) throw new HtmlEditError(t('Không thêm được đoạn <{0}>.', { 0: String(b.tag) }))
     if (b.tag === 'ul' || b.tag === 'ol') return `<${b.tag}>${sanitizeList(b.html, `${indent}  `)}\n${indent}</${b.tag}>`
+    if (b.tag === 'table') return `<table>${sanitizeTable(b.html, indent)}\n${indent}</table>`
+    if (b.tag === 'tr') {
+      const { head, body } = rowsOf(`<tr>${b.html}</tr>`)
+      return `<tr>${head[0] ?? body[0] ?? ''}</tr>`
+    }
     return `<${b.tag}>${sanitizeInline(b.html)}</${b.tag}>`
   }
 
@@ -134,17 +174,41 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
       throw new HtmlEditError(t('Đoạn văn đã sửa không khớp với file (<{0}> ≠ <{1}>). Hãy sửa trong raw.', { 0: edit.tag, 1: node.tagName }))
     }
     const loc = node.sourceCodeLocation
-    if (!loc?.startTag || !loc.endTag) {
+    const needsTags = typeof edit.html === 'string' || !!edit.after?.length || !!edit.before?.length
+    if (needsTags && (!loc?.startTag || !loc.endTag)) {
       throw new HtmlEditError(t('Thẻ <{0}> trong file không có thẻ đóng nên không sửa trực tiếp được. Hãy sửa đoạn này trong raw.', { 0: edit.tag }))
     }
-    if (typeof edit.html === 'string') {
+    if (edit.remove) {
+      // Deleted (a table row or column): the element, and its line when it is alone on it.
+      if (!loc) throw new HtmlEditError(t('Không xoá được ở đây; hãy dùng Raw.'))
+      let start = loc.startOffset
+      let end = loc.endOffset
+      const lead = lineIndent(start)
+      const lineEnd = text.indexOf('\n', end)
+      if (lead !== null && lineEnd >= 0 && !text.slice(end, lineEnd).trim()) {
+        start -= lead.length
+        end = lineEnd + 1
+      }
+      ops.push({ start, end, render: () => '' })
+      continue
+    }
+    if (loc?.startTag && edit.before?.length) {
+      // New blocks right before this element (nothing of the file comes before them).
+      const lead = lineIndent(loc.startTag.startOffset)
+      const indent = lead ?? ''
+      const added = edit.before.map((b) => `${newBlock(b, indent)}${lead !== null ? `\n${indent}` : ''}`).join('')
+      ops.push({ start: loc.startTag.startOffset, end: loc.startTag.startOffset, render: () => added })
+    }
+    if (typeof edit.html === 'string' && loc?.startTag && loc.endTag) {
       const inner = sanitizeInline(edit.html)
       ops.push({ start: loc.startTag.endOffset, end: loc.endTag.startOffset, render: () => inner })
     }
-    if (edit.after?.length) {
-      // New paragraphs / list items right after this element, on their own lines, indented like it.
-      const indent = indentOf(loc.startTag.startOffset)
-      const added = edit.after.map((b) => `\n${indent}${newBlock(b, indent)}`).join('')
+    if (edit.after?.length && loc?.startTag && loc.endTag) {
+      // New paragraphs / list items right after this element, on their own lines, indented like it
+      // (on the same line when the element shares its line, like the cells of a row).
+      const lead = lineIndent(loc.startTag.startOffset)
+      const indent = lead ?? ''
+      const added = edit.after.map((b) => `${lead !== null ? `\n${indent}` : ''}${newBlock(b, indent)}`).join('')
       ops.push({ start: loc.endTag.endOffset, end: loc.endTag.endOffset, render: () => added })
     }
     if (edit.order) {
@@ -166,8 +230,9 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
           throw new HtmlEditError(t('Giữa các khối có chữ hoặc chú thích nên không sắp xếp lại được ở đây; hãy dùng Raw.'))
         }
       }
+      // Children left out were deleted.
       const used = edit.order.filter((o): o is { i: number } => 'i' in o).map((o) => o.i)
-      if (used.length !== kids.length || new Set(used).size !== kids.length || used.some((i) => !Number.isInteger(i) || i < 0 || i >= kids.length)) {
+      if (new Set(used).size !== used.length || used.some((i) => !Number.isInteger(i) || i < 0 || i >= kids.length)) {
         throw new HtmlEditError(t('Thứ tự mới không khớp với file. File có thể vừa bị thay đổi.'))
       }
       const indent = indentOf(spans[0].start)
@@ -216,21 +281,38 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
 export function editModeInjection(nonce: string): string {
   return `
 <style data-studydocs>
-  [data-sd-block] { outline: 1px dashed transparent; outline-offset: 2px; border-radius: 3px; cursor: text; }
-  [data-sd-block]:hover { outline-color: rgba(180, 83, 31, .45); }
-  [data-sd-block]:focus { outline: 2px solid rgba(180, 83, 31, .8); background: rgba(180, 83, 31, .05); }
-  [data-sd-block][data-sd-dirty], [data-sd-new] { box-shadow: inset 3px 0 0 rgba(47, 93, 138, .7); }
+  [data-sd-block] { outline: 1.5px dashed transparent; outline-offset: 3px; border-radius: 5px; cursor: text;
+    transition: outline-color .15s, background-color .15s, box-shadow .2s; }
+  [data-sd-block]:hover { outline-color: rgba(180, 83, 31, .38); background-color: rgba(180, 83, 31, .035); }
+  [data-sd-block]:focus { outline: 2px solid rgba(180, 83, 31, .75); background-color: rgba(180, 83, 31, .05);
+    box-shadow: 0 0 0 6px rgba(180, 83, 31, .12); }
+  td[data-sd-block], th[data-sd-block] { outline-offset: -2px; border-radius: 0; min-width: 48px; }
+  td[data-sd-block]:focus, th[data-sd-block]:focus { box-shadow: none; }
+  [data-sd-block][data-sd-dirty], [data-sd-new] { box-shadow: inset 3px 0 0 rgba(47, 93, 138, .75); }
+  td[data-sd-block][data-sd-new], th[data-sd-block][data-sd-new], td[data-sd-block][data-sd-dirty], th[data-sd-block][data-sd-dirty] { box-shadow: none; background-color: rgba(47, 93, 138, .08); }
   [data-sd-new]:empty::before { content: '\\200b'; }
   [data-sd-block] img { max-width: 100%; }
+  table[data-sd-new-table] { border-collapse: collapse; margin: .8em 0; }
+  table[data-sd-new-table] th, table[data-sd-new-table] td { border: 1px solid rgba(128, 128, 128, .45); padding: 6px 10px; text-align: left; }
+  table[data-sd-new-table] th { background: rgba(128, 128, 128, .1); }
   [data-sd-svg] { cursor: text; }
   [data-sd-svg]:hover { text-decoration: underline dotted rgba(180, 83, 31, .8); }
   [data-sd-svg][data-sd-dirty] { text-decoration: underline solid rgba(47, 93, 138, .9); }
-  .sd-handle { position: fixed; z-index: 2147483646; width: 18px; height: 22px; display: none; align-items: center; justify-content: center;
-    border-radius: 5px; background: rgba(180, 83, 31, .12); color: rgba(120, 60, 20, .85); font: 700 13px system-ui, sans-serif; letter-spacing: -2px;
-    cursor: grab; user-select: none; touch-action: none; }
-  .sd-handle:hover { background: rgba(180, 83, 31, .25); }
-  .sd-drop { position: fixed; z-index: 2147483646; height: 3px; border-radius: 2px; background: rgba(180, 83, 31, .9); pointer-events: none; display: none; }
-  [data-sd-dragging] { opacity: .45; }
+  .sd-handle { position: fixed; z-index: 2147483646; width: 20px; height: 24px; display: none; align-items: center; justify-content: center;
+    border-radius: 6px; background: #fff; color: rgba(150, 70, 25, .9); border: 1px solid rgba(180, 83, 31, .3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .12); font: 700 13px system-ui, sans-serif; letter-spacing: -2px;
+    cursor: grab; user-select: none; touch-action: none; transition: background .15s, transform .15s; }
+  .sd-handle:hover { background: #fdf0e7; transform: scale(1.08); }
+  .sd-drop { position: fixed; z-index: 2147483646; height: 3px; border-radius: 2px; pointer-events: none; display: none;
+    background: linear-gradient(90deg, rgba(180, 83, 31, .95), rgba(214, 130, 60, .8)); box-shadow: 0 0 8px rgba(180, 83, 31, .5); }
+  [data-sd-dragging] { opacity: .4; }
+  .sd-table-tools { position: fixed; z-index: 2147483645; display: none; gap: 2px; padding: 3px; border-radius: 9px;
+    background: rgba(255, 255, 255, .96); border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 6px 20px rgba(0, 0, 0, .16);
+    font: 12.5px system-ui, sans-serif; }
+  .sd-table-tools button { border: none; background: transparent; color: #333; font: inherit; padding: 4px 9px; border-radius: 6px; cursor: pointer; }
+  .sd-table-tools button:hover { background: rgba(180, 83, 31, .12); color: #8a3c12; }
+  .sd-table-tools button.sd-danger:hover { background: rgba(194, 74, 74, .12); color: #b02a2a; }
+  .sd-table-tools .sd-sep { width: 1px; margin: 3px 2px; background: rgba(0, 0, 0, .12); }
   input[data-studydocs] { position: fixed; z-index: 2147483647; font: 14px system-ui, sans-serif; padding: 2px 6px;
     border: 2px solid rgba(180, 83, 31, .9); border-radius: 4px; background: #fff; color: #111; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
 </style>
@@ -256,7 +338,7 @@ export function editModeInjection(nonce: string): string {
   const walk = (el) => {
     for (const child of el.children) {
       if (isOurs(child) || child.namespaceURI !== HTML_NS || SKIP.has(child.tagName)) continue
-      if (child.textContent.trim() && onlyInline(child)) {
+      if ((child.textContent.trim() || child.tagName === 'TD' || child.tagName === 'TH') && onlyInline(child)) {
         blocks.push({ el: child, path: pathOf(child), tag: child.tagName.toLowerCase(), original: child.innerHTML })
       } else {
         walk(child)
@@ -306,8 +388,14 @@ export function editModeInjection(nonce: string): string {
   // Paragraphs and list items started with Enter (not in the file yet). Left empty, they are not saved.
   const added = []
   const kept = (el) => el.isConnected && (el.textContent.trim() !== '' || !!el.querySelector('img'))
+  // Table parts added while editing are kept even when empty (a row or column was asked for).
+  const isTablePart = (el) => el.hasAttribute('data-sd-new-row') || el.hasAttribute('data-sd-new-table') || el.tagName === 'TD' || el.tagName === 'TH'
+  const counts = (el) => el.isConnected && (isTablePart(el) || kept(el))
+  // Elements of the file deleted while editing (table rows, columns, tables).
+  const removed = []
   const dirtyCount = () =>
-    blocks.filter((b) => b.el.innerHTML !== b.original).length + svgTexts.filter((t) => t.el.textContent !== t.original).length + added.filter(kept).length + reordered.size
+    blocks.filter((b) => b.el.isConnected && b.el.innerHTML !== b.original).length + svgTexts.filter((t) => t.el.textContent !== t.original).length +
+    added.filter(counts).length + reordered.size + removed.length
 
   let box = null
   const openBox = (t) => {
@@ -460,6 +548,16 @@ export function editModeInjection(nonce: string): string {
         changed()
         return
       }
+      if (e.key === 'Tab' && (el.tagName === 'TD' || el.tagName === 'TH')) {
+        // Tab / Shift+Tab: the next / previous cell; Tab in the last cell adds a row.
+        e.preventDefault()
+        const table = el.closest('table')
+        const cells = [...table.querySelectorAll('td, th')].filter((c) => c.closest('table') === table)
+        const i = cells.indexOf(el) + (e.shiftKey ? -1 : 1)
+        if (i >= 0 && i < cells.length) placeCaret(cells[i], true)
+        else if (!e.shiftKey) tableAction('row-add', el)
+        return
+      }
       if (e.key !== 'Enter' || e.shiftKey) return
       e.preventDefault()
       if (!SPLITS.has(el.tagName) || !el.parentElement) return
@@ -496,6 +594,167 @@ export function editModeInjection(nonce: string): string {
   }
   for (const b of blocks) wire(b.el, false)
 
+  // ---------- tables ----------
+  const NOTICE = {
+    spans: ${JSON.stringify(t('Bảng này có ô gộp (colspan/rowspan) nên không thêm/xoá hàng, cột ở đây được; hãy dùng Raw.'))},
+    lastRow: ${JSON.stringify(t('Đây là hàng cuối của bảng; dùng "Xoá bảng" nếu muốn bỏ cả bảng.'))},
+    lastCol: ${JSON.stringify(t('Đây là cột cuối của bảng; dùng "Xoá bảng" nếu muốn bỏ cả bảng.'))}
+  }
+  const notice = (text) => send({ type: 'notice', text })
+  const newCell = (tag) => {
+    const c = document.createElement(tag)
+    wire(c, true)
+    return c
+  }
+  const hasSpans = (table) => [...table.querySelectorAll('td, th')].some((c) => c.closest('table') === table && (c.colSpan > 1 || c.rowSpan > 1))
+  /** Gone from the page; deleted from the file on save when it was in the file. */
+  const removedFrom = new Map()
+  const drop = (el) => {
+    if (orig.has(el)) {
+      removed.push(el)
+      removedFrom.set(el, el.parentElement)
+    }
+    el.remove()
+  }
+  const tableAction = (action, cell) => {
+    const table = cell && cell.closest('table')
+    if (!table) return
+    const row = cell.parentElement
+    if (action === 'table-del') {
+      const after = table.nextElementSibling
+      drop(table)
+      hideTools()
+      if (after && after.hasAttribute('data-sd-block')) placeCaret(after, false)
+      changed()
+      return
+    }
+    if (hasSpans(table)) return notice(NOTICE.spans)
+    const rows = [...table.rows]
+    if (action === 'row-add') {
+      const tr = document.createElement('tr')
+      tr.setAttribute('data-sd-new-row', '')
+      for (let i = 0; i < row.cells.length; i++) tr.appendChild(newCell('td'))
+      // Under a header row: the first row of the body.
+      const body = row.parentElement.tagName === 'THEAD' && table.tBodies[0]
+      if (body) body.insertBefore(tr, body.firstElementChild)
+      else row.after(tr)
+      added.push(tr)
+      placeCaret(tr.cells[Math.min(cell.cellIndex, tr.cells.length - 1)], false)
+    }
+    if (action === 'row-del') {
+      if (rows.length < 2) return notice(NOTICE.lastRow)
+      const next = rows[rows.indexOf(row) + 1] || rows[rows.indexOf(row) - 1]
+      drop(row)
+      placeCaret(next.cells[Math.min(cell.cellIndex, next.cells.length - 1)], true)
+    }
+    if (action === 'col-add') {
+      const at = cell.cellIndex
+      let mine = null
+      for (const r of rows) {
+        const ref = r.cells[at]
+        const c = newCell(ref && ref.tagName === 'TH' ? 'th' : 'td')
+        if (ref) ref.after(c)
+        else r.appendChild(c)
+        added.push(c)
+        if (r === row) mine = c
+      }
+      if (mine) placeCaret(mine, false)
+    }
+    if (action === 'col-del') {
+      if (row.cells.length < 2) return notice(NOTICE.lastCol)
+      const at = cell.cellIndex
+      for (const r of rows) if (r.cells[at]) drop(r.cells[at])
+      placeCaret(row.cells[Math.min(at, row.cells.length - 1)], true)
+    }
+    changed()
+    placeTools()
+  }
+
+  // A small bar over the table the caret is in.
+  const tools = document.createElement('div')
+  tools.className = 'sd-table-tools'
+  tools.setAttribute('data-studydocs', '')
+  const TOOL_BUTTONS = [
+    ['row-add', ${JSON.stringify(t('+ Hàng'))}, ${JSON.stringify(t('Thêm hàng bên dưới (Tab ở ô cuối cũng thêm hàng)'))}],
+    ['col-add', ${JSON.stringify(t('+ Cột'))}, ${JSON.stringify(t('Thêm cột bên phải'))}],
+    ['sep'],
+    ['row-del', ${JSON.stringify(t('− Hàng'))}, ${JSON.stringify(t('Xoá hàng này'))}],
+    ['col-del', ${JSON.stringify(t('− Cột'))}, ${JSON.stringify(t('Xoá cột này'))}],
+    ['sep'],
+    ['table-del', ${JSON.stringify(t('Xoá bảng'))}, ${JSON.stringify(t('Xoá cả bảng'))}]
+  ]
+  for (const [action, label, title] of TOOL_BUTTONS) {
+    if (action === 'sep') {
+      const sep = document.createElement('span')
+      sep.className = 'sd-sep'
+      tools.appendChild(sep)
+      continue
+    }
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.textContent = label
+    b.title = title
+    b.setAttribute('data-action', action)
+    if (action === 'table-del') b.className = 'sd-danger'
+    // Keep the caret where it is: the action runs on the cell it is in.
+    b.addEventListener('mousedown', (e) => e.preventDefault())
+    b.addEventListener('click', () => tableAction(action, toolCell))
+    tools.appendChild(b)
+  }
+  document.body.appendChild(tools)
+  let toolCell = null
+  const hideTools = () => {
+    toolCell = null
+    tools.style.display = 'none'
+  }
+  const placeTools = () => {
+    if (!toolCell || !toolCell.isConnected) return hideTools()
+    const table = toolCell.closest('table')
+    const r = table.getBoundingClientRect()
+    tools.style.display = 'flex'
+    const h = tools.offsetHeight || 30
+    // At the table's right end, out of the way of the drag handle on the left.
+    const w = tools.offsetWidth
+    tools.style.left = Math.max(4, Math.min(innerWidth - w - 8, r.right - w >= r.left ? r.right - w : r.left)) + 'px'
+    tools.style.top = (r.top - h - 6 >= 4 ? r.top - h - 6 : r.bottom + 6) + 'px'
+  }
+  document.addEventListener('selectionchange', () => {
+    const sel = getSelection()
+    const el = sel.rangeCount ? blockOf(sel.anchorNode) : null
+    const cell = el && (el.tagName === 'TD' || el.tagName === 'TH') ? el : null
+    if (cell) {
+      toolCell = cell
+      placeTools()
+    } else if (document.activeElement && !tools.contains(document.activeElement)) hideTools()
+  })
+  addEventListener('scroll', () => toolCell && placeTools(), { passive: true })
+
+  /** A new table (a header row and two rows, two columns) after the block the caret is in. */
+  const insertTable = () => {
+    const el = restore()
+    if (!el) return
+    let at = el
+    if (el.tagName === 'LI') at = el.parentElement
+    const inTable = el.closest('table')
+    if (inTable) at = inTable
+    const table = document.createElement('table')
+    table.setAttribute('data-sd-new-table', '')
+    const head = document.createElement('thead')
+    const body = document.createElement('tbody')
+    table.append(head, body)
+    for (let r = 0; r < 3; r++) {
+      const tr = document.createElement('tr')
+      for (let c = 0; c < 2; c++) tr.appendChild(newCell(r === 0 ? 'th' : 'td'))
+      ;(r === 0 ? head : body).appendChild(tr)
+    }
+    // A new empty paragraph becomes the table; otherwise it goes after the block.
+    if (at === el && el.hasAttribute('data-sd-new') && !kept(el) && el.tagName !== 'TD' && el.tagName !== 'TH') el.replaceWith(table)
+    else at.after(table)
+    added.push(table)
+    placeCaret(table.rows[0].cells[0], false)
+    changed()
+  }
+
   // ---------- dragging blocks into a new order ----------
   // A handle shows at the left of the block under the mouse (a paragraph, heading, list item,
   // list, table, code…). Dragging it moves the block among its neighbours (same container).
@@ -508,7 +767,7 @@ export function editModeInjection(nonce: string): string {
   dropLine.className = 'sd-drop'
   dropLine.setAttribute('data-studydocs', '')
   document.body.append(handle, dropLine)
-  const MOVABLE_TAGS = new Set(['P','LI','H1','H2','H3','H4','H5','H6','UL','OL','TABLE','PRE','BLOCKQUOTE','FIGURE','IMG','HR','DL','DETAILS','SECTION','ARTICLE','DIV','ASIDE'])
+  const MOVABLE_TAGS = new Set(['P','LI','H1','H2','H3','H4','H5','H6','UL','OL','TABLE','TR','PRE','BLOCKQUOTE','FIGURE','IMG','HR','DL','DETAILS','SECTION','ARTICLE','DIV','ASIDE'])
   const siblingsOf = (el) => [...el.parentElement.children].filter((c) => !c.closest('[data-studydocs]') && c.namespaceURI === HTML_NS)
   /** The block to drag for an element under the mouse: itself or an ancestor whose siblings hold text blocks. */
   const movableFrom = (target) => {
@@ -530,14 +789,34 @@ export function editModeInjection(nonce: string): string {
     handle.style.left = Math.max(2, r.left - 24) + 'px'
     handle.style.top = (r.top + Math.min(r.height, 28) / 2 - 11) + 'px'
   }
+  // The handle stays while the mouse travels from the block to it (the strip on the block's
+  // left), and a moment longer before it goes.
+  let hideTimer = 0
+  const keepHandle = () => {
+    clearTimeout(hideTimer)
+    hideTimer = 0
+  }
+  const towardHandle = (e) => {
+    if (!hovered || handle.style.display !== 'flex') return false
+    const r = hovered.getBoundingClientRect()
+    const left = parseFloat(handle.style.left) - 8
+    return e.clientX >= left && e.clientX <= r.left + 12 && e.clientY >= r.top - 6 && e.clientY <= r.bottom + 6
+  }
   document.addEventListener('mousemove', (e) => {
-    if (dragging || e.target === handle) return
+    if (dragging) return
+    if (e.target === handle || towardHandle(e)) return keepHandle()
     const el = movableFrom(e.target)
-    if (el !== hovered) {
+    if (el) {
+      keepHandle()
       hovered = el
-      if (!el) handle.style.display = 'none'
+      placeHandle()
+    } else if (hovered && !hideTimer) {
+      hideTimer = setTimeout(() => {
+        hideTimer = 0
+        hovered = null
+        handle.style.display = 'none'
+      }, 450)
     }
-    placeHandle()
   })
   addEventListener('scroll', placeHandle, { passive: true })
   handle.addEventListener('pointerdown', (e) => {
@@ -630,9 +909,11 @@ export function editModeInjection(nonce: string): string {
     }
     // Paragraph type (heading, list…): only for paragraphs added while editing; the page's own
     // blocks keep their tag (changing that is a layout change, for Raw).
+    if (e.data.type === 'insert-table') insertTable()
     if (e.data.type === 'block') {
       const el = restore()
       if (!el) return
+      if (el.tagName === 'TD' || el.tagName === 'TH') return
       const inNewList = el.tagName === 'LI' && el.parentElement.hasAttribute('data-sd-new-list')
       if (!el.hasAttribute('data-sd-new')) {
         send({ type: 'block-refused' })
@@ -713,15 +994,22 @@ export function editModeInjection(nonce: string): string {
         return out
       }
       const htmlOf = (b) => (b.original.indexOf('&nbsp;') >= 0 ? b.el.innerHTML : fixSpaces(b.el.innerHTML))
-      const edits = blocks.filter((b) => b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: htmlOf(b) }))
+      const edits = blocks.filter((b) => b.el.isConnected && b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: htmlOf(b) }))
       // New paragraphs, headings and lists belong after the nearest block of the file before them.
-      const isNewNode = (n) => n.hasAttribute('data-sd-new') || n.hasAttribute('data-sd-new-list')
+      const isNewNode = (n) => n.hasAttribute('data-sd-new') || n.hasAttribute('data-sd-new-list') || n.hasAttribute('data-sd-new-row') || n.hasAttribute('data-sd-new-table')
+      const cellsOf = (tr) => [...tr.cells].map((c) => '<' + c.tagName.toLowerCase() + '>' + fixSpaces(c.innerHTML) + '</' + c.tagName.toLowerCase() + '>').join('')
       /** A block added while editing, as { tag, html }; null when left empty. */
       const newItem = (el) => {
         if (el.hasAttribute('data-sd-new-list')) {
           const items = [...el.children].filter((li) => kept(li))
           return items.length ? { tag: el.tagName.toLowerCase(), html: items.map((li) => '<li>' + fixSpaces(li.innerHTML) + '</li>').join('') } : null
         }
+        if (el.hasAttribute('data-sd-new-table')) {
+          const part = (sec) => '<' + sec.tagName.toLowerCase() + '>' + [...sec.rows].map((tr) => '<tr>' + cellsOf(tr) + '</tr>').join('') + '</' + sec.tagName.toLowerCase() + '>'
+          return { tag: 'table', html: [...el.children].filter((c) => c.tagName === 'THEAD' || c.tagName === 'TBODY').map(part).join('') }
+        }
+        if (el.hasAttribute('data-sd-new-row')) return { tag: 'tr', html: cellsOf(el) }
+        if (el.tagName === 'TD' || el.tagName === 'TH') return { tag: el.tagName.toLowerCase(), html: fixSpaces(el.innerHTML) }
         return kept(el) ? { tag: el.tagName.toLowerCase(), html: fixSpaces(el.innerHTML) } : null
       }
       /** The edit of an element of the file (by its first position), made when needed. */
@@ -745,17 +1033,32 @@ export function editModeInjection(nonce: string): string {
         }
         editOf(parent).order = order
       }
-      // Other new blocks go right after the nearest element of the file before them.
-      const tops = [...new Set(added)].filter((el) => el.isConnected && !el.parentElement.hasAttribute('data-sd-new-list') && !reordered.has(el.parentElement))
+      // Other new blocks go right after the nearest element of the file before them (or before
+      // the first one after them). Those inside other new blocks come with them.
+      const tops = [...new Set(added)].filter((el) => el.isConnected && orig.has(el.parentElement) && !reordered.has(el.parentElement))
       tops.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      const fromFile = (n) => n && !isNewNode(n) && !n.closest('[data-studydocs]') && orig.has(n)
       for (const el of tops) {
         const item = newItem(el)
         if (!item) continue
         let anchor = el.previousElementSibling
-        while (anchor && (isNewNode(anchor) || anchor.closest('[data-studydocs]'))) anchor = anchor.previousElementSibling
-        if (!anchor || !orig.has(anchor)) continue
-        const edit = editOf(anchor)
-        ;(edit.after = edit.after || []).push(item)
+        while (anchor && !fromFile(anchor)) anchor = anchor.previousElementSibling
+        if (anchor) {
+          const edit = editOf(anchor)
+          ;(edit.after = edit.after || []).push(item)
+          continue
+        }
+        let next = el.nextElementSibling
+        while (next && !fromFile(next)) next = next.nextElementSibling
+        if (next) {
+          const edit = editOf(next)
+          ;(edit.before = edit.before || []).push(item)
+        }
+      }
+      // Deleted rows, columns and tables (in a reordered container they are left out of its order).
+      for (const el of removed) {
+        if (reordered.has(removedFrom.get(el)) || removed.some((r) => r !== el && r.contains && r.contains(el))) continue
+        edits.push({ path: orig.get(el), tag: el.tagName.toLowerCase(), remove: true })
       }
       for (const t of svgTexts) {
         if (t.el.textContent !== t.original) edits.push({ path: t.path, tag: t.tag, html: escapeText(t.el.textContent) })

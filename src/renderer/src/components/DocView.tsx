@@ -381,6 +381,9 @@ export default function DocView(props: Props) {
                 <button className="md-tool" title={t('Chèn ảnh (hoặc dán ảnh bằng Ctrl+V)')} onMouseDown={(e) => e.preventDefault()} onClick={() => imageInputRef.current?.click()}>
                   {t('Ảnh')}
                 </button>
+                <button className="md-tool" title={t('Chèn bảng sau đoạn đang sửa (Tab chuyển ô)')} onMouseDown={(e) => e.preventDefault()} onClick={() => readerRef.current?.insertTable?.()}>
+                  {t('Bảng')}
+                </button>
                 <button className="md-tool" title={t('Bỏ định dạng')} onMouseDown={(e) => e.preventDefault()} onClick={() => readerRef.current?.format?.('removeFormat')}>
                   T̸
                 </button>

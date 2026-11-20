@@ -7,6 +7,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, OcrData, RecoveryItem, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
+import { plainPageStyle } from './page-style'
 import { printNotesInjection, viewModeInjection } from './view-helper'
 import { emptyFolders, kindOf, listFolders, readFiles, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { MetaStore } from './meta-store'
@@ -1937,7 +1938,7 @@ if (!app.requestSingleInstanceLock()) {
       if (new URL(request.url).searchParams.get('edit') === '1' && kindOf(abs) === 'html') {
         const nonce = randomBytes(16).toString('base64')
         const source = await fs.readFile(abs, 'utf8')
-        return new Response(source + editModeInjection(nonce), {
+        return new Response(source + plainPageStyle(source) + editModeInjection(nonce), {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Content-Security-Policy': `script-src 'nonce-${nonce}'; object-src 'none'`
@@ -1961,7 +1962,8 @@ if (!app.requestSingleInstanceLock()) {
           return html(notes.length || docNote ? source + printNotesInjection(notes, docNote) : source, PRINT_CSP)
         }
         // Reading mode: add the helper for outline, highlights, reading position and shortcuts.
-        return html(source + viewModeInjection())
+        // A page without a style of its own gets a reading style (not written to the file).
+        return html(source + plainPageStyle(source) + viewModeInjection())
       }
       return net.fetch(pathToFileURL(abs).toString())
     })
