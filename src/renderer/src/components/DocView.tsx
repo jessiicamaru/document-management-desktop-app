@@ -150,14 +150,17 @@ export default function DocView(props: Props) {
   const [findFocus, setFindFocus] = useState(0)
   useEffect(() => {
     // App sends this for Ctrl+F (typed in the app, an HTML page or a book).
+    // Reading, or editing an HTML page (Markdown has its own find while writing).
     const open = (): void => {
-      if (mode !== 'view') return
+      if (mode !== 'view' && !(mode === 'edit' && doc.kind === 'html')) return
       setFindOpen(true)
       setFindFocus((n) => n + 1)
     }
     window.addEventListener('studydocs:find', open)
     return () => window.removeEventListener('studydocs:find', open)
-  }, [mode])
+  }, [mode, doc.kind])
+  // The page is reloaded when switching between reading and editing: its matches are gone.
+  useEffect(() => setFindOpen(false), [mode])
 
   // ---------- outline + reading position ----------
 
@@ -436,7 +439,9 @@ export default function DocView(props: Props) {
             )}
             {canEdit && (
               <>
-                <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title={t('Sửa chữ ngay trên bài')}>{t('Sửa chữ')}</button>
+                {doc.kind === 'html' && (
+                  <button className="btn" onClick={startEdit} disabled={mode === 'raw'} title={t('Sửa chữ ngay trên bài')}>{t('Sửa chữ')}</button>
+                )}
                 <button
                   className={`btn ${mode === 'raw' ? 'active' : ''}`}
                   onClick={() => (mode === 'raw' ? setMode('view') : setMode('raw'))}
@@ -507,7 +512,7 @@ export default function DocView(props: Props) {
         </div>
       )}
 
-      {findOpen && mode === 'view' && <FindBar reader={readerRef} focusKey={findFocus} onClose={() => setFindOpen(false)} />}
+      {findOpen && (mode === 'view' || (mode === 'edit' && doc.kind === 'html')) && <FindBar reader={readerRef} focusKey={findFocus} onClose={() => setFindOpen(false)} />}
       {selection && mode === 'view' && (
         <HighlightToolbar rect={selection.rect} onPick={(c) => void createHighlight(c, false)} onNote={() => void createHighlight('yellow', true)} />
       )}

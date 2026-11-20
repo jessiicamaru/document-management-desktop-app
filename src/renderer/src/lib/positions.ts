@@ -45,3 +45,33 @@ export function pruneReadingPositions(docs: DocEntry[], roots: RootInfo[]): numb
     return 0
   }
 }
+
+/**
+ * Keys to move when a document (or a folder, with everything below it) is renamed or moved in
+ * the app: [old key, new key] pairs.
+ */
+export function movedKeys(keys: string[], from: string, to: string, isFolder: boolean): [string, string][] {
+  const out: [string, string][] = []
+  for (const key of keys) {
+    const prefix = PREFIXES.find((p) => key.startsWith(p))
+    if (!prefix) continue
+    const rest = key.slice(prefix.length)
+    if (rest === from || rest.startsWith(`${from}:`)) out.push([key, `${prefix}${to}${rest.slice(from.length)}`])
+    else if (isFolder && rest.startsWith(`${from}/`)) out.push([key, `${prefix}${to}${rest.slice(from.length)}`])
+  }
+  return out
+}
+
+/** Reading positions follow a document or folder that was renamed or moved. Never throws. */
+export function moveReadingPositions(from: string, to: string, isFolder: boolean): void {
+  try {
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)!).filter(Boolean)
+    for (const [oldKey, newKey] of movedKeys(keys, from, to, isFolder)) {
+      const value = localStorage.getItem(oldKey)
+      if (value !== null) localStorage.setItem(newKey, value)
+      localStorage.removeItem(oldKey)
+    }
+  } catch {
+    // positions are a convenience
+  }
+}

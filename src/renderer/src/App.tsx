@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DEFAULT_UI, type Annotation, type AppInfo, type DocEntry, type DocMeta, type LibrarySnapshot, type SearchStatus, type StudyStatus, type UiSettings } from '../../shared/types'
 import { errorMessage, kindLabel, loadLocal, metaOf, normalize, saveLocal } from './lib/docs'
 import { applyUiSettings, timeAgo } from './lib/ui'
-import { pruneReadingPositions } from './lib/positions'
+import { moveReadingPositions, pruneReadingPositions } from './lib/positions'
 import Sidebar, { type FileActions, type SearchHit } from './components/Sidebar'
 import NameDialog, { type NameDialogOptions } from './components/NameDialog'
 import DocView from './components/DocView'
@@ -410,7 +410,9 @@ export default function App() {
   /** After a rename or move, the open document stays open at its new place. */
   const follow = useCallback(
     (oldId: string, newId: string, isFolder: boolean) => {
-      if (!selected || oldId === newId) return
+      if (oldId === newId) return
+      moveReadingPositions(oldId, newId, isFolder)
+      if (!selected) return
       if (selected === oldId) void openDoc(newId)
       else if (isFolder && selected.startsWith(`${oldId}/`)) void openDoc(newId + selected.slice(oldId.length))
     },

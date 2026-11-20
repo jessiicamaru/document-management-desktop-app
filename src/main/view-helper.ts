@@ -13,7 +13,7 @@ import type { Annotation } from '../shared/types'
 import { t } from '../shared/i18n'
 
 /** Source of createAnchoring, run inside the page. It is self-contained by design. */
-const anchoringSource = (): string => `(${createAnchoring.toString()})()`
+export const anchoringSource = (): string => `(${createAnchoring.toString()})()`
 
 /** JSON that is safe to put inside a <script> element. */
 const scriptJson = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c')

@@ -20,6 +20,7 @@ import { parse, parseFragment, serialize } from 'parse5'
 import type { DefaultTreeAdapterMap } from 'parse5'
 import type { HtmlBlockEdit } from '../shared/types'
 import { t } from '../shared/i18n'
+import { anchoringSource } from './view-helper'
 
 type Node = DefaultTreeAdapterMap['node']
 type Element = DefaultTreeAdapterMap['element']
@@ -195,6 +196,21 @@ export function editModeInjection(nonce: string): string {
   const escapeText = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   const send = (msg) => parent.postMessage({ source: 'studydocs', ...msg }, '*')
+
+  // Ctrl+F while editing: the same finder as when reading. It only paints the matches, the
+  // page's content is not touched.
+  const anchoring = ${anchoringSource()}
+  let found = []
+  let foundIndex = 0
+  const showFound = () => {
+    anchoring.showFind(document, found, foundIndex)
+    const current = found[foundIndex]
+    if (current) {
+      const r = current.getBoundingClientRect()
+      if (r.top < 60 || r.bottom > innerHeight - 40) scrollBy({ top: r.top - innerHeight / 3, behavior: 'instant' })
+    }
+    send({ type: 'find-result', index: foundIndex, total: found.length })
+  }
   // Paragraphs and list items started with Enter (not in the file yet). Left empty, they are not saved.
   const added = []
   const kept = (el) => el.isConnected && (el.textContent.trim() !== '' || !!el.querySelector('img'))
@@ -373,10 +389,24 @@ export function editModeInjection(nonce: string): string {
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); send({ type: 'save' }) }
     if (e.key === 'Escape') send({ type: 'cancel' })
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); send({ type: 'key', key: 'ctrl+f' }) }
   }, true)
 
   window.addEventListener('message', (e) => {
     if (e.source !== parent || !e.data || e.data.source !== 'studydocs-app') return
+    if (e.data.type === 'find') {
+      found = anchoring.findAll(document.body, e.data.query)
+      foundIndex = 0
+      showFound()
+    }
+    if (e.data.type === 'find-step' && found.length) {
+      foundIndex = (foundIndex + e.data.dir + found.length) % found.length
+      showFound()
+    }
+    if (e.data.type === 'find-clear') {
+      found = []
+      anchoring.showFind(document, [], 0)
+    }
     if (e.data.type === 'format') {
       if (restore()) document.execCommand(e.data.cmd, false, e.data.value)
       changed()

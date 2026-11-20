@@ -1,11 +1,13 @@
 // Writing a Markdown note: CodeMirror with a live preview (see lib/md-live.ts). What you type is
 // exactly what is saved; nothing else in the file is rewritten. Images can be pasted (embedded or
 // saved in assets/, see lib/cm-images.ts) or picked with the toolbar.
+// Saved by itself a moment after you stop typing; Ctrl+S saves right away; Ctrl+F finds.
 
 import { useEffect, useRef, useState } from 'react'
 import { EditorView, keymap, drawSelection, highlightActiveLine, placeholder } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search'
 import { markdown, markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
 import type { DocEntry } from '../../../shared/types'
 import { t } from '../../../shared/i18n'
@@ -32,6 +34,10 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
   const eol = useRef<Eol>('\n')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  // Saving by itself stops after a failed save (the file changed elsewhere…) until you save by hand.
+  const autoOff = useRef(false)
+  const autoTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const cb = useRef({ onDirty, onError })
   cb.current = { onDirty, onError }
 
@@ -40,18 +46,24 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
     cb.current.onDirty(value)
   }
 
-  const save = async (): Promise<boolean> => {
+  const save = async (auto = false): Promise<boolean> => {
     const view = viewRef.current
     if (!view) return false
+    if (auto && autoOff.current) return false
+    if (!auto) autoOff.current = false
+    clearTimeout(autoTimer.current)
     const content = view.state.doc.toString()
     if (content === base.current.content) return true
     setSaving(true)
     try {
       const mtime = await window.api.writeDoc(doc.path, fromLf(content, eol.current), base.current.mtime)
       base.current = { content, mtime }
-      markDirty(false)
+      // Typed more while saving: still unsaved.
+      markDirty(view.state.doc.toString() !== content)
+      setSavedAt(Date.now())
       return true
     } catch (err) {
+      if (auto) autoOff.current = true
       cb.current.onError(err)
       return false
     } finally {
@@ -61,9 +73,10 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
   const saveRef = useRef(save)
   saveRef.current = save
 
+  /** "Done" saves first; only when that fails does it ask whether to drop the changes. */
   const close = async (): Promise<void> => {
-    if (dirty) {
-      const yes = await confirmDialog({ message: t('Đóng và bỏ các thay đổi chưa lưu?'), ok: t('Bỏ thay đổi'), cancel: t('Tiếp tục viết'), danger: true })
+    if (dirty && !(await save())) {
+      const yes = await confirmDialog({ message: t('Chưa lưu được. Đóng và bỏ các thay đổi chưa lưu?'), ok: t('Bỏ thay đổi'), cancel: t('Tiếp tục viết'), danger: true })
       if (!yes) return
     }
     onClose()
@@ -85,6 +98,8 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
           markdown({ base: markdownLanguage }),
           livePreview(() => doc.path),
           imageExtensions(() => doc.path, 'md', (err) => cb.current.onError(err)),
+          search({ top: true }),
+          highlightSelectionMatches(),
           keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => (void saveRef.current(), true) },
             { key: 'Escape', run: () => (void closeRef.current(), true) },
@@ -96,11 +111,15 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
             // Enter continues lists and quotes ("- " on the next line); Tab indents a list item.
             ...markdownKeymap,
             indentWithTab,
+            ...searchKeymap,
             ...defaultKeymap,
             ...historyKeymap
           ]),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) markDirty(u.state.doc.toString() !== base.current.content)
+            if (!u.docChanged) return
+            markDirty(u.state.doc.toString() !== base.current.content)
+            clearTimeout(autoTimer.current)
+            autoTimer.current = setTimeout(() => void saveRef.current(true), 1200)
           })
         ]
       })
@@ -118,6 +137,7 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
       })
       .catch((err) => cb.current.onError(err))
     return () => {
+      clearTimeout(autoTimer.current)
       view.destroy()
       cb.current.onDirty(false)
     }
@@ -191,7 +211,7 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
           }}
         />
         <div className="spacer" />
-        {dirty && <span className="dirty-dot" title={t('Chưa lưu')} />}
+        {dirty ? <span className="dirty-dot" title={t('Chưa lưu')} /> : savedAt && <span className="saved-note">{t('Đã lưu')}</span>}
         <button className="btn primary small" disabled={!dirty || saving} onClick={() => void save()}>
           {saving ? t('Đang lưu…') : t('Lưu (Ctrl+S)')}
         </button>

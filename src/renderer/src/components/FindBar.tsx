@@ -64,7 +64,11 @@ export default function FindBar({ reader, focusKey, onClose }: Props) {
             e.preventDefault()
             void step(e.shiftKey ? -1 : 1)
           }
-          if (e.key === 'Escape') onClose()
+          if (e.key === 'Escape') {
+            // Esc closes the find bar only (while editing, it would also cancel the edit).
+            e.stopPropagation()
+            onClose()
+          }
         }}
       />
       <span className="find-count">

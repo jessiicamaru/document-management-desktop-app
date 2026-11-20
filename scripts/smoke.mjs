@@ -308,11 +308,11 @@ try {
 
   // English interface, then back to Vietnamese.
   step('8b. Language')
-  // With text being edited, switching asks first (it redraws the window); "no" keeps everything.
-  await page.click('.doc-controls >> text=Sửa chữ')
-  await page.waitForSelector('.markdown p.editable')
-  await page.click('.markdown p.editable >> nth=0')
-  await page.keyboard.press('End')
+  // With unsaved edits (Raw), switching asks first (it redraws the window); "no" keeps everything.
+  await page.click('.doc-controls >> text=Raw')
+  await page.waitForSelector('.raw-host .cm-content')
+  await page.click('.raw-host .cm-content')
+  await page.keyboard.press('Control+End')
   await page.keyboard.type(' (dở)')
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await settingsTab('Giao diện')
@@ -320,13 +320,13 @@ try {
   await page.click('dialog.settings >> text=English')
   await page.waitForTimeout(500)
   check(
-    (await page.locator('dialog.settings .settings-tabs >> text=Giao diện').count()) === 1 && (await page.locator('.edit-bar').count()) === 1,
+    (await page.locator('dialog.settings .settings-tabs >> text=Giao diện').count()) === 1 && (await page.locator('.raw-toolbar .dirty-dot').count()) === 1,
     'switching language while editing asks first ("no" keeps the language and the edit)'
   )
   await page.click('dialog.settings >> text=Xong')
   await setAnswer('accept')
-  await page.click('.edit-bar >> text=Huỷ (Esc)')
-  await editBarGone()
+  await page.click('.raw-toolbar >> text=Đóng raw')
+  await page.waitForSelector('.raw-toolbar', { state: 'detached' })
   await setAnswer('dismiss')
   await page.click('.sidebar-head .icon-btn[title="Cài đặt"]')
   await settingsTab('Giao diện')
@@ -346,25 +346,45 @@ try {
   await page.click('dialog.settings >> text=Xong')
 
   // 9. Inline text edit in Markdown: only the typed text changes in the file.
-  step("9. Inline text edit in Markdown: only the typed text changes in the file.")
+  step("9. Writing in an existing Markdown note: only the typed text changes in the file.")
   const mdBefore = read(REACT)
-  await page.click('.doc-controls >> text=Sửa chữ')
-  await page.waitForSelector('.markdown.editing')
-  await page.click('.markdown p >> text=Mảng phụ thuộc quyết định')
-  await page.keyboard.press('End')
-  await page.keyboard.type(' Rất quan trọng!')
-  await page.click('.markdown td >> text=chỉ một lần sau lần render đầu')
-  await page.keyboard.press('End')
+  check((await page.locator('.doc-controls >> text=Sửa chữ').count()) === 0, 'Markdown notes are written in the editor ("Sửa chữ" is for HTML only)')
+  await page.click('.doc-controls >> text=Viết')
+  await page.waitForSelector('.md-editor .cm-content')
+  await page.waitForFunction(() => document.querySelector('.md-editor .cm-content').textContent.includes('Mảng phụ thuộc'))
+  // Ctrl+F in the editor: find a phrase, then type right after it.
+  const typeAfter = async (phrase, text, back = 0) => {
+    await page.click('.md-editor .cm-content')
+    await page.keyboard.press('Control+F')
+    await page.waitForSelector('.md-editor .cm-search input[name=search]')
+    // Typed key by key: the search box takes the text on key presses (as when you type it).
+    await page.keyboard.type(phrase)
+    await page.press('.md-editor .cm-search input[name=search]', 'Enter')
+    await page.press('.md-editor .cm-search input[name=search]', 'Escape')
+    await page.keyboard.press('ArrowRight')
+    for (let i = 0; i < back; i++) await page.keyboard.press('ArrowLeft')
+    if (text) await page.keyboard.type(text)
+  }
+  await typeAfter('chạy lại lúc nào.', ' Rất quan trọng!')
+  // The table cell, not the diagram above it: 'lần render đầu |', then back before ' |'.
+  await typeAfter('lần render đầu |', '', 2)
   await page.keyboard.type(' tiên')
   await page.screenshot({ path: shot('5-md-inline-edit') })
   await page.keyboard.press('Control+S')
-  await editBarGone()
-  await page.waitForTimeout(500)
+  await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'))
   const mdAfter = read(REACT)
   check(
     mdAfter === mdBefore.replace('chạy lại lúc nào.', 'chạy lại lúc nào. Rất quan trọng!').replace('lần render đầu |', 'lần render đầu tiên |'),
-    'Markdown inline edit changes only the typed text'
+    'Ctrl+F finds in the editor, and only the typed text changes in the file'
   )
+  // Typing more saves by itself a moment later.
+  await page.keyboard.type('!')
+  await page.waitForSelector('.md-toolbar .saved-note', { timeout: 5000 })
+  await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'), null, { timeout: 5000 })
+  check(read(REACT) === mdAfter.replace('lần render đầu tiên |', 'lần render đầu tiên! |'), 'the editor saves by itself shortly after you stop typing')
+  writeFileSync(file(REACT), mdAfter)
+  await page.click('.md-toolbar >> text=Xong')
+  await page.waitForSelector('.md-editor', { state: 'detached' })
 
   // 10. Inline text edit in HTML: only that element's text changes in the file.
   step("10. Inline text edit in HTML: only that element's text changes in the file.")
@@ -1559,6 +1579,15 @@ try {
   await page.keyboard.press('Control+B')
   await page.keyboard.press('Enter')
   await page.keyboard.type('Đoạn mới')
+  // Ctrl+F while editing; Esc closes the find bar only, the edit goes on.
+  await page.keyboard.press('Control+F')
+  await page.waitForSelector('.find-bar input')
+  await page.fill('.find-bar input', 'doan moi')
+  await page.waitForFunction(() => /^\d+\/\d+$/.test(document.querySelector('.find-count')?.textContent ?? ''))
+  const editFind = await page.textContent('.find-count')
+  await page.press('.find-bar input', 'Escape')
+  await page.waitForSelector('.find-bar', { state: 'detached' })
+  check(editFind === '1/1' && (await page.locator('.edit-bar').count()) === 1, `Ctrl+F works while editing an HTML page (${editFind}); Esc closes only the find bar`)
   await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
   await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
   const noteAfter = read('backend/Ghi chép HTML.html')
