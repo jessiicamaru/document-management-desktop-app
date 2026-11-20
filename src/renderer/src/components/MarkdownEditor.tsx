@@ -16,6 +16,8 @@ import { confirmDialog } from '../lib/ask'
 import { imageExtensions } from '../lib/cm-images'
 import { imageMarkup, imageSource } from '../lib/paste-image'
 import { insertLink, livePreview, toggleLinePrefix, wrap } from '../lib/md-live'
+import { richBlocks } from '../lib/md-blocks'
+import { slashMenu } from '../lib/md-slash'
 import { currentUi } from '../lib/settings'
 
 interface Props {
@@ -94,9 +96,12 @@ export default function MarkdownEditor({ doc, onClose, onDirty, onError }: Props
           history(),
           drawSelection(),
           highlightActiveLine(),
-          placeholder(t('Viết ở đây… (# tiêu đề, **đậm**, - danh sách, - [ ] việc cần làm)')),
+          placeholder(t('Viết ở đây… Gõ / để chèn tiêu đề, danh sách, bảng, công thức, sơ đồ, ảnh…')),
           markdown({ base: markdownLanguage }),
           livePreview(() => doc.path),
+          // Tables, formulas and Mermaid drawn in place; the / menu inserts blocks.
+          richBlocks(() => doc.path),
+          slashMenu(() => fileRef.current?.click()),
           imageExtensions(() => doc.path, 'md', (err) => cb.current.onError(err)),
           search({ top: true }),
           highlightSelectionMatches(),

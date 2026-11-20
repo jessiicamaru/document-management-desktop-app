@@ -1555,6 +1555,33 @@ try {
   await page.keyboard.press('Control+S')
   await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'))
   check(read('Viết thử.md') === '# Viết thử\n\nChữ **đậm**\n- [x] việc\n- [ ] việc 2', `what is typed is exactly what is saved; Ctrl+B, Enter in a list, ticking a box (${JSON.stringify(read('Viết thử.md'))})`)
+  // The "/" menu inserts blocks; tables, formulas and diagrams are drawn once the cursor leaves them.
+  const slash = async (query) => {
+    await page.keyboard.type(query)
+    await page.waitForSelector('.cm-tooltip-autocomplete')
+    await page.waitForTimeout(400) // as a person would: the list settles before Enter
+    await page.keyboard.press('Enter')
+  }
+  await page.keyboard.press('Control+End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter')
+  await slash('/bang')
+  await page.keyboard.type('Giao thức')
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('\nCông thức $E = mc^2$ trong dòng.\n\n')
+  await slash('/so do')
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('\nHết.')
+  await page.waitForSelector('.md-editor .cm-md-table table')
+  await page.waitForSelector('.md-editor .cm-md-math-inline .katex')
+  await page.waitForSelector('.md-editor .cm-md-mermaid svg', { timeout: 20000 })
+  await page.keyboard.press('Control+S')
+  await page.waitForFunction(() => !document.querySelector('.md-toolbar .dirty-dot'))
+  const withBlocks = read('Viết thử.md')
+  check(
+    withBlocks.includes('| Giao thức | Cột 2 |\n| --- | --- |') && withBlocks.includes('$E = mc^2$') && withBlocks.includes('```mermaid\nflowchart LR'),
+    '"/" inserts a table and a diagram; the table, formula and diagram are drawn in the editor, the file keeps plain Markdown'
+  )
   await page.click('.md-toolbar >> text=Xong')
   await page.waitForSelector('.md-scroll strong')
   check((await page.locator('.md-scroll strong:has-text("đậm")').count()) === 1, 'after "Done" the note is shown as before')

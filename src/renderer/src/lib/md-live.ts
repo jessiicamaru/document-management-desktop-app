@@ -118,11 +118,18 @@ function build(view: EditorView, docId: string): DecorationSet {
     }
   }
 
+  // YAML front matter (---, title: …, --- at the very top): shown as quiet metadata, not as a
+  // rule and a heading.
+  const fm = /^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)/.exec(state.doc.sliceString(0, Math.min(state.doc.length, 5000)))
+  const fmEnd = fm ? fm[0].length : -1
+  if (fm) lineDeco(0, fmEnd, line('cm-md-frontmatter'))
+
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from,
       to,
       enter: (node) => {
+        if (node.from < fmEnd) return node.to <= fmEnd ? false : undefined
         const name = node.name
         const heading = /^ATXHeading(\d)$/.exec(name)
         if (heading) {

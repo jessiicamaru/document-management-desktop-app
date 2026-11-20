@@ -119,7 +119,6 @@ export default function DocView(props: Props) {
     try {
       const change = await readerRef.current?.collectChanges()
       if (change?.kind === 'html' && change.edits.length) await window.api.saveHtmlEdits(doc.path, change.edits, editMtime)
-      if (change?.kind === 'md' && change.source !== null) await window.api.writeDoc(doc.path, change.source, editMtime)
       stopEdit()
     } catch (err) {
       onError(err)
@@ -304,9 +303,7 @@ export default function DocView(props: Props) {
         doc={doc}
         allDocs={allDocs}
         scrollTarget={scrollTarget}
-        editing={mode === 'edit'}
         sourceOverride={mode === 'raw' ? rawDraft : null}
-        onDirty={updateDirty}
         onOpenDoc={onOpenDoc}
         onError={onError}
       />

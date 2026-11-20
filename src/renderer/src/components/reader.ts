@@ -10,7 +10,7 @@ export interface OutlineItem {
 }
 
 /** Text edits made in place, ready to save. */
-export type DocChanges = { kind: 'html'; edits: HtmlBlockEdit[] } | { kind: 'md'; source: string | null } | { kind: 'none' }
+export type DocChanges = { kind: 'html'; edits: HtmlBlockEdit[] } | { kind: 'none' }
 
 /** A rectangle in the app window's coordinates. */
 export interface ScreenRect {

@@ -2,7 +2,7 @@
 
 Turn the reader into a place to write notes too, like Obsidian or Typora, without giving up what the app promises today: **a file only changes where you changed it**.
 
-Status: steps 1–4 are built. Next: tables, formulas and Mermaid in the Markdown editor, and a `/` menu.
+Status: all steps are built, including tables, formulas, Mermaid and the `/` menu in the Markdown editor.
 
 Work top to bottom; each step ships on its own.
 
@@ -41,7 +41,7 @@ Work top to bottom; each step ships on its own.
 1. [x] **Write** mode for `.md`: a CodeMirror editor where headings, bold, italic, code, links, lists, quotes and rules look formatted; the line with the cursor shows its Markdown.
 2. [x] Images (also embedded ones) and checkboxes `- [ ]` drawn in place; a click on a checkbox ticks it in the file.
 3. [x] `Ctrl+B` / `Ctrl+I` / `Ctrl+K`, `Ctrl+S`, unsaved-changes guard, pasted images (step 2).
-4. [ ] Later: tables, formulas, Mermaid, a `/` menu.
+4. [x] Tables, formulas (`$…$`, `$$…$$`) and Mermaid drawn in place (click to edit); a `/` menu at the start of a line inserts blocks.
 
 ## Step 4: HTML with formatting
 
