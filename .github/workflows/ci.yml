@@ -1,6 +1,5 @@
-# Typecheck + unit tests on every push and pull request (issue #15).
-# The smoke test is not run here: it drives the real app window and is run locally
-# (npm run smoke) or before a release (npm run release -- --smoke).
+# Typecheck + unit tests on every push and pull request (issue #15), then the smoke test:
+# it drives the real app window on a copy of sample-library/ (scripts/smoke.mjs).
 name: CI
 
 on:
@@ -21,3 +20,29 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
+
+  smoke:
+    needs: check
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # The Electron binary itself (its install script is skipped above).
+      - run: node node_modules/electron/install.js
+      - run: npm run build
+      # A real window on a shared runner: a step can time out once in a while (a slow screenshot,
+      # fonts loading late), so a failed run gets one more try before CI fails.
+      - name: Smoke test
+        shell: bash
+        run: node scripts/smoke.mjs || (echo "::warning::smoke failed once, trying again" && node scripts/smoke.mjs)
+      - name: Screenshots of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshots
+          path: scripts/*.png

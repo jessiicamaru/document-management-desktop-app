@@ -1,6 +1,6 @@
 // Types shared by the main process, the preload bridge and the React UI.
 
-import type { CalDocRef, CalEventData, CalEventDetail, CalOccurrence, EditScope } from './calendar'
+import type { CalDocRef, CalEventData, CalEventDetail, CalOccurrence, CalSubscription, EditScope } from './calendar'
 
 /**
  * md and html can be read, edited, annotated and exported; pdf is shown with the built-in
@@ -24,6 +24,8 @@ export interface RootInfo {
   available: boolean
   /** True for the folder of files opened on their own ("File lẻ"), not a workspace folder. */
   loose: boolean
+  /** Sub-folders without any document below them ("a/b"), so the tree can show them. */
+  emptyFolders?: string[]
 }
 
 /** One file found in the workspace. */
@@ -179,7 +181,7 @@ export interface HtmlBlockEdit {
   tag: string
   html: string
   /** New paragraphs or list items typed after this block (Enter), in order. */
-  after?: { tag: 'p' | 'li'; html: string }[]
+  after?: { tag: 'p' | 'li' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol'; html: string }[]
 }
 
 /** Auto-update progress (see src/main/updater.ts). */
@@ -245,6 +247,8 @@ export interface DocsApi {
   /** The main process asks a question; the app shows it in its own dialog and answers with answerAsk. */
   onAsk(cb: (id: number, request: AskRequest) => void): () => void
   answerAsk(id: number, index: number): Promise<void>
+  /** Tells the main process whether an edit is unsaved (closing the window then asks first). */
+  setUnsaved(dirty: boolean): void
   /** Shows a file picker and opens the chosen documents ("File lẻ" if outside the workspace). Resolves with their ids. */
   openFiles(): Promise<string[]>
   /** Opens documents by path (drag and drop). Resolves with their ids. */
@@ -283,14 +287,18 @@ export interface DocsApi {
   // ---------- files (only inside workspace folders) ----------
   /** Creates a note (.md or .html) in a folder (its id in the sidebar tree). Resolves with the note's id. */
   newNote(folderId: string, name: string, kind: 'md' | 'html'): Promise<string>
-  /** Creates a folder with a first note in it (an empty folder wouldn't show in the tree). Resolves with the note's id. */
-  newFolder(folderId: string, folderName: string, noteName: string, kind: 'md' | 'html'): Promise<string>
+  /** Creates a folder, with a first note in it when noteName isn't empty. Resolves with the note's id, or null. */
+  newFolder(folderId: string, folderName: string, noteName: string, kind: 'md' | 'html'): Promise<string | null>
   /** Renames a document or folder; tags, notes and calendar links follow. Resolves with the new id. */
   renameItem(id: string, isFolder: boolean, name: string): Promise<string>
   /** Moves a document or folder into another folder of the same workspace folder. Resolves with the new id. */
   moveItem(id: string, isFolder: boolean, targetFolderId: string): Promise<string>
   /** Moves a document or folder to the Recycle Bin. */
   trashItem(id: string, isFolder: boolean): Promise<void>
+  /** The text read by OCR from a scanned PDF, or null. */
+  ocrLoad(docId: string): Promise<OcrData | null>
+  /** Keeps the text read by OCR (the PDF is not changed); search picks it up. */
+  ocrSave(docId: string, data: OcrData): Promise<void>
   /** Saves a pasted image in an assets/ folder next to a note. Resolves with the path to write in it ("assets/…"). */
   saveAsset(docId: string, bytes: Uint8Array, ext: string): Promise<string>
 
@@ -323,6 +331,38 @@ export interface DocsApi {
   calendarExport(): Promise<string | null>
   /** Adds the events of an .ics file. Resolves with how many it had, or null if cancelled. */
   calendarImport(): Promise<number | null>
+  /** Calendars followed by link (read-only, downloaded again every 30 minutes). */
+  calendarSubscriptions(): Promise<CalSubscription[]>
+  calendarAddSubscription(name: string, url: string, color: string): Promise<CalSubscription[]>
+  calendarRemoveSubscription(id: string): Promise<CalSubscription[]>
+  calendarRefreshSubscriptions(): Promise<CalSubscription[]>
+  /** Subscribed calendars were downloaded again: occurrences may have changed. */
+  onCalendarChanged(cb: () => void): () => void
+  /** A reminder was clicked: show that class. */
+  onCalendarFocus(cb: (target: { date: string; uid: string; rid: string }) => void): () => void
 }
 
 export const DEFAULT_META: DocMeta = { tags: [], status: 'new' }
+
+/** A word found by OCR, its box in PDF units (page at 100%, origin top-left). */
+export interface OcrWord {
+  t: string
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+export interface OcrPage {
+  /** 1-based page number. */
+  n: number
+  words: OcrWord[]
+}
+
+/** The text read from a scanned PDF (kept in the app's data, see 'ocr:*' in src/main/index.ts). */
+export interface OcrData {
+  version: 1
+  /** When it was read (ms). */
+  at: number
+  pages: OcrPage[]
+}

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { extractHtml, extractMarkdown, resolveInLibrary, scanLibrary } from '../src/main/library'
+import { emptyFolders, extractHtml, extractMarkdown, listFolders, resolveInLibrary, scanLibrary } from '../src/main/library'
 
 describe('extractHtml', () => {
   it('reads <title>, drops head/style/script, decodes entities', () => {
@@ -81,5 +81,20 @@ describe('scanLibrary', () => {
     const first = await scanLibrary(dir)
     const second = await scanLibrary(dir, first)
     expect(second[0]).toBe(first[0]) // same object: not read again
+  })
+})
+
+describe('empty folders', () => {
+  it('lists sub-folders (not hidden ones) and keeps those without any document below', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'folders-'))
+    try {
+      for (const d of ['mang/lab', 'mang/trong', 'trong/sau', '.git/x', 'node_modules/y']) await mkdir(path.join(dir, d), { recursive: true })
+      await writeFile(path.join(dir, 'mang', 'lab', 'l1.md'), '# L1')
+      const folders = await listFolders(dir)
+      expect(folders).toEqual(['mang', 'mang/lab', 'mang/trong', 'trong', 'trong/sau'])
+      expect(emptyFolders(folders, [{ path: 'mang/lab/l1.md' }])).toEqual(['mang/trong', 'trong', 'trong/sau'])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

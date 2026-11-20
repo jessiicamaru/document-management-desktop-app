@@ -27,6 +27,7 @@ import {
   ymdhm,
   type CalEventData,
   type CalOccurrence,
+  type CalSubscription,
   type EditScope
 } from '../shared/calendar'
 import { t } from '../shared/i18n'
@@ -51,7 +52,11 @@ interface LinkFile {
   version: 1
   links: Record<string, LinkEntry>
   notesFolders: Record<string, string>
+  /** Calendars followed by link; their events are cached in calendar-sub-<id>.ics. */
+  subscriptions?: StoredSubscription[]
 }
+
+type StoredSubscription = Omit<CalSubscription, 'events'>
 
 /** What a backup holds of the calendar. */
 export interface CalendarBackup {
@@ -138,6 +143,15 @@ function fillEvent(comp: ICAL.Component, data: CalEventData, rule: boolean): voi
     if (value) comp.updatePropertyWithValue(name, value)
     else comp.removeAllProperties(name)
   }
+  // Reminder: one VALARM (DISPLAY), N minutes before the start.
+  for (const alarm of comp.getAllSubcomponents('valarm')) comp.removeSubcomponent(alarm)
+  if (data.reminder >= 0) {
+    const alarm = new ICAL.Component('valarm')
+    alarm.addPropertyWithValue('action', 'DISPLAY')
+    alarm.addPropertyWithValue('description', data.summary)
+    alarm.addPropertyWithValue('trigger', ICAL.Duration.fromSeconds(-data.reminder * 60))
+    comp.addSubcomponent(alarm)
+  }
   if (rule) {
     comp.removeAllProperties('rrule')
     if (data.rrule) comp.addPropertyWithValue('rrule', ICAL.Recur.fromString(data.rrule.replace(/^RRULE:/i, '')))
@@ -221,6 +235,18 @@ function fastForward(master: ICAL.Component, from: string): ICAL.Component | nul
   return clone
 }
 
+/** Minutes before the start of the first reminder (VALARM with a relative TRIGGER), or -1. */
+function reminderOf(comp: ICAL.Component): number {
+  for (const alarm of comp.getAllSubcomponents('valarm')) {
+    const trigger = alarm.getFirstPropertyValue('trigger')
+    if (trigger instanceof ICAL.Duration && trigger.isNegative !== undefined) {
+      const seconds = trigger.toSeconds()
+      if (seconds <= 0) return Math.round(-seconds / 60)
+    }
+  }
+  return -1
+}
+
 // ---------- the store ----------
 
 export class CalendarStore {
@@ -229,6 +255,9 @@ export class CalendarStore {
   private cal: ICAL.Component = CalendarStore.emptyCalendar()
   private links: Record<string, LinkEntry> = {}
   private notesFolders: Record<string, string> = {}
+  private subs: StoredSubscription[] = []
+  /** Downloaded subscribed calendars, by subscription id. */
+  private subCals = new Map<string, ICAL.Component>()
   private queue: Promise<unknown> = Promise.resolve()
   /** Human-readable problem to show in the UI, if any. */
   warning: string | null = null
@@ -276,6 +305,7 @@ export class CalendarStore {
       const parsed = JSON.parse(await fs.readFile(this.linksFile, 'utf8')) as Partial<LinkFile>
       this.links = parsed.links && typeof parsed.links === 'object' ? parsed.links : {}
       this.notesFolders = parsed.notesFolders && typeof parsed.notesFolders === 'object' ? parsed.notesFolders : {}
+      this.subs = Array.isArray(parsed.subscriptions) ? parsed.subscriptions.filter((s) => s && typeof s.id === 'string' && typeof s.url === 'string') : []
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         await fs.copyFile(this.linksFile, path.join(this.dir, `calendar.corrupt-${stamp}.json`)).catch(() => {})
@@ -287,7 +317,7 @@ export class CalendarStore {
   /** Writes both files (after the previous write finished). */
   private save(): Promise<void> {
     const ics = this.toIcs()
-    const json = JSON.stringify({ version: 1, links: this.links, notesFolders: this.notesFolders } satisfies LinkFile, null, 2)
+    const json = JSON.stringify({ version: 1, links: this.links, notesFolders: this.notesFolders, subscriptions: this.subs } satisfies LinkFile, null, 2)
     const run = this.queue.then(async () => {
       for (const [file, content] of [
         [this.icsFile, ics],
@@ -306,8 +336,22 @@ export class CalendarStore {
     return this.cal.toString().replace(/\r?\n/g, '\r\n') + '\r\n'
   }
 
+  /** Every event: this calendar's own, then those of the subscribed calendars. */
   private events(): ICAL.Component[] {
-    return this.cal.getAllSubcomponents('vevent')
+    return [this.cal, ...this.subCals.values()].flatMap((c) => c.getAllSubcomponents('vevent'))
+  }
+
+  /** The subscription an event comes from, or null for the app's own events. */
+  private subOf(uid: string): StoredSubscription | null {
+    if (this.cal.getAllSubcomponents('vevent').some((c) => text(c, 'uid') === uid)) return null
+    for (const [id, cal] of this.subCals) {
+      if (cal.getAllSubcomponents('vevent').some((c) => text(c, 'uid') === uid)) return this.subs.find((s) => s.id === id) ?? null
+    }
+    return null
+  }
+
+  private ownOnly(uid: string): void {
+    if (this.subOf(uid)) throw new Error(t('Sự kiện này thuộc lịch theo dõi nên chỉ xem được trong app; hãy sửa ở lịch gốc (Google Calendar…).'))
   }
 
   private group(uid: string): { master: ICAL.Component | null; exceptions: ICAL.Component[] } {
@@ -341,7 +385,8 @@ export class CalendarStore {
         .flatMap((p) => p.getValues())
         .filter((v): v is ICAL.Time => v instanceof ICAL.Time)
         .map((v) => fromTime(v).slice(0, 10))
-        .sort()
+        .sort(),
+      reminder: reminderOf(comp)
     }
   }
 
@@ -349,15 +394,30 @@ export class CalendarStore {
   occurrences(from: string, to: string): CalOccurrence[] {
     const out: CalOccurrence[] = []
     for (const uid of this.uids()) {
+      const sub = this.subOf(uid)
+      const before = out.length
+      this.expand(out, uid, from, to)
+      for (let i = before; i < out.length; i++) {
+        if (!sub) continue
+        out[i].readOnly = true
+        out[i].source = sub.name
+        out[i].color ||= sub.color
+      }
+    }
+    return out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+  }
+
+  private expand(out: CalOccurrence[], uid: string, from: string, to: string): void {
+    {
       const { master, exceptions } = this.group(uid)
       if (!master) {
         // Changed classes whose series is gone (an imported file): show them as they are.
         for (const ex of exceptions) this.pushSingle(out, ex, uid, from, to, true)
-        continue
+        return
       }
       if (!master.hasProperty('rrule') && !master.hasProperty('rdate')) {
         this.pushSingle(out, master, uid, from, to, false)
-        continue
+        return
       }
       const base = fastForward(master, from) ?? master
       const event = new ICAL.Event(base, { exceptions })
@@ -385,11 +445,11 @@ export class CalendarStore {
           rrule: this.dataOf(master)!.rrule,
           recurring: true,
           overridden: comp !== base,
-          links: this.linkCount(uid, rid)
+          links: this.linkCount(uid, rid),
+          reminder: data.reminder >= 0 ? data.reminder : reminderOf(master)
         })
       }
     }
-    return out.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
   }
 
   private pushSingle(out: CalOccurrence[], comp: ICAL.Component, uid: string, from: string, to: string, overridden: boolean): void {
@@ -466,6 +526,7 @@ export class CalendarStore {
    * every class by an hour when "all" is chosen. Resolves with the UID the changed class has now.
    */
   async update(uid: string, rid: string, scope: EditScope, shownStart: string, input: CalEventData): Promise<string> {
+    this.ownOnly(uid)
     const data = cleanData(input)
     const { master, exceptions } = this.group(uid)
     if (!master && !exceptions.length) throw new Error(t('Sự kiện này không còn trong lịch.'))
@@ -579,6 +640,7 @@ export class CalendarStore {
 
   /** Deletes an event, one class of it, or that class and the following ones. */
   async delete(uid: string, rid: string, scope: EditScope): Promise<void> {
+    this.ownOnly(uid)
     const { master, exceptions } = this.group(uid)
     if (!master && !exceptions.length) return
     const first = master ? this.dataOf(master)!.start : ''
@@ -695,6 +757,67 @@ export class CalendarStore {
     await this.save()
   }
 
+  // ---------- calendars followed by link ----------
+
+  subscriptions(): CalSubscription[] {
+    return this.subs.map((s) => ({ ...s, events: this.subCals.get(s.id)?.getAllSubcomponents('vevent').length ?? 0 }))
+  }
+
+  /** Reads the downloaded copies of the subscribed calendars (at start). */
+  async loadSubscriptions(): Promise<void> {
+    for (const s of this.subs) {
+      try {
+        this.useSubscription(s.id, await fs.readFile(this.subFile(s.id), 'utf8'))
+      } catch {
+        // not downloaded yet
+      }
+    }
+  }
+
+  private subFile(id: string): string {
+    return path.join(this.dir, `calendar-sub-${id.replace(/[^a-z0-9]/gi, '')}.ics`)
+  }
+
+  private useSubscription(id: string, ics: string): number {
+    const comp = new ICAL.Component(ICAL.parse(ics))
+    if (comp.name !== 'vcalendar') throw new Error(t('File lịch không đọc được.'))
+    registerZones(comp)
+    this.subCals.set(id, comp)
+    return comp.getAllSubcomponents('vevent').length
+  }
+
+  async addSubscription(name: string, url: string, color: string): Promise<string> {
+    const id = randomUUID().replace(/-/g, '').slice(0, 12)
+    this.subs.push({ id, name: name.trim().slice(0, 100) || t('Lịch theo dõi'), url: url.trim(), color, fetchedAt: null, error: null })
+    await this.save()
+    return id
+  }
+
+  async removeSubscription(id: string): Promise<void> {
+    this.subs = this.subs.filter((s) => s.id !== id)
+    this.subCals.delete(id)
+    await fs.rm(this.subFile(id), { force: true })
+    await this.save()
+  }
+
+  /** A new download of a subscribed calendar (or why it failed). */
+  async setSubscriptionData(id: string, result: { ics: string } | { error: string }): Promise<void> {
+    const s = this.subs.find((x) => x.id === id)
+    if (!s) return
+    if ('error' in result) s.error = result.error
+    else {
+      try {
+        this.useSubscription(id, result.ics)
+        await fs.writeFile(this.subFile(id), result.ics, 'utf8')
+        s.fetchedAt = Date.now()
+        s.error = null
+      } catch {
+        s.error = t('Nội dung tải về không phải là lịch iCalendar.')
+      }
+    }
+    await this.save()
+  }
+
   // ---------- backup ----------
 
   backup(): CalendarBackup {
@@ -789,6 +912,7 @@ export function cleanData(input: Partial<CalEventData>): CalEventData {
     location: String(input.location ?? '').trim().slice(0, 500),
     description: String(input.description ?? '').slice(0, 20000),
     color: /^[a-z]{3,20}$|^#[0-9a-f]{6}$/i.test(String(input.color ?? '')) ? String(input.color) : '',
+    reminder: Number.isInteger(input.reminder) && input.reminder! >= 0 && input.reminder! <= 40320 ? input.reminder! : -1,
     rrule,
     exdates: Array.isArray(input.exdates) ? input.exdates.filter((d): d is string => isLocalTime(d, true)) : []
   }

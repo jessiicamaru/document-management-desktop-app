@@ -185,7 +185,7 @@ export default function Sidebar(props: Props) {
           <SearchResults hits={hits} query={query} selected={selected} onOpen={onOpen} rootNames={roots.length > 1 || looseFiles.length ? rootNames : null} />
         ) : (
           <div className="group">
-            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} actions={tree} />
+            <Tree roots={roots} docs={docs} selected={selected} onOpen={onOpen} onRemoveRoot={props.onRemoveFolder} sort={props.sort} actions={tree} showEmpty={props.statusFilter === 'all' && !props.tagFilter} />
             {docs.length === 0 && roots.length > 0 && <div className="empty">{t('Không có tài liệu nào khớp.')}</div>}
             {looseFiles.length > 0 && (
               <LooseFiles files={looseFiles} docs={docs} selected={selected} onOpen={onOpen} onRemove={props.onRemoveLoose} />
@@ -268,13 +268,14 @@ interface TreeProps {
   onRemoveRoot: (key: string) => void
   sort: 'name' | 'modified'
   actions: { files: FileActions; openMenu: (e: React.MouseEvent, target: MenuItem) => void }
+  showEmpty: boolean
 }
 
 /**
  * One folder: its documents as a plain tree, like before.
  * Several folders: each one is a top-level node (like a VS Code multi-root workspace).
  */
-function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort, actions }: TreeProps) {
+function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort, actions, showEmpty }: TreeProps) {
   // Remember which folders you collapsed. Folder ids start with their root key, so they never clash.
   const storageKey = 'collapsed:workspace'
   const [collapsed, setCollapsed] = useState<string[]>(() => loadLocal(storageKey, []))
@@ -319,7 +320,11 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort, actions }: Tr
   )
 
   // Built only when the documents change, not on every render (issue #11).
-  const trees = useMemo(() => new Map(roots.map((r) => [r.key, buildTree(docs.filter((d) => d.root === r.key), r.key, sort)])), [roots, docs, sort])
+  // Empty folders show too, except while filtering by status or tag.
+  const trees = useMemo(
+    () => new Map(roots.map((r) => [r.key, buildTree(docs.filter((d) => d.root === r.key), r.key, sort, showEmpty ? (r.emptyFolders ?? []) : [])])),
+    [roots, docs, sort, showEmpty]
+  )
   const treeOf = (root: RootInfo): TreeFolder => trees.get(root.key)!
 
   if (roots.length === 1) return <>{renderFolder(treeOf(roots[0]), 0)}</>
@@ -340,6 +345,7 @@ function Tree({ roots, docs, selected, onOpen, onRemoveRoot, sort, actions }: Tr
                 draggable={!root.loose}
                 onDragStart={(e) => dragFolder(e, root.key)}
                 onContextMenu={(e) => actions.openMenu(e, { kind: 'folder', id: root.key, name: root.name, isRoot: true })}
+                data-folder-id={root.key}
                 {...dropTarget(root.key, actions.files)}
                 data-folder={open ? 'open' : 'closed'}
                 data-depth={0}

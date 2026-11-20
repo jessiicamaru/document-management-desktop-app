@@ -178,6 +178,24 @@ export abstract class DocStore<V extends DocKeyed> {
   }
 
   /**
+   * Takes out the entries of a file or folder that moves to another workspace folder (another
+   * store). Keys of the result are what follows `from`: '' for the file itself, '/x.md' below a folder.
+   */
+  takeEntries(from: string): Promise<Record<string, V>> {
+    return this.enqueue(async () => {
+      const next = { ...this.docs }
+      const out: Record<string, V> = {}
+      for (const [p, entry] of Object.entries(this.docs)) {
+        if (p !== from && !p.startsWith(`${from}/`)) continue
+        out[p.slice(from.length)] = entry
+        delete next[p]
+      }
+      if (Object.keys(out).length) await this.write(next)
+      return out
+    })
+  }
+
+  /**
    * A file or folder was renamed or moved in the app: its entries follow, from `from` to `to`
    * (paths in this folder; a folder takes everything below it). Returns how many moved.
    */

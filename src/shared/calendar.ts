@@ -25,6 +25,8 @@ export interface CalEventData {
   rrule: string
   /** Skipped dates of a repeating event (EXDATE), as "YYYY-MM-DD". */
   exdates: string[]
+  /** Minutes before the start to show a reminder (VALARM), or -1 for none. */
+  reminder: number
 }
 
 /** One occurrence of an event in a date range (a single event has exactly one). */
@@ -37,6 +39,36 @@ export interface CalOccurrence extends Omit<CalEventData, 'exdates'> {
   overridden: boolean
   /** How many documents are linked to the course and to this class. */
   links: number
+  /** From a subscribed calendar (shown, linked to documents, but not changed in the app). */
+  readOnly?: boolean
+  /** That calendar's name. */
+  source?: string
+}
+
+/** A calendar followed by its link (Google Calendar's "secret address in iCal format"…). */
+export interface CalSubscription {
+  id: string
+  name: string
+  url: string
+  /** CSS colour name of its events (when they have none of their own). */
+  color: string
+  /** Last successful download (ms), or null. */
+  fetchedAt: number | null
+  /** What went wrong the last time, or null. */
+  error: string | null
+  events: number
+}
+
+/** The reminder choices of the event dialog, in minutes before the start (-1: none). */
+export const REMINDERS = [-1, 0, 5, 10, 15, 30, 60, 1440]
+
+/** "Trước 15 phút", "Lúc bắt đầu", "Trước 1 ngày"… */
+export function reminderLabel(minutes: number): string {
+  if (minutes < 0) return t('Không nhắc')
+  if (minutes === 0) return t('Lúc bắt đầu')
+  if (minutes % 1440 === 0) return t('Trước {0} ngày', { 0: minutes / 1440 })
+  if (minutes % 60 === 0) return t('Trước {0} giờ', { 0: minutes / 60 })
+  return t('Trước {0} phút', { 0: minutes })
 }
 
 /** Which occurrences a change to a repeating event applies to. */

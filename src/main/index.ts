@@ -1,15 +1,16 @@
 // Electron main process: owns the window, the file system and the `doc://` protocol.
 
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, protocol, session, shell } from 'electron'
-import { randomBytes } from 'node:crypto'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, net, Notification, protocol, session, shell } from 'electron'
+import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs, readFileSync, watch, type FSWatcher } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, RecoveryItem, UiSettings } from '../shared/types'
+import type { Annotation, DocEntry, DocMeta, HtmlBlockEdit, LibrarySnapshot, OcrData, RecoveryItem, UiSettings } from '../shared/types'
 import { applyHtmlEdits, editModeInjection, HtmlEditError } from './html-edit'
 import { printNotesInjection, viewModeInjection } from './view-helper'
-import { kindOf, readFiles, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
+import { emptyFolders, kindOf, listFolders, readFiles, resolveInLibrary, scanLibrary, type ScannedDoc } from './library'
 import { MetaStore } from './meta-store'
+import type { DocKeyed, DocStore } from './doc-store'
 import { ScanCache } from './scan-cache'
 import { SearchService } from './search'
 import { NotesStore, sanitizeAnnotation } from './notes-store'
@@ -22,7 +23,7 @@ import { checkForUpdatesNow, getUpdateStatus, installUpdateNow, startAutoUpdate 
 import { setLanguage, t } from '../shared/i18n'
 import { CalendarStore, nextStart, previewStarts, type CalendarBackup, type StoredLink } from './calendar-store'
 import { checkName, noteFileName, noteTemplate, renamedFileName, type NoteKind } from './file-ops'
-import { formatDate, formatTimeRange, type CalDocRef, type CalEventData, type CalEventDetail, type CalLinkView, type EditScope } from '../shared/calendar'
+import { formatDate, formatShortDate, formatTimeRange, ymd, type CalDocRef, type CalEventData, type CalEventDetail, type CalLinkView, type EditScope } from '../shared/calendar'
 
 // Tests run with their own settings folder so they never touch your real settings.
 if (process.env.STUDYDOCS_USER_DATA) app.setPath('userData', process.env.STUDYDOCS_USER_DATA)
@@ -64,6 +65,8 @@ interface Root {
   files: string[]
   /** Documents with paths relative to this folder. */
   docs: ScannedDoc[]
+  /** Folders without any document below them (workspace folders only), shown in the tree too. */
+  emptyFolders: string[]
   /** Null when the folder could not be opened. */
   meta: MetaStore | null
   notes: NotesStore | null
@@ -90,6 +93,7 @@ const newRoot = (p: string, loose = false): Root => ({
   loose,
   files: [],
   docs: [],
+  emptyFolders: [],
   meta: null,
   notes: null,
   watcher: null,
@@ -212,7 +216,7 @@ async function snapshot(): Promise<LibrarySnapshot> {
   if (calendar?.warning) warnings.push(calendar.warning)
   return {
     scanning,
-    roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta, loose: r.loose })),
+    roots: roots.map((r) => ({ key: r.key, path: r.path, name: r.name, available: !!r.meta, loose: r.loose, emptyFolders: r.emptyFolders })),
     looseFiles: roots
       .filter((r) => r.loose)
       .flatMap((r) =>
@@ -384,8 +388,11 @@ async function importLegacyData(root: Root): Promise<void> {
 }
 
 /** The documents of a root: the whole folder, or only the files opened on their own. */
-function scanRoot(root: Root, previous = root.docs): Promise<ScannedDoc[]> {
-  return root.loose ? readFiles(root.path, root.files, previous, scanCache) : scanLibrary(root.path, previous, scanCache)
+async function scanRoot(root: Root, previous = root.docs): Promise<ScannedDoc[]> {
+  if (root.loose) return readFiles(root.path, root.files, previous, scanCache)
+  const [docs, folders] = await Promise.all([scanLibrary(root.path, previous, scanCache), listFolders(root.path)])
+  root.emptyFolders = emptyFolders(folders, docs)
+  return docs
 }
 
 /** Lets tags and notes follow renamed/moved documents (inside a workspace folder). */
@@ -411,7 +418,11 @@ function syncSearch(): void {
         name: d.name,
         rel: d.path,
         size: d.size,
-        mtime: d.mtime
+        mtime: d.mtime,
+        // Scanned PDFs: the text read by OCR (its time is part of the text cache's key).
+        ...(d.kind === 'pdf' && ocrIndex.has(ocrKey(path.join(r.path, d.path)))
+          ? { ocrFile: ocrFile(path.join(r.path, d.path)), ocrAt: ocrIndex.get(ocrKey(path.join(r.path, d.path))) }
+          : {})
       }))
     ),
     !scanning
@@ -685,11 +696,15 @@ async function refreshRoot(root: Root): Promise<void> {
   await pushSnapshot()
 }
 
-/** Tags, notes and calendar links follow a file or folder that the app renamed or moved. */
+/** Tags, notes, calendar links and OCR text follow a file or folder that the app renamed or moved. */
 async function followMove(root: Root, fromRel: string, toRel: string, fromAbs: string, toAbs: string): Promise<void> {
   for (const store of storesOf(root)) await store.moveEntries(fromRel, toRel)
   await calendar?.movePath(fromAbs, toAbs, pathKey)
+  await moveOcr(fromAbs, toAbs, docsUnder(root, fromRel), root.path)
 }
+
+/** Paths of the documents that are `rel` or below it (before a move). */
+const docsUnder = (root: Root, rel: string): string[] => root.docs.filter((d) => d.path === rel || d.path.startsWith(`${rel}/`)).map((d) => d.path)
 
 /** Creates a note in a folder. Resolves with its id. */
 async function newNote(folderId: string, name: string, kind: NoteKind): Promise<string> {
@@ -720,16 +735,36 @@ async function renameItem(id: string, isFolder: boolean, name: string): Promise<
 async function moveItem(id: string, isFolder: boolean, targetFolderId: string): Promise<string> {
   const item = itemOf(id, isFolder)
   const folder = folderOf(targetFolderId)
-  if (folder.root !== item.root) throw new Error(t('Chỉ chuyển được bên trong cùng một thư mục workspace.'))
   if (isFolder && isSameOrInside(folder.abs, item.abs)) throw new Error(t('Không chuyển được thư mục vào chính nó.'))
   const target = path.join(folder.abs, path.basename(item.abs))
   if (pathKey(target) === pathKey(item.abs)) return id
   if (await exists(target)) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: path.basename(item.abs) }))
-  await fs.rename(item.abs, target)
-  const toRel = relOf(item.root, target)
-  await followMove(item.root, item.rel, toRel, item.abs, target)
-  await refreshRoot(item.root)
-  return `${item.root.key}/${toRel}`
+  try {
+    await fs.rename(item.abs, target)
+  } catch (err) {
+    // Another drive: copy, then remove the original (only once the copy is complete).
+    if ((err as NodeJS.ErrnoException).code !== 'EXDEV') throw err
+    await fs.cp(item.abs, target, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true })
+    await fs.rm(item.abs, { recursive: true })
+  }
+  const toRel = relOf(folder.root, target)
+  if (folder.root === item.root) {
+    await followMove(item.root, item.rel, toRel, item.abs, target)
+  } else {
+    // Into another workspace folder: tags and notes move to that folder's data.
+    const moveData = async <V extends DocKeyed>(from: DocStore<V> | null, to: DocStore<V> | null): Promise<void> => {
+      if (!from || !to) return
+      const taken = await from.takeEntries(item.rel)
+      await to.importDocs(Object.fromEntries(Object.entries(taken).map(([suffix, v]) => [toRel + suffix, v])))
+    }
+    await moveData(item.root.meta, folder.root.meta)
+    await moveData(item.root.notes, folder.root.notes)
+    await calendar?.movePath(item.abs, target, pathKey)
+    await moveOcr(item.abs, target, docsUnder(item.root, item.rel), item.root.path)
+    await refreshRoot(item.root)
+  }
+  await refreshRoot(folder.root)
+  return `${folder.root.key}/${toRel}`
 }
 
 /** To the Recycle Bin (can be restored from there; tags and notes are kept until cleaned up). */
@@ -764,21 +799,89 @@ async function saveAsset(docId: string, bytes: Uint8Array, ext: string): Promise
   throw new Error(t('Không lưu được ảnh.'))
 }
 
+// ---------- OCR of scanned PDFs (the reading itself runs in the window, see lib/ocr.ts) ----------
+
+const ocrDir = (): string => path.join(app.getPath('userData'), 'ocr')
+/** OCR results are kept by file path: <ocr>\<sha1 of the path>.json. */
+const ocrKey = (abs: string): string => createHash('sha1').update(pathKey(abs)).digest('hex')
+const ocrFile = (abs: string): string => path.join(ocrDir(), `${ocrKey(abs)}.json`)
+/** Which files have OCR text (key -> when it was saved), so search can include it. */
+const ocrIndex = new Map<string, number>()
+
+async function loadOcrIndex(): Promise<void> {
+  for (const name of await fs.readdir(ocrDir()).catch(() => [] as string[])) {
+    if (!name.endsWith('.json')) continue
+    const st = await fs.stat(path.join(ocrDir(), name)).catch(() => null)
+    if (st) ocrIndex.set(name.slice(0, -5), st.mtimeMs)
+  }
+}
+
+/** Checks what the window sends: pages of words with numeric boxes. */
+function cleanOcr(data: unknown): OcrData {
+  const d = data as Partial<OcrData>
+  if (!d || !Array.isArray(d.pages)) throw new Error(t('Kết quả nhận dạng không hợp lệ.'))
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    version: 1,
+    at: Date.now(),
+    pages: d.pages.slice(0, 5000).map((p) => ({
+      n: Math.max(1, Math.floor(num(p?.n))),
+      words: (Array.isArray(p?.words) ? p.words : []).slice(0, 20000).map((w) => ({ t: String(w?.t ?? '').slice(0, 200), x0: num(w?.x0), y0: num(w?.y0), x1: num(w?.x1), y1: num(w?.y1) }))
+    }))
+  }
+}
+
+/** OCR text follows a PDF (or the PDFs in a folder) that the app renamed or moved. */
+async function moveOcr(fromAbs: string, toAbs: string, rels: string[], fromRoot: string): Promise<void> {
+  for (const rel of rels) {
+    const from = path.join(fromRoot, rel)
+    const key = ocrKey(from)
+    if (!ocrIndex.has(key)) continue
+    const to = path.join(toAbs, path.relative(fromAbs, from))
+    await fs.rename(ocrFile(from), ocrFile(to)).catch(() => {})
+    ocrIndex.set(ocrKey(to), ocrIndex.get(key)!)
+    ocrIndex.delete(key)
+  }
+}
+
 function registerFileIpc(): void {
+  ipcMain.handle('ocr:load', async (_e, id: string) => {
+    const loc = locate(String(id))
+    if (!loc) return null
+    try {
+      return JSON.parse(await fs.readFile(ocrFile(loc.abs), 'utf8')) as OcrData
+    } catch {
+      return null
+    }
+  })
+  ipcMain.handle('ocr:save', async (_e, id: string, data: unknown) => {
+    const loc = locate(String(id))
+    if (!loc || kindOf(loc.abs) !== 'pdf') throw new Error(t('Không tìm thấy tài liệu này.'))
+    const clean = cleanOcr(data)
+    await fs.mkdir(ocrDir(), { recursive: true })
+    await fs.writeFile(ocrFile(loc.abs), JSON.stringify(clean), 'utf8')
+    ocrIndex.set(ocrKey(loc.abs), clean.at)
+    syncSearch() // the search worker reads the new text
+  })
   ipcMain.handle('doc:saveAsset', (_e, docId: string, bytes: Uint8Array, ext: string) => saveAsset(String(docId), bytes, String(ext)))
   const str = (v: unknown): string => String(v ?? '')
   const kindOfNote = (v: unknown): NoteKind => (v === 'html' ? 'html' : 'md')
   ipcMain.handle('fs:newNote', (_e, folderId: string, name: string, kind: NoteKind) => newNote(str(folderId), str(name), kindOfNote(kind)))
-  // An empty folder doesn't show in the tree (it lists documents), so a new folder starts with a note.
+  // A new folder, with a first note in it when a name is given. Resolves with the note's id, or null.
   ipcMain.handle('fs:newFolder', async (_e, folderId: string, folderName: string, noteName: string, kind: NoteKind) => {
     const folder = folderOf(str(folderId))
     const name = checkName(str(folderName))
     const abs = path.join(folder.abs, name)
     if (await exists(abs)) throw new Error(t('Đã có "{0}" trong thư mục này.', { 0: name }))
-    noteFileName(str(noteName), kindOfNote(kind)) // check the note's name before creating anything
+    const note = str(noteName).trim()
+    if (note) noteFileName(note, kindOfNote(kind)) // check the note's name before creating anything
     await fs.mkdir(abs)
     const rel = relOf(folder.root, abs)
-    return newNote(`${folder.root.key}/${rel}`, str(noteName), kindOfNote(kind))
+    if (!note) {
+      await refreshRoot(folder.root)
+      return null
+    }
+    return newNote(`${folder.root.key}/${rel}`, note, kindOfNote(kind))
   })
   ipcMain.handle('fs:rename', (_e, id: string, isFolder: boolean, name: string) => renameItem(str(id), !!isFolder, str(name)))
   ipcMain.handle('fs:move', (_e, id: string, isFolder: boolean, targetFolderId: string) => moveItem(str(id), !!isFolder, str(targetFolderId)))
@@ -940,7 +1043,83 @@ async function classNotes(uid: string, rid: string): Promise<string | null> {
   return id ?? null
 }
 
+// ---------- calendars followed by link ----------
+
+/** Downloads one subscribed calendar (webcal:// is https://). Never throws; the error is kept. */
+async function fetchSubscription(id: string): Promise<void> {
+  const sub = calendar?.subscriptions().find((s) => s.id === id)
+  if (!sub || !calendar) return
+  try {
+    const url = new URL(sub.url.replace(/^webcals?:\/\//i, 'https://'))
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error(t('Chỉ theo dõi được link http(s) hoặc webcal.'))
+    const res = await net.fetch(url.href, { signal: AbortSignal.timeout(30_000) })
+    if (!res.ok) throw new Error(t('Máy chủ trả về lỗi {0}.', { 0: res.status }))
+    const ics = await res.text()
+    if (ics.length > 20 * 1024 * 1024) throw new Error(t('Lịch quá lớn.'))
+    await calendar.setSubscriptionData(id, { ics })
+  } catch (err) {
+    await calendar.setSubscriptionData(id, { error: err instanceof Error && err.name !== 'TimeoutError' ? err.message : t('Không tải được (mất mạng hoặc link sai).') })
+  }
+}
+
+async function refreshSubscriptions(): Promise<void> {
+  for (const s of calendar?.subscriptions() ?? []) await fetchSubscription(s.id)
+  win?.webContents.send('calendar:changed')
+}
+
+// ---------- reminders ----------
+
+/** Reminders already shown in this run (uid|rid|minutes). */
+const remindersShown = new Set<string>()
+
+/**
+ * Shows a Windows notification for every class whose reminder time has come (in the last five
+ * minutes, so a reminder missed while the PC slept or the app was closed is not shown late).
+ * Clicking it opens that class in the calendar.
+ */
+function checkReminders(): void {
+  if (!calendar || !Notification.isSupported()) return
+  const now = Date.now()
+  const today = new Date()
+  const from = ymd(new Date(now - 86_400_000))
+  const to = ymd(new Date(now + 2 * 86_400_000))
+  for (const o of calendar.occurrences(from, to)) {
+    if (o.reminder < 0) continue
+    const start = new Date(o.allDay ? `${o.start}T00:00` : o.start).getTime()
+    const at = start - o.reminder * 60_000
+    const key = `${o.uid}|${o.rid}|${o.reminder}`
+    if (now < at || now - at > 5 * 60_000 || remindersShown.has(key)) continue
+    remindersShown.add(key)
+    const when = o.allDay ? formatShortDate(o.start) : `${o.start.slice(0, 10) === ymd(today) ? '' : `${formatShortDate(o.start)} `}${formatTimeRange(o.start, o.end, false)}`
+    const note = new Notification({ title: o.summary, body: [when, o.location].filter(Boolean).join(' · '), silent: false })
+    note.on('click', () => {
+      if (!win || win.isDestroyed()) return
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      win.webContents.send('calendar:focus', { date: o.start, uid: o.uid, rid: o.rid })
+    })
+    note.show()
+  }
+}
+
 function registerCalendarIpc(): void {
+  ipcMain.handle('calendar:subscriptions', () => cal().subscriptions())
+  ipcMain.handle('calendar:addSubscription', async (_e, name: string, url: string, color: string) => {
+    const link = String(url ?? '').trim()
+    if (!/^(https?|webcals?):\/\/\S+$/i.test(link)) throw new Error(t('Hãy dán link của lịch (bắt đầu bằng https:// hoặc webcal://).'))
+    const id = await cal().addSubscription(String(name ?? ''), link, /^[a-z]{3,20}$/i.test(String(color)) ? String(color) : '')
+    await fetchSubscription(id)
+    return cal().subscriptions()
+  })
+  ipcMain.handle('calendar:removeSubscription', async (_e, id: string) => {
+    await cal().removeSubscription(String(id))
+    return cal().subscriptions()
+  })
+  ipcMain.handle('calendar:refreshSubscriptions', async () => {
+    await refreshSubscriptions()
+    return cal().subscriptions()
+  })
   const str = (v: unknown): string => String(v ?? '')
   const scopeOf = (v: unknown): EditScope => (v === 'this' || v === 'following' ? v : 'all')
   ipcMain.handle('calendar:range', (_e, from: string, to: string) => cal().occurrences(str(from), str(to)))
@@ -1177,18 +1356,44 @@ async function writeDocChecked(rel: string, build: (current: string) => string, 
  * Google Fonts servers many pages use for their fonts. Pictures from the web are left out
  * of the PDF; pictures on the PC are shown as usual.
  */
-const printContents = new Set<number>()
+/**
+ * Export windows, with the web pictures each may load: for a Markdown note any picture (the app
+ * draws it, no script of the note runs); for an HTML page only the pictures written in its file.
+ * A page's script could otherwise draw another picture of the library on a canvas and send it
+ * out in an address it makes up.
+ */
+const printContents = new Map<number, Set<string> | 'any'>()
+
+/** Web pictures written in an HTML file (<img src>, srcset, CSS url()). */
+function webPicturesIn(source: string): Set<string> {
+  const out = new Set<string>()
+  const add = (u: string): void => {
+    try {
+      const url = new URL(u.replace(/&amp;/g, '&'))
+      if (url.protocol === 'http:' || url.protocol === 'https:') out.add(url.href)
+    } catch {
+      // not a full address
+    }
+  }
+  for (const m of source.matchAll(/\b(?:src|href|poster)\s*=\s*["']?(https?:\/\/[^"'\s>]+)/gi)) add(m[1])
+  for (const m of source.matchAll(/\bsrcset\s*=\s*["']([^"']+)["']/gi)) for (const part of m[1].split(',')) add(part.trim().split(/\s+/)[0])
+  for (const m of source.matchAll(/url\(\s*["']?(https?:\/\/[^"')\s]+)/gi)) add(m[1])
+  return out
+}
 const PRINT_ALLOWED_HOSTS = new Set(['fonts.googleapis.com', 'fonts.gstatic.com'])
 function blockNetworkForPrinting(): void {
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (details, callback) => {
-    if (details.webContentsId === undefined || !printContents.has(details.webContentsId)) return callback({})
+    const allowed = details.webContentsId === undefined ? undefined : printContents.get(details.webContentsId)
+    if (allowed === undefined) return callback({})
     let host = ''
     try {
       host = new URL(details.url).hostname
     } catch {
       // not a URL: blocked
     }
-    callback({ cancel: !(details.method === 'GET' && PRINT_ALLOWED_HOSTS.has(host)) })
+    // Pictures of the note itself load, so the PDF has them as the screen does (see printContents).
+    const picture = details.resourceType === 'image' && (allowed === 'any' ? /^https?:$/.test(new URL(details.url).protocol) : allowed.has(details.url))
+    callback({ cancel: !(details.method === 'GET' && (PRINT_ALLOWED_HOSTS.has(host) || picture)) })
   })
 }
 
@@ -1214,7 +1419,8 @@ async function printToPdf(id: string, kind: 'md' | 'html', withNotes: boolean): 
   })
   const wc = printWin.webContents
   const printId = wc.id
-  printContents.add(printId)
+  const loc = locate(id)
+  printContents.set(printId, kind === 'md' ? 'any' : webPicturesIn(loc ? await fs.readFile(loc.abs, 'utf8').catch(() => '') : ''))
   const debug = (msg: string): void => {
     if (process.env.STUDYDOCS_DEBUG) console.log(`[printToPdf] ${msg}`)
   }
@@ -1287,7 +1493,13 @@ function friendlyWriteError(err: unknown): Error {
 
 // ---------- IPC handlers (called through window.api in the UI) ----------
 
+/** True while the window has an unsaved edit (it tells us through 'app:dirty'). */
+let unsavedEdits = false
+
 function registerIpc(): void {
+  ipcMain.on('app:dirty', (_e, dirty: unknown) => {
+    unsavedEdits = dirty === true
+  })
   ipcMain.handle('dialog:answer', (_e, id: number, index: number) => {
     const resolve = pendingAsks.get(Number(id))
     pendingAsks.delete(Number(id))
@@ -1621,7 +1833,26 @@ function createWindow(): void {
     if (command === 'browser-forward') webContents.send('nav:history', 'forward')
   })
 
-  // The UI blocks closing while an edit is unsaved; ask what to do.
+  // Closing with unsaved edits: asked in the app's own dialog. The window tells us when an
+  // edit is unsaved ('app:dirty'); "Quit" closes without asking again.
+  let closing = false
+  win.on('close', (e) => {
+    if (!unsavedEdits || closing || !uiReady) return
+    e.preventDefault()
+    void askInWindow({
+      message: t('Bạn đang có thay đổi chưa lưu.'),
+      detail: t('Thoát bây giờ sẽ mất các thay đổi đó.'),
+      buttons: [t('Ở lại'), t('Thoát, bỏ thay đổi')],
+      cancelId: 0,
+      dangerId: 1
+    }).then((answer) => {
+      if (answer !== 1 || !win || win.isDestroyed()) return
+      closing = true
+      win.destroy() // no beforeunload: already asked
+    })
+  })
+
+  // Fallback (the window had not told us yet): Windows' own question.
   webContents.on('will-prevent-unload', (e) => {
     const choice = dialog.showMessageBoxSync(win!, {
       type: 'question',
@@ -1709,7 +1940,11 @@ if (!app.requestSingleInstanceLock()) {
 
     scanCache = new ScanCache(path.join(app.getPath('userData'), 'scan-cache.json'))
     await scanCache.load()
+    await loadOcrIndex()
     calendar = await CalendarStore.open(path.join(app.getPath('userData'), 'data'))
+    await calendar.loadSubscriptions()
+    // Windows shows notifications under this name (the installer uses the same id).
+    app.setAppUserModelId('local.studydocs.app')
     search = new SearchService(path.join(app.getPath('userData'), 'text-cache'), (status) =>
       win?.webContents.send('search:status', status)
     )
@@ -1721,6 +1956,12 @@ if (!app.requestSingleInstanceLock()) {
     // DOCS_LIBRARY lets you (or the smoke test) open folders directly, separated by ";".
     const fromEnv = (process.env.DOCS_LIBRARY ?? '').split(path.delimiter).filter(Boolean)
     await openWorkspace(fromEnv.length ? fromEnv : await loadWorkspacePaths(), await loadLooseFiles())
+
+    // Calendars followed by link: fresh copies now and every 30 minutes; reminders every 30 s.
+    void refreshSubscriptions()
+    setInterval(() => void refreshSubscriptions(), 30 * 60_000)
+    checkReminders()
+    setInterval(checkReminders, 30_000)
 
     // Started by double-clicking a document in Explorer.
     const [file] = filesInArgs(process.argv)

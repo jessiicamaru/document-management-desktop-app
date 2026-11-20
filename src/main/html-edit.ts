@@ -35,6 +35,15 @@ type ChildNode = DefaultTreeAdapterMap['childNode']
 /** Tags allowed inside an edited block (the others are taken away, their text kept). */
 const INLINE_TAGS = new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'del', 'dfn', 'em', 'i', 'img', 'ins', 'kbd', 'mark', 'q', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr'])
 
+/** What a block added while editing may be. */
+const NEW_BLOCK_TAGS = new Set(['p', 'li', 'h2', 'h3', 'h4', 'ul', 'ol'])
+
+/** The items of a new list, one per line: only <li>, each cleaned like a block. */
+export function sanitizeList(html: string, indent: string): string {
+  const items = parseFragment(html).childNodes.filter((n): n is Element => isElement(n) && n.tagName === 'li')
+  return items.map((li) => `\n${indent}<li>${sanitizeInline(serialize(li))}</li>`).join('')
+}
+
 /**
  * The inner HTML of an edited block, made safe to write: inline tags only (others are unwrapped,
  * scripts and styles dropped), no on…="" handlers, no javascript: links. Other attributes
@@ -114,7 +123,8 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
       const indent = /^[ \t]*$/.test(lead) ? lead : ''
       const html = edit.after
         .map((b) => {
-          if (b.tag !== 'p' && b.tag !== 'li') throw new HtmlEditError(t('Không thêm được đoạn <{0}>.', { 0: String(b.tag) }))
+          if (!NEW_BLOCK_TAGS.has(b.tag)) throw new HtmlEditError(t('Không thêm được đoạn <{0}>.', { 0: String(b.tag) }))
+          if (b.tag === 'ul' || b.tag === 'ol') return `\n${indent}<${b.tag}>${sanitizeList(b.html, `${indent}  `)}\n${indent}</${b.tag}>`
           return `\n${indent}<${b.tag}>${sanitizeInline(b.html)}</${b.tag}>`
         })
         .join('')
@@ -301,6 +311,13 @@ export function editModeInjection(nonce: string): string {
     if (!el) return
     const r = getSelection().getRangeAt(0)
     r.deleteContents()
+    // A picture is never put inside a link: right after it instead.
+    const at = r.startContainer.nodeType === 1 ? r.startContainer : r.startContainer.parentElement
+    const link = at && at.closest('a')
+    if (link && el.contains(link)) {
+      r.setStartAfter(link)
+      r.collapse(true)
+    }
     r.insertNode(node)
     r.setStartAfter(node)
     r.collapse(true)
@@ -364,6 +381,18 @@ export function editModeInjection(nonce: string): string {
       if (e.key !== 'Enter' || e.shiftKey) return
       e.preventDefault()
       if (!SPLITS.has(el.tagName) || !el.parentElement) return
+      // Enter on an empty item of a new list: the list ends, a paragraph follows it.
+      const list = el.parentElement
+      if (isNew && el.tagName === 'LI' && list.hasAttribute('data-sd-new-list') && !kept(el)) {
+        const p = document.createElement('p')
+        list.after(p)
+        el.remove()
+        wire(p, true)
+        added.push(p)
+        placeCaret(p, false)
+        changed()
+        return
+      }
       // Enter: what follows the caret goes to a new paragraph (a new item in a list).
       const sel = getSelection()
       if (!sel.rangeCount) return
@@ -411,6 +440,57 @@ export function editModeInjection(nonce: string): string {
       if (restore()) document.execCommand(e.data.cmd, false, e.data.value)
       changed()
     }
+    // Paragraph type (heading, list…): only for paragraphs added while editing; the page's own
+    // blocks keep their tag (changing that is a layout change, for Raw).
+    if (e.data.type === 'block') {
+      const el = restore()
+      if (!el) return
+      const inNewList = el.tagName === 'LI' && el.parentElement.hasAttribute('data-sd-new-list')
+      if (!el.hasAttribute('data-sd-new') || (el.tagName === 'LI' && !inNewList)) {
+        send({ type: 'block-refused' })
+        return
+      }
+      const tag = e.data.tag
+      const toList = tag === 'ul' || tag === 'ol'
+      if (inNewList && toList) {
+        // Bullets <-> numbers: the whole new list changes.
+        const old = el.parentElement
+        const list = document.createElement(tag)
+        list.setAttribute('data-sd-new-list', '')
+        while (old.firstChild) list.appendChild(old.firstChild)
+        old.replaceWith(list)
+        added.push(list)
+        placeCaret(el, true)
+        changed()
+        return
+      }
+      let next
+      if (toList) {
+        next = document.createElement(tag)
+        next.setAttribute('data-sd-new-list', '')
+        const li = document.createElement('li')
+        while (el.firstChild) li.appendChild(el.firstChild)
+        next.appendChild(li)
+        wire(li, true)
+        added.push(li)
+      } else {
+        next = document.createElement(tag)
+        while (el.firstChild) next.appendChild(el.firstChild)
+        wire(next, true)
+      }
+      if (inNewList) {
+        // One item becomes a paragraph or heading: it leaves the list, right after it.
+        const list = el.parentElement
+        list.after(next)
+        el.remove()
+        if (!list.children.length) list.remove()
+      } else {
+        el.replaceWith(next)
+      }
+      added.push(next)
+      placeCaret(toList ? next.firstChild : next, true)
+      changed()
+    }
     if (e.data.type === 'insert-image' && e.data.src) {
       const img = document.createElement('img')
       img.src = e.data.src
@@ -430,17 +510,36 @@ export function editModeInjection(nonce: string): string {
     }
     if (e.data.type === 'collect') {
       if (box) box.blur() // a text box still open counts too
-      const edits = blocks.filter((b) => b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: b.el.innerHTML }))
-      // New paragraphs belong after the nearest block of the file before them.
-      for (const el of added) {
-        if (!kept(el)) continue
+      // Chrome puts no-break spaces next to formatting it just typed ("<b>a</b>&nbsp;b");
+      // between two words they are plain spaces. Blocks that had them on purpose keep them.
+      const fixSpaces = (html) => {
+        const parts = html.split('&nbsp;')
+        let out = parts[0]
+        for (let i = 1; i < parts.length; i++) {
+          const before = out.slice(-1)
+          const after = parts[i].slice(0, 1)
+          out += (before && after && before !== ' ' && after !== ' ' ? ' ' : '&nbsp;') + parts[i]
+        }
+        return out
+      }
+      const htmlOf = (b) => (b.original.indexOf('&nbsp;') >= 0 ? b.el.innerHTML : fixSpaces(b.el.innerHTML))
+      const edits = blocks.filter((b) => b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: htmlOf(b) }))
+      // New paragraphs, headings and lists belong after the nearest block of the file before them.
+      const isNewNode = (n) => n.hasAttribute('data-sd-new') || n.hasAttribute('data-sd-new-list')
+      const tops = [...new Set(added)].filter((el) => el.isConnected && !el.parentElement.hasAttribute('data-sd-new-list'))
+      tops.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      for (const el of tops) {
+        const list = el.hasAttribute('data-sd-new-list')
+        const items = list ? [...el.children].filter((li) => kept(li)) : []
+        if (list ? !items.length : !kept(el)) continue
         let anchor = el.previousElementSibling
-        while (anchor && anchor.hasAttribute('data-sd-new')) anchor = anchor.previousElementSibling
+        while (anchor && isNewNode(anchor)) anchor = anchor.previousElementSibling
         const b = blocks.find((x) => x.el === anchor)
         if (!b) continue
         let edit = edits.find((x) => x.path === b.path)
         if (!edit) edits.push((edit = { path: b.path, tag: b.tag, html: b.el.innerHTML }))
-        ;(edit.after = edit.after || []).push({ tag: el.tagName.toLowerCase(), html: el.innerHTML })
+        const html = list ? items.map((li) => '<li>' + fixSpaces(li.innerHTML) + '</li>').join('') : fixSpaces(el.innerHTML)
+        ;(edit.after = edit.after || []).push({ tag: el.tagName.toLowerCase(), html })
       }
       for (const t of svgTexts) {
         if (t.el.textContent !== t.original) edits.push({ path: t.path, tag: t.tag, html: escapeText(t.el.textContent) })

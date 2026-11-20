@@ -17,6 +17,7 @@ import {
   describeRrule,
   formatShortDate,
   formatTimeRange,
+  reminderLabel,
   shiftLocal,
   shiftRule,
   ymd,
@@ -33,6 +34,7 @@ import { DOC_DRAG_TYPE, FOLDER_DRAG_TYPE, folderChoices, kindLabel, loadLocal, s
 import { ask, confirmDialog } from '../lib/ask'
 import EventDialog, { askScope, type EditTarget } from './EventDialog'
 import DocPicker from './DocPicker'
+import SubscriptionsDialog from './SubscriptionsDialog'
 
 /** Where the calendar should go (a class chip on a document was clicked). `n` changes on every jump. */
 export interface CalendarFocus {
@@ -69,6 +71,7 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
   const [version, setVersion] = useState(0)
   const [dialog, setDialog] = useState<{ initial: CalEventData; editing: EditTarget | null } | null>(null)
   const [picker, setPicker] = useState(false)
+  const [subsOpen, setSubsOpen] = useState(false)
 
   const refresh = useCallback(() => {
     calRef.current?.refetchEvents()
@@ -78,7 +81,7 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
 
   const newEvent = useCallback((start: string, end: string, allDay: boolean) => {
     setDialog({
-      initial: { summary: '', allDay, start, end, location: '', description: '', color: '', rrule: '', exdates: [] },
+      initial: { summary: '', allDay, start, end, location: '', description: '', color: '', rrule: '', exdates: [], reminder: -1 },
       editing: null
     })
   }, [])
@@ -260,6 +263,9 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Subscribed calendars were downloaded again.
+  useEffect(() => window.api.onCalendarChanged(refresh), [refresh])
+
   // A class chip on a document was clicked: go to that date and show the class.
   useEffect(() => {
     if (!focus) return
@@ -328,6 +334,7 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
         start: o.start,
         end: o.end,
         location: o.location,
+        reminder: o.reminder,
         description: o.description,
         color: o.color,
         rrule: o.recurring ? detail.series.rrule : '',
@@ -379,6 +386,9 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
             }
           >
             {t('Nhập .ics…')}
+          </button>
+          <button className="btn small" title={t('Xem lịch Google, thời khoá biểu… bằng link (tự cập nhật)')} onClick={() => setSubsOpen(true)}>
+            {t('Lịch theo dõi…')}
           </button>
           <button
             className="btn small"
@@ -442,6 +452,8 @@ export default function CalendarView({ docs, roots, focus, onOpenDoc, onError, o
         />
       )}
 
+      {subsOpen && <SubscriptionsDialog onClose={() => setSubsOpen(false)} onChanged={refresh} />}
+
       {picker && detail && (
         <DocPicker
           docs={docs}
@@ -476,6 +488,8 @@ function toInput(o: CalOccurrence): EventInput {
     end: o.end,
     allDay: o.allDay,
     backgroundColor: color,
+    // Events of a subscribed calendar are changed there, not here.
+    editable: !o.readOnly,
     borderColor: color,
     extendedProps: { occ: o }
   }
@@ -513,16 +527,20 @@ function EventPanel({ detail, onClose, onEdit, onDelete, onOpenDoc, onAddDoc, on
         {o.recurring && <div className="event-repeat">{describeRrule(detail.series.rrule, detail.series.start)}</div>}
         {o.overridden && <div className="hint">{t('Buổi này đã được đổi riêng.')}</div>}
         {o.location && <div>{o.location}</div>}
+        {o.reminder >= 0 && <div>{t('Nhắc {0}', { 0: reminderLabel(o.reminder) })}</div>}
+        {o.source && <div className="hint">{t('Từ lịch theo dõi "{0}" (chỉ xem; sửa ở lịch gốc).', { 0: o.source })}</div>}
         {o.description && <p className="event-desc">{o.description}</p>}
       </div>
-      <div className="event-actions">
-        <button className="btn small" onClick={onEdit}>
-          {t('Sửa')}
-        </button>
-        <button className="btn small danger" onClick={onDelete}>
-          {t('Xoá')}
-        </button>
-      </div>
+      {!o.readOnly && (
+        <div className="event-actions">
+          <button className="btn small" onClick={onEdit}>
+            {t('Sửa')}
+          </button>
+          <button className="btn small danger" onClick={onDelete}>
+            {t('Xoá')}
+          </button>
+        </div>
+      )}
 
       <section>
         <h3>{o.recurring ? t('Buổi này') : t('Tài liệu')}</h3>

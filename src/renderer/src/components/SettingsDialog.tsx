@@ -119,6 +119,7 @@ export default function SettingsDialog({ ui, onChange, onClose, roots, onAddFold
               onChange={(v) => set('language', v)}
             />
           </Row>
+          <p className="hint">{t('Ô chọn ngày trong lịch đổi theo ngôn ngữ mới sau khi khởi động lại app.')}</p>
           <Row label={t('Chế độ màu')}>
             <Segmented
               value={ui.theme}

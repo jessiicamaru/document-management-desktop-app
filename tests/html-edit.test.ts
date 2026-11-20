@@ -81,3 +81,24 @@ describe('editing HTML with formatting', () => {
     expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'div' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
   })
 })
+
+describe('new headings and lists typed while editing', () => {
+  it('go after their block: a heading, then a list with one item per line', () => {
+    const out = applyHtmlEdits(page, [
+      {
+        path: [1, 1, 0],
+        tag: 'p',
+        html: 'Lưu <strong>chuỗi</strong> event &amp; replay.',
+        after: [
+          { tag: 'h2', html: 'Mục mới' },
+          { tag: 'ul', html: '<li>Một <b>a</b></li><li>Hai<script>x</script></li><p>bỏ</p>' }
+        ]
+      }
+    ])
+    expect(out).toContain('replay.</p>\n    <h2>Mục mới</h2>\n    <ul>\n      <li>Một <b>a</b></li>\n      <li>Hai</li>\n    </ul>\n    <ul><li>Một</li>')
+  })
+
+  it('refuses other block types', () => {
+    expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'table' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
+  })
+})

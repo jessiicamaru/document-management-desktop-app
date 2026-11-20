@@ -62,7 +62,7 @@ describe('tags and calendar links follow a rename or move', () => {
 
   it('calendar links and notes folders follow, case-insensitively', async () => {
     const cal = await CalendarStore.open(tmp())
-    const uid = await cal.create({ summary: 'x', allDay: true, start: '2026-11-17', end: '2026-11-18', location: '', description: '', color: '', rrule: '', exdates: [] })
+    const uid = await cal.create({ summary: 'x', allDay: true, start: '2026-11-17', end: '2026-11-18', location: '', description: '', color: '', rrule: '', exdates: [], reminder: -1 })
     const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
     await cal.link(uid, null, { path: 'D:\\HK1\\Mang\\b1.md', name: 'b1.md' }, same)
     await cal.link(uid, null, { path: 'D:\\HK1\\Mang', name: 'Mang', kind: 'folder' }, same)
@@ -75,5 +75,20 @@ describe('tags and calendar links follow a rename or move', () => {
       'D:\\HK1\\Mang khac.md | Mang khac.md'
     ])
     expect(cal.notesFolder(uid)).toBe('D:\\HK1\\Lập trình mạng\\ghi-chep')
+  })
+})
+
+describe('moving to another workspace folder', () => {
+  it('takes the entries of a file or folder out of one store, keyed by what follows', async () => {
+    const meta = await MetaStore.open(tmp())
+    await meta.update('mang/b1.md', { tags: ['tcp'] })
+    await meta.update('mang/lab/l1.md', { tags: ['lab'] })
+    await meta.update('khac.md', { tags: ['x'] })
+    const taken = await meta.takeEntries('mang')
+    expect(Object.keys(taken).sort()).toEqual(['/b1.md', '/lab/l1.md'])
+    expect(Object.keys(meta.all())).toEqual(['khac.md'])
+    const other = await MetaStore.open(tmp())
+    await other.importDocs(Object.fromEntries(Object.entries(taken).map(([k, v]) => [`hk2/mang${k}`, v])))
+    expect(other.all()['hk2/mang/b1.md'].tags).toEqual(['tcp'])
   })
 })

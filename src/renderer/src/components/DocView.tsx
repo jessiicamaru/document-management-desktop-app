@@ -61,6 +61,8 @@ export default function DocView(props: Props) {
   const [saving, setSaving] = useState(false)
   // File version the text edit started from; the save is refused if the file changed since.
   const [editMtime, setEditMtime] = useState<number | null>(null)
+  /** Modified time of the file after our own last save. */
+  const savedMtime = useRef(0)
   const [rawDraft, setRawDraft] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineItem[]>([])
   const [activeHeading, setActiveHeading] = useState(-1)
@@ -89,7 +91,7 @@ export default function DocView(props: Props) {
   // ---------- text editing ----------
 
   const startEdit = (): void => {
-    setEditMtime(doc.mtime)
+    setEditMtime(Math.max(doc.mtime, savedMtime.current))
     setMode('edit')
   }
   // A note just created opens ready for writing.
@@ -97,7 +99,7 @@ export default function DocView(props: Props) {
     if (!takeWritingRequest(doc.path)) return
     if (doc.kind === 'md') setMode('write')
     else if (doc.kind === 'html') {
-      setEditMtime(doc.mtime)
+      setEditMtime(Math.max(doc.mtime, savedMtime.current))
       setMode('edit')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,7 +120,9 @@ export default function DocView(props: Props) {
     setSaving(true)
     try {
       const change = await readerRef.current?.collectChanges()
-      if (change?.kind === 'html' && change.edits.length) await window.api.saveHtmlEdits(doc.path, change.edits, editMtime)
+      // The file's new version: editing again right away starts from it (the library may not have
+      // seen the change yet).
+      if (change?.kind === 'html' && change.edits.length) savedMtime.current = await window.api.saveHtmlEdits(doc.path, change.edits, editMtime)
       stopEdit()
     } catch (err) {
       onError(err)
@@ -341,6 +345,24 @@ export default function DocView(props: Props) {
           <div className="doc-controls edit-bar">
             {doc.kind === 'html' ? (
               <div className="html-format" role="toolbar" aria-label={t('Định dạng')}>
+                <select
+                  className="block-type"
+                  aria-label={t('Kiểu đoạn')}
+                  title={t('Kiểu của đoạn vừa thêm (Enter để thêm đoạn)')}
+                  value=""
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    if (e.target.value) readerRef.current?.setBlockType?.(e.target.value)
+                    e.target.value = ''
+                  }}
+                >
+                  <option value="">{t('Kiểu đoạn…')}</option>
+                  <option value="p">{t('Đoạn văn')}</option>
+                  <option value="h2">{t('Tiêu đề mục')}</option>
+                  <option value="h3">{t('Tiêu đề nhỏ')}</option>
+                  <option value="ul">{t('Danh sách')}</option>
+                  <option value="ol">{t('Danh sách đánh số')}</option>
+                </select>
                 {(
                   [
                     ['B', 'bold', t('Đậm (Ctrl+B)')],

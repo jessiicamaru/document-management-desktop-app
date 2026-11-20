@@ -53,6 +53,8 @@ export default function App() {
   const [nameDialog, setNameDialog] = useState<NameDialogOptions | null>(null)
   const changeView = (next: 'docs' | 'calendar'): void => {
     setView(next)
+    // A class shown from a document is not shown again the next time the calendar opens.
+    if (next === 'docs') setCalendarFocus(null)
     saveLocal('view', next)
   }
   // True while the open document has unsaved edits (text edit or raw editor).
@@ -136,6 +138,7 @@ export default function App() {
   // Closing the window with unsaved edits: the main process asks what to do.
   const setDirty = useCallback((dirty: boolean) => {
     dirtyRef.current = dirty
+    window.api.setUnsaved(dirty)
     window.onbeforeunload = dirty
       ? (e) => {
           e.preventDefault()
@@ -230,6 +233,9 @@ export default function App() {
   useEffect(() => window.api.onNavigate((path, hash) => openDoc(path, hash)), [openDoc])
   // Questions from the main process, shown in the same dialog.
   useEffect(() => window.api.onAsk((id, request) => void ask(request).then((index) => window.api.answerAsk(id, index))), [])
+  // A reminder was clicked: show that class in the calendar.
+  const showCalendarRef = useRef<(focus: Omit<CalendarFocus, 'n'>) => void>(() => {})
+  useEffect(() => window.api.onCalendarFocus((target) => showCalendarRef.current(target)), [])
   // Mouse back/forward buttons.
   useEffect(() => window.api.onHistory(goHistory), [goHistory])
 
@@ -419,6 +425,8 @@ export default function App() {
     [openDoc, selected]
   )
 
+  showCalendarRef.current = (focus) => void showCalendar(focus)
+
   const files: FileActions = useMemo(
     () => ({
       newNote: (folderId) =>
@@ -439,13 +447,13 @@ export default function App() {
           title: t('Thư mục mới'),
           fields: [
             { label: t('Tên thư mục'), value: '', placeholder: t('Ví dụ: Lập trình mạng') },
-            { label: t('Bài đầu tiên trong thư mục'), value: t('Ghi chú') }
+            { label: t('Bài đầu tiên trong thư mục (để trống nếu chưa cần)'), value: '' }
           ],
           kind: ui.newNoteKind,
-          hint: t('Thư mục trống không hiện trong danh sách, nên app tạo luôn một bài trong đó.'),
           okLabel: t('Tạo'),
           onSubmit: async ([folderName, noteName], kind) => {
             const id = await window.api.newFolder(folderId, folderName, noteName, kind)
+            if (!id) return
             if (kind !== ui.newNoteKind) changeUi({ ...ui, newNoteKind: kind })
             requestWriting(id)
             await openDoc(id)

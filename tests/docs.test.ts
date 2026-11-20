@@ -74,3 +74,11 @@ describe('errorMessage', () => {
     expect(errorMessage(err)).toBe('Không lưu được')
   })
 })
+
+describe('buildTree with empty folders', () => {
+  it('adds a node for each empty folder, nested', () => {
+    const tree = buildTree([], 'k', 'name', ['a', 'a/b', 'c'])
+    expect(tree.folders.map((f) => f.path)).toEqual(['k/a', 'k/c'])
+    expect(tree.folders[0].folders.map((f) => f.path)).toEqual(['k/a/b'])
+  })
+})

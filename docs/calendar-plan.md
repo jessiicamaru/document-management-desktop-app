@@ -4,7 +4,7 @@ A simple calendar for classes and study sessions, where each event (or one occur
 
 Example: "Network Programming, Tuesday morning" repeats weekly; the syllabus links to the whole course, and the notes of the 25 Nov class link to that one class.
 
-Status: **milestone 1 is built**, plus importing and exporting `.ics` files from milestone 2. Next: subscribing to a calendar URL. Work top to bottom; each milestone ships on its own.
+Status: **milestones 1 and 2 are built**, and reminders from milestone 3. Next (optional): today's agenda on the home screen, colours per course. Work top to bottom; each milestone ships on its own.
 
 ## Decisions
 
@@ -64,22 +64,22 @@ Status: **milestone 1 is built**, plus importing and exporting `.ics` files from
 
 ## Milestone 2: read external calendars (ICS)
 
-1. [ ] **Subscribe to a calendar URL**, for example Google Calendar's "Secret address in iCal format":
+1. [x] **Subscribe to a calendar URL**, for example Google Calendar's "Secret address in iCal format":
    - Settings → Calendar → add URL, name, color.
    - Refreshed on start and every 30 minutes, with manual refresh.
 2. [x] **Import a `.ics` file** (for example a timetable exported by the school), as a one-off copy into local events.
-3. [ ] **Rendering:** external events are shown read-only in their own color, recurrences expanded by ical.js.
-4. [ ] **Links on external events:** keyed by the event `UID` (+ occurrence date), so documents and notes can be attached to Google events too. The app never writes back to Google.
-5. [ ] **Privacy:**
+3. [x] **Rendering:** external events are shown read-only in their own color, recurrences expanded by ical.js.
+4. [x] **Links on external events:** keyed by the event `UID` (+ occurrence date), so documents and notes can be attached to Google events too. The app never writes back to Google.
+5. [x] **Privacy:**
    - The secret URL lets anyone see the calendar. Store it only locally; never log it, never include it in backups or exports unless asked.
    - Fetch only from the main process, over https only.
-6. [ ] Cache the last fetched feed, so the calendar works offline.
+6. [x] Cache the last fetched feed, so the calendar works offline.
 
 7. [x] **Export to `.ics`** (the whole local calendar), so it can be imported into Google, Outlook or a phone.
 
 ## Milestone 3: small extras (pick later)
 
-- [ ] **Windows notification** before a class (only while the app is running), for example "Network Programming in 15 min, room B2".
+- [x] **Windows notification** before a class (only while the app is running), for example "Network Programming in 15 min, room B2".
 - [ ] **Agenda** of today's events on the home screen.
 - [ ] **Colors per course**, reused by its documents' tags.
 

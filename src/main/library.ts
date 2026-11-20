@@ -75,6 +75,37 @@ function shouldSkipDir(name: string): boolean {
   return name.startsWith('.') || name === 'node_modules'
 }
 
+/** Every sub-folder of a workspace folder ("a/b", forward slashes); hidden ones and node_modules left out. */
+export async function listFolders(root: string): Promise<string[]> {
+  const out: string[] = []
+  async function walk(dir: string, rel: string): Promise<void> {
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || shouldSkipDir(entry.name)) continue
+      const sub = rel ? `${rel}/${entry.name}` : entry.name
+      out.push(sub)
+      await walk(path.join(dir, entry.name), sub)
+    }
+  }
+  await walk(root, '')
+  return out.sort((a, b) => a.localeCompare(b, 'vi'))
+}
+
+/** The folders with no document anywhere below them (so the tree can still show them). */
+export function emptyFolders(folders: string[], docs: { path: string }[]): string[] {
+  const used = new Set<string>()
+  for (const d of docs) {
+    const parts = d.path.split('/').slice(0, -1)
+    for (let i = 1; i <= parts.length; i++) used.add(parts.slice(0, i).join('/'))
+  }
+  return folders.filter((f) => !used.has(f))
+}
+
 export function kindOf(file: string): DocKind | null {
   return EXTENSIONS[path.extname(file).toLowerCase()] ?? null
 }

@@ -11,14 +11,28 @@ import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { Annotation, DocEntry } from '../../../shared/types'
+import { ocrPageText, ocrTextLayer, recognizePdf } from '../lib/ocr'
+import type { OcrData, OcrPage } from '../../../shared/types'
 import { createAnchoring } from '../../../shared/anchor'
 import { loadLocal, saveLocal } from '../lib/docs'
 import type { FindResult, OutlineItem, ReaderCallbacks, ReaderHandle } from './reader'
 import { t } from '../../../shared/i18n'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+/** pdf.js's own files, copied next to the app at build time (see electron.vite.config.ts). */
+const PDFJS_FILES = new URL('pdfjs/', document.baseURI).href
+const PDFJS_OPTIONS = {
+  cMapUrl: `${PDFJS_FILES}cmaps/`, // CJK text whose fonts aren't embedded
+  cMapPacked: true,
+  standardFontDataUrl: `${PDFJS_FILES}standard_fonts/`,
+  iccUrl: `${PDFJS_FILES}iccs/`,
+  wasmUrl: `${PDFJS_FILES}wasm/` // JPEG 2000 pictures (scanned books often use them)
+}
 
 const anchoring = createAnchoring()
+
+/** A page counts as scanned (a picture) when it has fewer letters than this. */
+const SCANNED_CHARS = 20
 
 interface Props extends ReaderCallbacks {
   doc: DocEntry
@@ -80,6 +94,16 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
   const foundIndex = useRef(0)
   const foundQuery = useRef('')
   const relayout = useRef<() => void>(() => {})
+  // OCR of scanned PDFs (see lib/ocr.ts).
+  const ocr = useRef<OcrData | null>(null)
+  const [scanned, setScanned] = useState(false)
+  const [hasOcr, setHasOcr] = useState(false)
+  const [ocrProgress, setOcrProgress] = useState<{ done: number; total: number } | null>(null)
+  const ocrCancel = useRef(false)
+
+  /** The OCR words of a page that has no text of its own, or null. */
+  const ocrFor = (n: number, items: unknown[]): OcrPage | null =>
+    pageText(items).trim().length < SCANNED_CHARS ? (ocr.current?.pages.find((p) => p.n === n) ?? null) : null
 
   // ---------- drawing pages ----------
 
@@ -104,10 +128,15 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
       slot.task = renderTask
       renderTask.promise.catch(() => {}) // cancelled when the page is dropped; handled below
       const content = await page.getTextContent()
-      texts.current[slot.n - 1] ??= pageText(content.items)
-      const layer = document.createElement('div')
-      layer.className = 'textLayer'
-      await new pdfjs.TextLayer({ textContentSource: content, container: layer, viewport }).render()
+      const ocrPage = ocrFor(slot.n, content.items)
+      texts.current[slot.n - 1] ??= ocrPage ? ocrPageText(ocrPage) : pageText(content.items)
+      let layer: HTMLDivElement
+      if (ocrPage) layer = ocrTextLayer(ocrPage, s)
+      else {
+        layer = document.createElement('div')
+        layer.className = 'textLayer'
+        await new pdfjs.TextLayer({ textContentSource: content, container: layer, viewport }).render()
+      }
       try {
         await renderTask.promise
       } catch {
@@ -208,7 +237,9 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
         if (pdfRef.current !== pdf) return
         if (texts.current[n - 1] == null) {
           const page = await pdf.getPage(n)
-          texts.current[n - 1] = pageText((await page.getTextContent()).items)
+          const items = (await page.getTextContent()).items
+          const ocrPage = ocrFor(n, items)
+          texts.current[n - 1] = ocrPage ? ocrPageText(ocrPage) : pageText(items)
         }
       }
       reportMissing()
@@ -281,6 +312,10 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
     slots.current = []
     texts.current = []
     allTexts.current = null
+    ocr.current = null
+    ocrCancel.current = false
+    setScanned(false)
+    setHasOcr(false)
     pages.replaceChildren()
 
     let scrollTimer: ReturnType<typeof setTimeout> | undefined
@@ -309,10 +344,14 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
     void (async () => {
       const bytes = await window.api.readBinary(doc.path)
       if (cancelled) return
-      task = pdfjs.getDocument({ data: bytes, isEvalSupported: false, useSystemFonts: true })
+      task = pdfjs.getDocument({ data: bytes, isEvalSupported: false, useSystemFonts: true, ...PDFJS_OPTIONS })
       const pdf = await task.promise
       if (cancelled) return void pdf.destroy()
       pdfRef.current = pdf
+      // Text read by OCR before (scanned PDFs), drawn as the pages' text layer.
+      ocr.current = await window.api.ocrLoad(doc.path).catch(() => null)
+      if (cancelled) return
+      setHasOcr(!!ocr.current)
 
       // All pages get the size of the first one; others are corrected as they are read.
       const first = (await pdf.getPage(1)).getViewport({ scale: 1 })
@@ -325,6 +364,12 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
       }
       layout()
       cb.current.onReady()
+
+      // A scan (pages that are pictures)? Then OCR is offered.
+      const sample = Math.min(3, pdf.numPages)
+      let letters = 0
+      for (let n = 1; n <= sample && !cancelled; n++) letters += pageText((await (await pdf.getPage(n)).getTextContent()).items).trim().length
+      if (!cancelled) setScanned(letters < SCANNED_CHARS * sample)
 
       // Outline (the PDF's bookmarks).
       const outline = (await pdf.getOutline().catch(() => null)) ?? []
@@ -371,6 +416,7 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
 
     return () => {
       cancelled = true
+      ocrCancel.current = true
       scroller.removeEventListener('scroll', onScroll)
       resize.disconnect()
       clearTimeout(scrollTimer)
@@ -473,6 +519,34 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
     }
   }))
 
+  /** Reads the text of every page with OCR, keeps it, and redraws the pages with it. */
+  const runOcr = async (): Promise<void> => {
+    const pdf = pdfRef.current
+    if (!pdf || ocrProgress) return
+    ocrCancel.current = false
+    setOcrProgress({ done: 0, total: pdf.numPages })
+    try {
+      const data = await recognizePdf(
+        pdf,
+        (done, total) => setOcrProgress({ done, total }),
+        () => ocrCancel.current || pdfRef.current !== pdf
+      )
+      if (!data) return
+      await window.api.ocrSave(doc.path, data)
+      if (pdfRef.current !== pdf) return
+      ocr.current = data
+      setHasOcr(true)
+      texts.current = []
+      allTexts.current = null
+      layout()
+      void loadAllTexts()
+    } catch (err) {
+      cb.current.onError(err)
+    } finally {
+      setOcrProgress(null)
+    }
+  }
+
   const zoomStep = (dir: 1 | -1): void => {
     const now = scale.current
     const next = dir > 0 ? ZOOMS.find((z) => z > now + 0.01) : [...ZOOMS].reverse().find((z) => z < now - 0.01)
@@ -481,6 +555,32 @@ const PdfView = forwardRef<ReaderHandle, Props>(function PdfView(props, ref) {
 
   return (
     <div className="pdf-view">
+      {(scanned || hasOcr) && (
+        <div className="pdf-ocr-bar" role="status">
+          {ocrProgress ? (
+            <>
+              <span>{t('Đang nhận dạng chữ: trang {0}/{1}…', { 0: Math.min(ocrProgress.done + 1, ocrProgress.total), 1: ocrProgress.total })}</span>
+              <button className="btn small" onClick={() => (ocrCancel.current = true)}>
+                {t('Dừng')}
+              </button>
+            </>
+          ) : hasOcr ? (
+            <>
+              <span>{t('Chữ của bản scan này do OCR đọc (có thể sai vài chỗ).')}</span>
+              <button className="btn small" onClick={() => void runOcr()}>
+                {t('Nhận dạng lại')}
+              </button>
+            </>
+          ) : (
+            <>
+              <span>{t('Bản PDF này là ảnh scan: chưa tìm, chọn hay highlight được chữ.')}</span>
+              <button className="btn primary small" onClick={() => void runOcr()}>
+                {t('Nhận dạng chữ (OCR)')}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <div className="pdf-scroll" ref={scrollRef} tabIndex={0}>
         <div className="pdf-pages" ref={pagesRef} />
       </div>

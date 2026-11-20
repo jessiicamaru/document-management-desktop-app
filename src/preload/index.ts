@@ -35,6 +35,7 @@ const api: DocsApi = {
   revealBackup: (root, file) => ipcRenderer.invoke('recovery:reveal', root, file),
   onAsk: (cb) => listen<[number, AskRequest]>('dialog:ask', cb),
   answerAsk: (id, index) => ipcRenderer.invoke('dialog:answer', id, index),
+  setUnsaved: (dirty) => ipcRenderer.send('app:dirty', dirty),
   openFiles: () => ipcRenderer.invoke('files:open'),
   addFiles: (paths) => ipcRenderer.invoke('files:add', paths),
   removeLooseFile: (path) => ipcRenderer.invoke('files:remove', path),
@@ -57,6 +58,8 @@ const api: DocsApi = {
   renameItem: (id, isFolder, name) => ipcRenderer.invoke('fs:rename', id, isFolder, name),
   moveItem: (id, isFolder, targetFolderId) => ipcRenderer.invoke('fs:move', id, isFolder, targetFolderId),
   trashItem: (id, isFolder) => ipcRenderer.invoke('fs:trash', id, isFolder),
+  ocrLoad: (docId) => ipcRenderer.invoke('ocr:load', docId),
+  ocrSave: (docId, data) => ipcRenderer.invoke('ocr:save', docId, data),
   saveAsset: (docId, bytes, ext) => ipcRenderer.invoke('doc:saveAsset', docId, bytes, ext),
   calendarRange: (from, to) => ipcRenderer.invoke('calendar:range', from, to),
   calendarDetail: (uid, rid) => ipcRenderer.invoke('calendar:detail', uid, rid),
@@ -72,7 +75,13 @@ const api: DocsApi = {
   calendarClassNotes: (uid, rid) => ipcRenderer.invoke('calendar:classNotes', uid, rid),
   calendarChooseNotesFolder: (uid) => ipcRenderer.invoke('calendar:notesFolder', uid),
   calendarExport: () => ipcRenderer.invoke('calendar:export'),
-  calendarImport: () => ipcRenderer.invoke('calendar:import')
+  calendarImport: () => ipcRenderer.invoke('calendar:import'),
+  calendarSubscriptions: () => ipcRenderer.invoke('calendar:subscriptions'),
+  calendarAddSubscription: (name, url, color) => ipcRenderer.invoke('calendar:addSubscription', name, url, color),
+  calendarRemoveSubscription: (id) => ipcRenderer.invoke('calendar:removeSubscription', id),
+  calendarRefreshSubscriptions: () => ipcRenderer.invoke('calendar:refreshSubscriptions'),
+  onCalendarChanged: (cb) => listen<[]>('calendar:changed', cb),
+  onCalendarFocus: (cb) => listen<[{ date: string; uid: string; rid: string }]>('calendar:focus', cb)
 }
 
 contextBridge.exposeInMainWorld('api', api)

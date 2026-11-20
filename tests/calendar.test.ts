@@ -32,6 +32,7 @@ const lesson = (extra: Partial<CalEventData> = {}): CalEventData => ({
   color: 'royalblue',
   rrule: 'FREQ=WEEKLY;BYDAY=TU',
   exdates: [],
+  reminder: -1,
   ...extra
 })
 const starts = (store: CalendarStore, from = '2026-11-01', to = '2026-12-31'): string[] => store.occurrences(from, to).map((o) => o.start)
@@ -344,4 +345,43 @@ describe('time zones and long series', () => {
       }
     }
   }, 30000)
+})
+
+describe('reminders and subscribed calendars', () => {
+  it('a reminder is a standard VALARM, read back as minutes before the start', async () => {
+    const dir = tmp()
+    const store = await CalendarStore.open(dir)
+    const uid = await store.create(lesson({ reminder: 15 }))
+    expect(store.toIcs()).toContain('BEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Lập trình mạng\r\nTRIGGER:-PT15M\r\nEND:VALARM')
+    expect(store.occurrences('2026-11-10', '2026-11-11')[0].reminder).toBe(15)
+    await store.update(uid, '2026-11-03T07:00', 'all', '2026-11-03T07:00', lesson({ reminder: -1 }))
+    expect(store.toIcs()).not.toContain('VALARM')
+    expect((await CalendarStore.open(dir)).occurrences('2026-11-10', '2026-11-11')[0].reminder).toBe(-1)
+  })
+
+  it('a subscribed calendar is shown with its colour, read-only, and its URL is not in backups', async () => {
+    const dir = tmp()
+    const store = await CalendarStore.open(dir)
+    const id = await store.addSubscription('Trường', 'https://example.edu/tkb.ics', 'teal')
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//T//EN', 'BEGIN:VEVENT', 'UID:tkb-1@edu', 'DTSTAMP:20261101T000000Z', 'DTSTART:20261105T070000', 'DTEND:20261105T093000', 'SUMMARY:Toán rời rạc', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+    await store.setSubscriptionData(id, { ics })
+    const [o] = store.occurrences('2026-11-05', '2026-11-06')
+    expect(o).toMatchObject({ summary: 'Toán rời rạc', readOnly: true, source: 'Trường', color: 'teal' })
+    await expect(store.update(o.uid, o.rid, 'all', o.start, lesson())).rejects.toThrow()
+    await expect(store.delete(o.uid, o.rid, 'all')).rejects.toThrow()
+    // Documents can still be linked to its classes.
+    await store.link(o.uid, o.rid, { path: 'D:/x.md', name: 'x.md' }, same)
+    expect(store.occurrences('2026-11-05', '2026-11-06')[0].links).toBe(1)
+    expect(JSON.stringify(store.backup())).not.toContain('example.edu')
+    expect(store.toIcs()).not.toContain('Toán rời rạc') // not copied into the app's own calendar
+    // Next start: read again from the downloaded copy.
+    const again = await CalendarStore.open(dir)
+    await again.loadSubscriptions()
+    expect(again.subscriptions()).toMatchObject([{ name: 'Trường', events: 1, error: null }])
+    expect(again.occurrences('2026-11-05', '2026-11-06')).toHaveLength(1)
+    await again.setSubscriptionData(id, { error: 'HTTP 404' })
+    expect(again.subscriptions()[0].error).toBe('HTTP 404')
+    await again.removeSubscription(id)
+    expect(again.occurrences('2026-11-05', '2026-11-06')).toHaveLength(0)
+  })
 })

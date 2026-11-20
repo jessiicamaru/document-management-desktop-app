@@ -13,7 +13,10 @@ import {
   longDay,
   monthlyOn,
   nthOfMonth,
+  pad,
   parseLocal,
+  REMINDERS,
+  reminderLabel,
   parseRrule,
   repeatPresets,
   shiftLocal,
@@ -184,9 +187,9 @@ export default function EventDialog({ initial, editing, onClose, onSaved, onErro
 
         <div className="event-when">
           <input type="date" aria-label={t('Ngày bắt đầu')} value={startDay} onChange={(e) => e.target.value && moveStart(data.allDay ? e.target.value : `${e.target.value}T${startTime}`)} />
-          {!data.allDay && <input type="time" aria-label={t('Giờ bắt đầu')} value={startTime} onChange={(e) => e.target.value && moveStart(`${startDay}T${e.target.value}`)} />}
+          {!data.allDay && <TimeField label={t('Giờ bắt đầu')} value={startTime} onChange={(v) => moveStart(`${startDay}T${v}`)} />}
           <span className="event-dash">–</span>
-          {!data.allDay && <input type="time" aria-label={t('Giờ kết thúc')} value={endTime} onChange={(e) => e.target.value && set({ end: laterOrSame(data.start, `${data.end.slice(0, 10)}T${e.target.value}`) })} />}
+          {!data.allDay && <TimeField label={t('Giờ kết thúc')} value={endTime} onChange={(v) => set({ end: laterOrSame(data.start, `${data.end.slice(0, 10)}T${v}`) })} />}
           <input
             type="date"
             aria-label={t('Ngày kết thúc')}
@@ -269,6 +272,18 @@ export default function EventDialog({ initial, editing, onClose, onSaved, onErro
         )}
 
         <input placeholder={t('Địa điểm, ví dụ: phòng B2')} aria-label={t('Địa điểm')} value={data.location} onChange={(e) => set({ location: e.target.value })} />
+
+        <label className="event-row reminder-row">
+          <span>{t('Nhắc')}</span>
+          <select aria-label={t('Nhắc trước')} value={String(data.reminder)} onChange={(e) => set({ reminder: Number(e.target.value) })}>
+            {REMINDERS.map((m) => (
+              <option key={m} value={m}>
+                {reminderLabel(m)}
+              </option>
+            ))}
+          </select>
+          {data.reminder >= 0 && <span className="hint">{t('Thông báo của Windows, khi app đang mở.')}</span>}
+        </label>
 
         <div className="swatches event-colors" role="radiogroup" aria-label={t('Màu')}>
           <button type="button" role="radio" aria-checked={!data.color} className={`swatch ${!data.color ? 'active' : ''}`} style={{ background: 'var(--accent)' }} title={t('Màu chủ đạo')} onClick={() => set({ color: '' })} />
@@ -381,6 +396,63 @@ function CustomRepeat({ repeat, start, last, onChange }: { repeat: Repeat; start
       </div>
       <p className="hint repeat-summary">{describeRrule(buildRrule(repeat, start, start.length === 10), start)}</p>
     </div>
+  )
+}
+
+/**
+ * A time as hh:mm on a 24-hour clock, whatever the language of Windows (the browser's own time
+ * box would show 07:00 SA / 07:00 AM). "7", "7h30", "0730" are understood; ↑/↓ move by 15 minutes.
+ */
+function TimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  const typing = useRef(false)
+  // The time changed elsewhere (moving the start moves the end): show it, unless being typed here.
+  useEffect(() => {
+    if (!typing.current) setText(value)
+  }, [value])
+  /** "7" -> 07:00, "7h30" / "7:30" / "0730" -> 07:30; null when it isn't a time. */
+  const parse = (input: string): string | null => {
+    const digits = input.replace(/[^0-9]/g, '')
+    const m = /^(\d{1,2})[^0-9]?(\d{2})?$/.exec(input.trim()) ?? (digits.length >= 3 ? [digits, digits.slice(0, -2), digits.slice(-2)] : null)
+    return m ? `${pad(Math.min(23, Number(m[1])))}:${pad(Math.min(59, Number(m[2] ?? 0)))}` : null
+  }
+  const commit = (input: string): void => {
+    typing.current = false
+    const v = parse(input)
+    setText(v ?? value)
+    if (v && v !== value) onChange(v)
+  }
+  /** While typing, a complete time ("19:30", "1930", "21h") counts at once: saving right away keeps it. */
+  const type = (input: string): void => {
+    typing.current = true
+    setText(input)
+    const v = /^\d{1,2}[:h.]\d{0,2}$|^\d{4}$/i.test(input.trim()) ? parse(input) : null
+    if (v && v !== value) onChange(v)
+  }
+  const step = (by: number): void => {
+    const [h, mi] = value.split(':').map(Number)
+    const total = (((h * 60 + mi + by) % 1440) + 1440) % 1440
+    const v = `${pad(Math.floor(total / 60))}:${pad(total % 60)}`
+    setText(v)
+    onChange(v)
+  }
+  return (
+    <input
+      className="time-field"
+      aria-label={label}
+      inputMode="numeric"
+      placeholder="hh:mm"
+      value={text}
+      onChange={(e) => type(e.target.value)}
+      onBlur={(e) => commit(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit(text)
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault()
+          step(e.key === 'ArrowUp' ? 15 : -15)
+        }
+      }}
+    />
   )
 }
 

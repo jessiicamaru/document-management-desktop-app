@@ -61,8 +61,20 @@ export interface TreeFolder {
  * folders get distinct ids (used to remember which ones are collapsed).
  * Folders are sorted by name; documents by title, or newest change first (issue #23).
  */
-export function buildTree(docs: DocEntry[], prefix = '', order: 'name' | 'modified' = 'name'): TreeFolder {
+export function buildTree(docs: DocEntry[], prefix = '', order: 'name' | 'modified' = 'name', empty: string[] = []): TreeFolder {
   const root: TreeFolder = { name: '', path: prefix, folders: [], docs: [] }
+  // Folders without documents ("a/b") get their nodes too.
+  for (const rel of empty) {
+    let cur = root
+    for (const part of rel.split('/')) {
+      let next = cur.folders.find((f) => f.name === part)
+      if (!next) {
+        next = { name: part, path: cur.path ? `${cur.path}/${part}` : part, folders: [], docs: [] }
+        cur.folders.push(next)
+      }
+      cur = next
+    }
+  }
   for (const doc of docs) {
     const parts = doc.rel.split('/')
     let cur = root
