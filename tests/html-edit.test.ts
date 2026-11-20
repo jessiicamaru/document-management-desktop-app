@@ -102,3 +102,30 @@ describe('new headings and lists typed while editing', () => {
     expect(() => applyHtmlEdits(page, [{ path: [1, 0], tag: 'h1', html: 'x', after: [{ tag: 'table' as 'p', html: 'y' }] }])).toThrow(HtmlEditError)
   })
 })
+
+describe('dragging blocks into a new order', () => {
+  it('reorders list items, byte for byte', () => {
+    const out = applyHtmlEdits(page, [{ path: [1, 1, 1], tag: 'ul', order: [{ i: 1 }, { i: 0 }] }])
+    expect(out).toBe(page.replace('<ul><li>Một</li><li>Hai</li></ul>', '<ul><li>Hai</li><li>Một</li></ul>'))
+  })
+
+  it('a moved block keeps its own edits; new blocks can sit among the others', () => {
+    const out = applyHtmlEdits(page, [
+      { path: [1, 1], tag: 'section', order: [{ i: 1 }, { tag: 'p', html: 'Mới <b>thêm</b>' }, { i: 0 }] },
+      { path: [1, 1, 0], tag: 'p', html: 'Lưu <strong>chuỗi</strong> event.' }
+    ])
+    expect(out).toContain('  <section>\n    <ul><li>Một</li><li>Hai</li></ul>\n    <p>Mới <b>thêm</b></p>\n    <p>Lưu <strong>chuỗi</strong> event.</p>\n  </section>')
+  })
+
+  it('a paragraph can follow a list (an element that is not a text block)', () => {
+    const out = applyHtmlEdits(page, [{ path: [1, 1, 1], tag: 'ul', after: [{ tag: 'p', html: 'Sau danh sách' }] }])
+    expect(out).toContain('<ul><li>Một</li><li>Hai</li></ul>\n    <p>Sau danh sách</p>\n  </section>')
+  })
+
+  it('refuses when text sits between the blocks, or the order does not match the file', () => {
+    const mixed = page.replace('<ul>', 'chữ lẻ <ul>')
+    expect(() => applyHtmlEdits(mixed, [{ path: [1, 1], tag: 'section', order: [{ i: 1 }, { i: 0 }] }])).toThrow(HtmlEditError)
+    expect(() => applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 0 }, { i: 0 }] }])).toThrow(HtmlEditError)
+    expect(() => applyHtmlEdits(page, [{ path: [1, 1], tag: 'section', order: [{ i: 0 }] }])).toThrow(HtmlEditError)
+  })
+})

@@ -811,3 +811,120 @@ dialog.subs-dialog { width: min(560px, calc(100vw - 32px)); height: auto; max-he
 .pdf-ocr-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ocr-layer span { font-family: sans-serif; }
 .subs-warning { margin: 0; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; background: color-mix(in srgb, #d9a94a 18%, transparent); color: var(--ink); }
+
+/* ---------- look: colour wash, depth and motion ----------
+   A soft wash of the accent colour behind everything, a frosted sidebar, the document on a
+   raised sheet, and small movements on hover and when things appear. Turned down when the
+   system asks for less motion. */
+:root {
+  --wash-1: color-mix(in srgb, var(--accent) 30%, transparent);
+  --wash-2: color-mix(in srgb, var(--st-learning) 24%, transparent);
+  --wash-3: color-mix(in srgb, #b98ad6 12%, transparent);
+  --glass: color-mix(in srgb, var(--panel) 72%, transparent);
+  --sheet-shadow: 0 1px 2px rgba(60, 40, 20, .06), 0 8px 28px rgba(60, 40, 20, .09);
+  --lift-shadow: 0 2px 4px rgba(60, 40, 20, .08), 0 6px 16px rgba(60, 40, 20, .1);
+  --accent-grad: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #ffb36b), var(--accent) 55%, color-mix(in srgb, var(--accent) 80%, #6b2a8a));
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wash-1: color-mix(in srgb, var(--accent-base, #b4531f) 32%, transparent);
+    --wash-2: color-mix(in srgb, #3c6fb0 28%, transparent);
+    --wash-3: color-mix(in srgb, #7a4fa0 12%, transparent);
+    --glass: color-mix(in srgb, var(--panel) 70%, transparent);
+    --sheet-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px rgba(0, 0, 0, .35);
+    --lift-shadow: 0 2px 6px rgba(0, 0, 0, .35), 0 8px 20px rgba(0, 0, 0, .3);
+  }
+}
+
+body {
+  background:
+    radial-gradient(1100px 700px at 100% -10%, var(--wash-1), transparent 60%),
+    radial-gradient(900px 650px at -10% 110%, var(--wash-2), transparent 60%),
+    radial-gradient(700px 500px at 55% 55%, var(--wash-3), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* Sidebar: frosted over the wash. */
+.sidebar {
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(1.3);
+  border-right-color: color-mix(in srgb, var(--line) 70%, transparent);
+}
+.library-name {
+  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-size: 16px; letter-spacing: -.01em;
+}
+.icon-btn { transition: background .15s, color .15s, transform .15s var(--ease); }
+.icon-btn:hover { transform: translateY(-1px); color: var(--accent); }
+.icon-btn:active { transform: scale(.94); }
+.search input { transition: border-color .15s, box-shadow .2s; box-shadow: inset 0 1px 2px rgba(0, 0, 0, .04); }
+
+.chip { transition: background .15s, color .15s, border-color .15s, transform .15s var(--ease); }
+.chip:hover { transform: translateY(-1px); }
+.chip.active { background: var(--accent-grad); border-color: transparent; color: #fff; box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+.doc-list { border-top-color: color-mix(in srgb, var(--line) 60%, transparent); }
+.row, .hit { position: relative; transition: background .15s, transform .15s var(--ease), padding .15s var(--ease); }
+.row:hover, .hit:hover { background: color-mix(in srgb, var(--hover) 80%, transparent); }
+.row.doc:hover { transform: translateX(2px); }
+.row.selected, .hit.selected {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
+}
+.row.selected::before, .hit.selected::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 3px;
+  background: var(--accent-grad); animation: sd-grow .25s var(--ease);
+}
+
+/* Header over the wash; the document on a raised sheet. */
+.doc-header { background: transparent; border-bottom: none; padding-bottom: 10px; }
+.doc-heading h1 { font-size: 20px; letter-spacing: -.01em; }
+.doc-body {
+  margin: 0 14px 14px; border-radius: 14px; overflow: hidden;
+  background: var(--paper); box-shadow: var(--sheet-shadow);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  animation: sd-rise .32s var(--ease);
+}
+.calendar-host.fc { box-shadow: var(--sheet-shadow); }
+
+/* Buttons: a little lift, the main one in a gradient. */
+.btn { transition: background .15s, border-color .15s, color .15s, transform .15s var(--ease), box-shadow .2s; }
+.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--lift-shadow); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.98); box-shadow: none; }
+.btn.primary { background: var(--accent-grad); border-color: transparent; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 45%, transparent); }
+.segmented { box-shadow: 0 1px 2px rgba(0, 0, 0, .05); }
+.segmented button { transition: background .2s, color .2s; }
+.tag { transition: transform .15s var(--ease); animation: sd-pop .2s var(--ease); }
+
+/* Welcome screen. */
+.welcome { animation: sd-rise .45s var(--ease); }
+.welcome h1 {
+  font-size: 34px; letter-spacing: -.02em;
+  background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.welcome-recent { box-shadow: var(--sheet-shadow); }
+
+/* Editing bars. */
+.edit-bar {
+  background: color-mix(in srgb, var(--paper) 75%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--st-learning) 25%, transparent);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--st-learning) 12%, transparent);
+  animation: sd-rise .25s var(--ease);
+}
+
+/* Things that appear. */
+.popover { animation: sd-pop .16s var(--ease); transform-origin: top right; backdrop-filter: blur(12px); }
+dialog[open] { animation: sd-pop .2s var(--ease); }
+dialog::backdrop { backdrop-filter: blur(3px); }
+.toast { animation: sd-rise .25s var(--ease); }
+
+@keyframes sd-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes sd-pop { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes sd-grow { from { transform: scaleY(0); } to { transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

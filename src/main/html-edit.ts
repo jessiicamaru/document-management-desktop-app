@@ -95,13 +95,35 @@ export function sanitizeInline(html: string): string {
 
 export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
   // parse5 reports offsets into the text it parsed; keep a byte-order mark out of the way.
-  const bom = source.startsWith('﻿') ? '﻿' : ''
+  const bom = source.startsWith('\uFEFF') ? '\uFEFF' : ''
   const text = bom ? source.slice(1) : source
   const doc = parse(text, { sourceCodeLocationInfo: true })
   const html = doc.childNodes.find(isElement)
   if (!html) throw new HtmlEditError(t('File HTML không có thẻ <html>.'))
 
-  const ranges = edits.map((edit) => {
+  /** Indent of the line an element starts on (when only spaces come before it). */
+  const indentOf = (offset: number): string => {
+    const lineStart = text.lastIndexOf('\n', offset - 1) + 1
+    const lead = text.slice(lineStart, offset)
+    return /^[ \t]*$/.test(lead) ? lead : ''
+  }
+  /** A paragraph, heading, list item or list typed while editing, as HTML. */
+  const newBlock = (b: { tag: string; html: string }, indent: string): string => {
+    if (!NEW_BLOCK_TAGS.has(b.tag)) throw new HtmlEditError(t('Không thêm được đoạn <{0}>.', { 0: String(b.tag) }))
+    if (b.tag === 'ul' || b.tag === 'ol') return `<${b.tag}>${sanitizeList(b.html, `${indent}  `)}\n${indent}</${b.tag}>`
+    return `<${b.tag}>${sanitizeInline(b.html)}</${b.tag}>`
+  }
+
+  // Every change is a piece of the file replaced by new text. Pieces never cross: a block that
+  // moves (a reorder) carries its own edits inside it.
+  interface Op {
+    start: number
+    end: number
+    render: () => string
+  }
+  const ops: Op[] = []
+
+  for (const edit of edits) {
     let node: Element = html
     for (const index of edit.path) {
       const child = node.childNodes.filter(isElement)[index]
@@ -115,32 +137,76 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
     if (!loc?.startTag || !loc.endTag) {
       throw new HtmlEditError(t('Thẻ <{0}> trong file không có thẻ đóng nên không sửa trực tiếp được. Hãy sửa đoạn này trong raw.', { 0: edit.tag }))
     }
-    const out = [{ start: loc.startTag.endOffset, end: loc.endTag.startOffset, html: sanitizeInline(edit.html) }]
-    if (edit.after?.length) {
-      // New paragraphs / list items right after this block, on their own lines, indented like it.
-      const lineStart = text.lastIndexOf('\n', loc.startTag.startOffset - 1) + 1
-      const lead = text.slice(lineStart, loc.startTag.startOffset)
-      const indent = /^[ \t]*$/.test(lead) ? lead : ''
-      const html = edit.after
-        .map((b) => {
-          if (!NEW_BLOCK_TAGS.has(b.tag)) throw new HtmlEditError(t('Không thêm được đoạn <{0}>.', { 0: String(b.tag) }))
-          if (b.tag === 'ul' || b.tag === 'ol') return `\n${indent}<${b.tag}>${sanitizeList(b.html, `${indent}  `)}\n${indent}</${b.tag}>`
-          return `\n${indent}<${b.tag}>${sanitizeInline(b.html)}</${b.tag}>`
-        })
-        .join('')
-      out.push({ start: loc.endTag.endOffset, end: loc.endTag.endOffset, html })
+    if (typeof edit.html === 'string') {
+      const inner = sanitizeInline(edit.html)
+      ops.push({ start: loc.startTag.endOffset, end: loc.endTag.startOffset, render: () => inner })
     }
-    return out
-  }).flat()
-
-  // Replace from the end of the file backwards so earlier offsets stay valid.
-  ranges.sort((a, b) => b.start - a.start)
-  for (let i = 1; i < ranges.length; i++) {
-    if (ranges[i].end > ranges[i - 1].start) throw new HtmlEditError(t('Các đoạn sửa chồng lên nhau.'))
+    if (edit.after?.length) {
+      // New paragraphs / list items right after this element, on their own lines, indented like it.
+      const indent = indentOf(loc.startTag.startOffset)
+      const added = edit.after.map((b) => `\n${indent}${newBlock(b, indent)}`).join('')
+      ops.push({ start: loc.endTag.endOffset, end: loc.endTag.endOffset, render: () => added })
+    }
+    if (edit.order) {
+      // The children of this element in a new order (dragged), with new blocks among them.
+      const kids = node.childNodes.filter(isElement)
+      if (!kids.length) throw new HtmlEditError(t('Không sắp xếp lại được ở đây; hãy dùng Raw.'))
+      const range = (el: Element): { start: number; end: number } => {
+        const l = el.sourceCodeLocation
+        if (!l) throw new HtmlEditError(t('Không sắp xếp lại được ở đây; hãy dùng Raw.'))
+        return { start: l.startOffset, end: l.endOffset }
+      }
+      const spans = kids.map(range)
+      // Only spaces and line breaks between the elements, or moving them would move text too.
+      for (const n of node.childNodes) {
+        if (isElement(n)) continue
+        const l = n.sourceCodeLocation
+        if (!l || l.startOffset < spans[0].start || l.endOffset > spans[spans.length - 1].end) continue
+        if (n.nodeName !== '#text' || text.slice(l.startOffset, l.endOffset).trim()) {
+          throw new HtmlEditError(t('Giữa các khối có chữ hoặc chú thích nên không sắp xếp lại được ở đây; hãy dùng Raw.'))
+        }
+      }
+      const used = edit.order.filter((o): o is { i: number } => 'i' in o).map((o) => o.i)
+      if (used.length !== kids.length || new Set(used).size !== kids.length || used.some((i) => !Number.isInteger(i) || i < 0 || i >= kids.length)) {
+        throw new HtmlEditError(t('Thứ tự mới không khớp với file. File có thể vừa bị thay đổi.'))
+      }
+      const indent = indentOf(spans[0].start)
+      const sep = spans.length > 1 ? text.slice(spans[0].end, spans[1].start) : `\n${indent}`
+      const order = edit.order
+      ops.push({
+        start: spans[0].start,
+        end: spans[spans.length - 1].end,
+        render: () => order.map((o) => ('i' in o ? emit(spans[o.i].start, spans[o.i].end) : newBlock(o, indent))).join(sep)
+      })
+    }
   }
-  let out = text
-  for (const r of ranges) out = out.slice(0, r.start) + r.html + out.slice(r.end)
-  return bom + out
+
+  // Pieces either nest or are apart.
+  for (const a of ops) {
+    for (const b of ops) {
+      if (a === b) continue
+      const apart = a.end <= b.start || b.end <= a.start
+      const nested = (a.start <= b.start && b.end <= a.end) || (b.start <= a.start && a.end <= b.end)
+      if (!apart && !nested) throw new HtmlEditError(t('Các đoạn sửa chồng lên nhau.'))
+    }
+  }
+  ops.sort((a, b) => a.start - b.start || b.end - a.end)
+
+  /**
+   * The text of [from, to) with the changes inside it. Ops are sorted (an outer piece before the
+   * pieces inside it); a moved block renders its own range, so its inner edits come with it.
+   */
+  function emit(from: number, to: number): string {
+    let out = ''
+    let pos = from
+    for (const op of ops) {
+      if (op.start < pos || op.end > to) continue
+      out += text.slice(pos, op.start) + op.render()
+      pos = op.end
+    }
+    return out + text.slice(pos, to)
+  }
+  return bom + emit(0, text.length)
 }
 
 /**
@@ -159,6 +225,12 @@ export function editModeInjection(nonce: string): string {
   [data-sd-svg] { cursor: text; }
   [data-sd-svg]:hover { text-decoration: underline dotted rgba(180, 83, 31, .8); }
   [data-sd-svg][data-sd-dirty] { text-decoration: underline solid rgba(47, 93, 138, .9); }
+  .sd-handle { position: fixed; z-index: 2147483646; width: 18px; height: 22px; display: none; align-items: center; justify-content: center;
+    border-radius: 5px; background: rgba(180, 83, 31, .12); color: rgba(120, 60, 20, .85); font: 700 13px system-ui, sans-serif; letter-spacing: -2px;
+    cursor: grab; user-select: none; touch-action: none; }
+  .sd-handle:hover { background: rgba(180, 83, 31, .25); }
+  .sd-drop { position: fixed; z-index: 2147483646; height: 3px; border-radius: 2px; background: rgba(180, 83, 31, .9); pointer-events: none; display: none; }
+  [data-sd-dragging] { opacity: .45; }
   input[data-studydocs] { position: fixed; z-index: 2147483647; font: 14px system-ui, sans-serif; padding: 2px 6px;
     border: 2px solid rgba(180, 83, 31, .9); border-radius: 4px; background: #fff; color: #111; box-shadow: 0 4px 14px rgba(0, 0, 0, .25); }
 </style>
@@ -193,6 +265,16 @@ export function editModeInjection(nonce: string): string {
   }
   walk(document.body)
 
+  // Every element of the file and its position in it, taken now: blocks may move or be added
+  // later, and the file is changed by these first positions.
+  const orig = new WeakMap()
+  for (const el of document.documentElement.querySelectorAll('*')) {
+    if (el.closest('[data-studydocs]')) continue
+    orig.set(el, pathOf(el))
+  }
+  // Containers whose children were dragged into a new order.
+  const reordered = new Set()
+
   // Text in SVG diagrams (issue #26): <text>/<tspan> that hold only text. SVG can't be
   // contenteditable, so clicking one opens a small text box over it. Only the text between
   // its tags is written back; spaces/newlines around it in the file are kept.
@@ -225,7 +307,7 @@ export function editModeInjection(nonce: string): string {
   const added = []
   const kept = (el) => el.isConnected && (el.textContent.trim() !== '' || !!el.querySelector('img'))
   const dirtyCount = () =>
-    blocks.filter((b) => b.el.innerHTML !== b.original).length + svgTexts.filter((t) => t.el.textContent !== t.original).length + added.filter(kept).length
+    blocks.filter((b) => b.el.innerHTML !== b.original).length + svgTexts.filter((t) => t.el.textContent !== t.original).length + added.filter(kept).length + reordered.size
 
   let box = null
   const openBox = (t) => {
@@ -383,10 +465,11 @@ export function editModeInjection(nonce: string): string {
       if (!SPLITS.has(el.tagName) || !el.parentElement) return
       // Enter on an empty item of a new list: the list ends, a paragraph follows it.
       const list = el.parentElement
-      if (isNew && el.tagName === 'LI' && list.hasAttribute('data-sd-new-list') && !kept(el)) {
+      if (isNew && el.tagName === 'LI' && !kept(el)) {
         const p = document.createElement('p')
         list.after(p)
         el.remove()
+        if (list.hasAttribute('data-sd-new-list') && !list.children.length) list.remove()
         wire(p, true)
         added.push(p)
         placeCaret(p, false)
@@ -412,6 +495,111 @@ export function editModeInjection(nonce: string): string {
     el.addEventListener('input', changed)
   }
   for (const b of blocks) wire(b.el, false)
+
+  // ---------- dragging blocks into a new order ----------
+  // A handle shows at the left of the block under the mouse (a paragraph, heading, list item,
+  // list, table, code…). Dragging it moves the block among its neighbours (same container).
+  const handle = document.createElement('div')
+  handle.className = 'sd-handle'
+  handle.setAttribute('data-studydocs', '')
+  handle.title = ${JSON.stringify(t('Kéo để đổi chỗ'))}
+  handle.textContent = String.fromCharCode(8942, 8942)
+  const dropLine = document.createElement('div')
+  dropLine.className = 'sd-drop'
+  dropLine.setAttribute('data-studydocs', '')
+  document.body.append(handle, dropLine)
+  const MOVABLE_TAGS = new Set(['P','LI','H1','H2','H3','H4','H5','H6','UL','OL','TABLE','PRE','BLOCKQUOTE','FIGURE','IMG','HR','DL','DETAILS','SECTION','ARTICLE','DIV','ASIDE'])
+  const siblingsOf = (el) => [...el.parentElement.children].filter((c) => !c.closest('[data-studydocs]') && c.namespaceURI === HTML_NS)
+  /** The block to drag for an element under the mouse: itself or an ancestor whose siblings hold text blocks. */
+  const movableFrom = (target) => {
+    for (let el = target; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      if (el.closest('[data-studydocs]') || el.namespaceURI !== HTML_NS) return null
+      if (!MOVABLE_TAGS.has(el.tagName) || !el.parentElement || el.parentElement.hasAttribute('data-sd-block')) continue
+      if (el.parentElement !== document.body && !orig.has(el.parentElement)) continue
+      if (siblingsOf(el).length > 1) return el
+    }
+    return null
+  }
+  let hovered = null
+  let dragging = null
+  let dropBefore = undefined
+  const placeHandle = () => {
+    if (!hovered || dragging) return
+    const r = hovered.getBoundingClientRect()
+    handle.style.display = 'flex'
+    handle.style.left = Math.max(2, r.left - 24) + 'px'
+    handle.style.top = (r.top + Math.min(r.height, 28) / 2 - 11) + 'px'
+  }
+  document.addEventListener('mousemove', (e) => {
+    if (dragging || e.target === handle) return
+    const el = movableFrom(e.target)
+    if (el !== hovered) {
+      hovered = el
+      if (!el) handle.style.display = 'none'
+    }
+    placeHandle()
+  })
+  addEventListener('scroll', placeHandle, { passive: true })
+  handle.addEventListener('pointerdown', (e) => {
+    if (!hovered) return
+    e.preventDefault()
+    dragging = hovered
+    dragging.setAttribute('data-sd-dragging', '')
+    handle.setPointerCapture(e.pointerId)
+    handle.style.cursor = 'grabbing'
+  })
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return
+    // Where it would go: before the first neighbour whose middle is below the pointer.
+    const others = siblingsOf(dragging).filter((c) => c !== dragging)
+    dropBefore = null
+    for (const c of others) {
+      const r = c.getBoundingClientRect()
+      if (e.clientY < r.top + r.height / 2) {
+        dropBefore = c
+        break
+      }
+    }
+    const ref = dropBefore || others[others.length - 1]
+    if (!ref) return
+    const r = ref.getBoundingClientRect()
+    const pr = dragging.parentElement.getBoundingClientRect()
+    dropLine.style.display = 'block'
+    dropLine.style.left = Math.max(0, pr.left) + 'px'
+    dropLine.style.width = Math.max(40, pr.width) + 'px'
+    dropLine.style.top = (dropBefore ? r.top - 3 : r.bottom + 1) + 'px'
+  })
+  const endDrag = (apply) => {
+    if (!dragging) return
+    const el = dragging
+    dragging = null
+    el.removeAttribute('data-sd-dragging')
+    dropLine.style.display = 'none'
+    handle.style.cursor = 'grab'
+    if (apply && dropBefore !== undefined) {
+      const parent = el.parentElement
+      const before = el.nextElementSibling
+      if (dropBefore === null) {
+        // After the last neighbour: before our own nodes at the end of <body>, if any.
+        const ours = [...parent.children].find((c) => c.closest('[data-studydocs]'))
+        parent.insertBefore(el, ours || null)
+      } else if (dropBefore !== el) parent.insertBefore(el, dropBefore)
+      if (el.nextElementSibling !== before) {
+        reordered.add(parent)
+        changed()
+      }
+    }
+    dropBefore = undefined
+    placeHandle()
+  }
+  handle.addEventListener('pointerup', () => endDrag(true))
+  handle.addEventListener('pointercancel', () => endDrag(false))
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && dragging) {
+      e.stopPropagation()
+      endDrag(false)
+    }
+  }, true)
   // Links inside editable text should not navigate while editing.
   document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a')) e.preventDefault() }, true)
   // Ctrl+S inside the page saves too.
@@ -446,12 +634,14 @@ export function editModeInjection(nonce: string): string {
       const el = restore()
       if (!el) return
       const inNewList = el.tagName === 'LI' && el.parentElement.hasAttribute('data-sd-new-list')
-      if (!el.hasAttribute('data-sd-new') || (el.tagName === 'LI' && !inNewList)) {
+      if (!el.hasAttribute('data-sd-new')) {
         send({ type: 'block-refused' })
         return
       }
       const tag = e.data.tag
       const toList = tag === 'ul' || tag === 'ol'
+      // An item added to one of the page's lists already is a list item.
+      if (el.tagName === 'LI' && !inNewList && toList) return
       if (inNewList && toList) {
         // Bullets <-> numbers: the whole new list changes.
         const old = el.parentElement
@@ -478,12 +668,12 @@ export function editModeInjection(nonce: string): string {
         while (el.firstChild) next.appendChild(el.firstChild)
         wire(next, true)
       }
-      if (inNewList) {
-        // One item becomes a paragraph or heading: it leaves the list, right after it.
+      if (el.tagName === 'LI') {
+        // An item becomes a paragraph or heading: it leaves the list, right after it.
         const list = el.parentElement
         list.after(next)
         el.remove()
-        if (!list.children.length) list.remove()
+        if (list.hasAttribute('data-sd-new-list') && !list.children.length) list.remove()
       } else {
         el.replaceWith(next)
       }
@@ -526,20 +716,46 @@ export function editModeInjection(nonce: string): string {
       const edits = blocks.filter((b) => b.el.innerHTML !== b.original).map((b) => ({ path: b.path, tag: b.tag, html: htmlOf(b) }))
       // New paragraphs, headings and lists belong after the nearest block of the file before them.
       const isNewNode = (n) => n.hasAttribute('data-sd-new') || n.hasAttribute('data-sd-new-list')
-      const tops = [...new Set(added)].filter((el) => el.isConnected && !el.parentElement.hasAttribute('data-sd-new-list'))
+      /** A block added while editing, as { tag, html }; null when left empty. */
+      const newItem = (el) => {
+        if (el.hasAttribute('data-sd-new-list')) {
+          const items = [...el.children].filter((li) => kept(li))
+          return items.length ? { tag: el.tagName.toLowerCase(), html: items.map((li) => '<li>' + fixSpaces(li.innerHTML) + '</li>').join('') } : null
+        }
+        return kept(el) ? { tag: el.tagName.toLowerCase(), html: fixSpaces(el.innerHTML) } : null
+      }
+      /** The edit of an element of the file (by its first position), made when needed. */
+      const editOf = (el) => {
+        const path = orig.get(el)
+        let edit = edits.find((x) => x.path.join() === path.join())
+        if (!edit) edits.push((edit = { path, tag: el.tagName.toLowerCase() }))
+        return edit
+      }
+      // Containers in a new order: all their children, in order (new blocks included).
+      for (const parent of reordered) {
+        if (!parent.isConnected || !orig.has(parent)) continue
+        const order = []
+        for (const child of parent.children) {
+          if (child.closest('[data-studydocs]')) continue
+          if (orig.has(child)) order.push({ i: orig.get(child)[orig.get(child).length - 1] })
+          else {
+            const item = newItem(child)
+            if (item) order.push(item)
+          }
+        }
+        editOf(parent).order = order
+      }
+      // Other new blocks go right after the nearest element of the file before them.
+      const tops = [...new Set(added)].filter((el) => el.isConnected && !el.parentElement.hasAttribute('data-sd-new-list') && !reordered.has(el.parentElement))
       tops.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       for (const el of tops) {
-        const list = el.hasAttribute('data-sd-new-list')
-        const items = list ? [...el.children].filter((li) => kept(li)) : []
-        if (list ? !items.length : !kept(el)) continue
+        const item = newItem(el)
+        if (!item) continue
         let anchor = el.previousElementSibling
-        while (anchor && isNewNode(anchor)) anchor = anchor.previousElementSibling
-        const b = blocks.find((x) => x.el === anchor)
-        if (!b) continue
-        let edit = edits.find((x) => x.path === b.path)
-        if (!edit) edits.push((edit = { path: b.path, tag: b.tag, html: b.el.innerHTML }))
-        const html = list ? items.map((li) => '<li>' + fixSpaces(li.innerHTML) + '</li>').join('') : fixSpaces(el.innerHTML)
-        ;(edit.after = edit.after || []).push({ tag: el.tagName.toLowerCase(), html })
+        while (anchor && (isNewNode(anchor) || anchor.closest('[data-studydocs]'))) anchor = anchor.previousElementSibling
+        if (!anchor || !orig.has(anchor)) continue
+        const edit = editOf(anchor)
+        ;(edit.after = edit.after || []).push(item)
       }
       for (const t of svgTexts) {
         if (t.el.textContent !== t.original) edits.push({ path: t.path, tag: t.tag, html: escapeText(t.el.textContent) })

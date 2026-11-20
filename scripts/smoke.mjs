@@ -1703,6 +1703,42 @@ try {
     `new paragraphs can become a heading or a list, written after their block (${JSON.stringify(withList.slice(withList.indexOf('<p>Đoạn'), withList.indexOf('</body>')))}${withList.includes('<h2>Mục lớn') ? '' : ` page: ${pageBeforeSave}`})`
   )
 
+  step('34b. HTML: a new item in a list already in the file becomes a paragraph; dragging an item reorders the list')
+  await page.click('.doc-controls >> text=Sửa chữ')
+  await page.waitForSelector('.html-format')
+  let dragFrame = null
+  for (let i = 0; i < 100 && !dragFrame; i++) {
+    dragFrame = page.frames().find((fr) => fr.url().includes('?edit=1')) ?? null
+    if (!dragFrame) await page.waitForTimeout(100)
+  }
+  await dragFrame.waitForSelector('li[data-sd-block] >> text=Ý hai')
+  await dragFrame.click('li[data-sd-block] >> text=Ý hai')
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await page.selectOption('.html-format .block-type', 'p')
+  await dragFrame.waitForSelector('ul + p[data-sd-new]')
+  await page.keyboard.type('Sau danh sách')
+  const dragBox = await page.locator('iframe.html-frame').boundingBox()
+  const itemTwo = await dragFrame.locator('li[data-sd-block] >> text=Ý hai').boundingBox()
+  const itemOne = await dragFrame.locator('li[data-sd-block] >> text=Ý một').boundingBox()
+  await page.mouse.move(itemTwo.x + 20, itemTwo.y + itemTwo.height / 2)
+  await page.waitForTimeout(150)
+  const grip = await dragFrame.evaluate(() => {
+    const r = document.querySelector('.sd-handle').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await page.mouse.move(dragBox.x + grip.x, dragBox.y + grip.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) await page.mouse.move(dragBox.x + grip.x, dragBox.y + grip.y - ((itemTwo.y - itemOne.y + 4) * i) / 8)
+  await page.mouse.up()
+  await page.click('.edit-bar >> text=Lưu (Ctrl+S)')
+  await page.waitForSelector('.edit-bar', { state: 'detached', timeout: 10000 })
+  const dragged = read('backend/Ghi chép HTML.html')
+  check(
+    dragged.includes('<ul>\n  <li>Ý hai</li>\n  <li>Ý một</li>\n</ul>\n<p>Sau danh sách</p>\n<p>Kết thúc</p>'),
+    `a new item at the end of an existing list becomes a paragraph after it; a dragged item moves in the file (${JSON.stringify(dragged.slice(dragged.indexOf('<ul>'), dragged.indexOf('</body>')))})`
+  )
+
   step('35. Empty folders show in the tree; notes move to another workspace folder with their tags')
   await menuOn('.root-row:has-text("library") .row.folder.root', 'Thư mục mới…')
   await nameDialog(['Trống'])

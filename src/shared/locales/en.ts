@@ -316,6 +316,11 @@ export const EN: Record<string, string> = {
   'Đoạn văn đã sửa không khớp với file (<{0}> ≠ <{1}>). Hãy sửa trong raw.': 'The edited paragraph doesn\'t match the file (<{0}> ≠ <{1}>). Edit it in Raw.',
   'Thẻ <{0}> trong file không có thẻ đóng nên không sửa trực tiếp được. Hãy sửa đoạn này trong raw.': 'The <{0}> tag in the file has no closing tag, so it can\'t be edited in place. Edit this part in Raw.',
   'Các đoạn sửa chồng lên nhau.': 'The edits overlap.',
+  'Không sắp xếp lại được ở đây; hãy dùng Raw.': "Blocks can't be reordered here; use Raw.",
+  'Giữa các khối có chữ hoặc chú thích nên không sắp xếp lại được ở đây; hãy dùng Raw.':
+    "There is text or a comment between these blocks, so they can't be reordered here; use Raw.",
+  'Thứ tự mới không khớp với file. File có thể vừa bị thay đổi.': "The new order doesn't match the file. It may have just been changed.",
+  'Kéo để đổi chỗ': 'Drag to move',
   'Không khớp được đoạn văn với file Markdown. Hãy sửa đoạn này trong raw.': 'This paragraph couldn\'t be matched with the Markdown file. Edit it in Raw.',
   'Thay đổi này làm đổi định dạng Markdown nên chưa lưu. Hãy sửa đoạn đó trong Raw.': 'This change would alter the Markdown formatting, so it wasn\'t saved. Edit that part in Raw.',
   // ---------- calendar ----------

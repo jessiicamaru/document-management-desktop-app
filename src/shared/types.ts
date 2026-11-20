@@ -179,10 +179,15 @@ export interface HtmlBlockEdit {
   path: number[]
   /** Lower-case tag name, checked before writing so a wrong match is never saved. */
   tag: string
-  html: string
-  /** New paragraphs or list items typed after this block (Enter), in order. */
-  after?: { tag: 'p' | 'li' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol'; html: string }[]
+  /** New inner HTML of a text block; left out when only blocks are added after it or reordered in it. */
+  html?: string
+  /** New paragraphs or list items typed after this element (Enter), in order. */
+  after?: { tag: NewBlockTag; html: string }[]
+  /** Its children in a new order (dragged): their indexes in the file, and blocks typed while editing. */
+  order?: ({ i: number } | { tag: NewBlockTag; html: string })[]
 }
+
+export type NewBlockTag = 'p' | 'li' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol'
 
 /** Auto-update progress (see src/main/updater.ts). */
 export interface UpdateStatus {

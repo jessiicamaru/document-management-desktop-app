@@ -1979,8 +1979,10 @@ if (!app.requestSingleInstanceLock()) {
     await loadOcrIndex()
     calendar = await CalendarStore.open(path.join(app.getPath('userData'), 'data'))
     await calendar.loadSubscriptions()
-    // Windows shows notifications under this name (the installer uses the same id).
-    app.setAppUserModelId('local.studydocs.app')
+    // Windows shows notifications and the taskbar button under this id (the installer uses the
+    // same one). A dev or test run (node_modules\electron) gets its own, or Windows would give
+    // the installed app the name and icon "Electron".
+    app.setAppUserModelId(app.isPackaged ? 'local.studydocs.app' : 'local.studydocs.app.dev')
     search = new SearchService(path.join(app.getPath('userData'), 'text-cache'), (status) =>
       win?.webContents.send('search:status', status)
     )
