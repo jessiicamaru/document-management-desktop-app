@@ -1,54 +1,111 @@
 // A reading style for HTML pages that have none of their own (notes made in the app, pages
-// saved as bare HTML): readable width and font, headings, tables with borders, code, quotes,
-// in the app's light or dark colours. Only shown in the app; the file is not changed.
+// saved as bare HTML): readable width and font, headings with a touch of colour, tables as
+// cards, code, quotes, in the app's accent colour and light or dark. Only shown in the app;
+// the file is not changed.
 //
-// Pages with a <style> or a stylesheet <link> keep their own look. Every rule is wrapped in
+// Pages with a <style> or a stylesheet <link> keep their own look. Every selector is wrapped in
 // :where() so it weighs nothing against a style="" attribute or anything else on the page.
 
 const HAS_STYLE = /<style[\s>]|<link\b[^>]*\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i
+const DEFAULT_ACCENT = '#b4531f'
 
-export function plainPageStyle(source: string): string {
+export function plainPageStyle(source: string, accent = DEFAULT_ACCENT): string {
   if (HAS_STYLE.test(source)) return ''
+  const a = /^#[0-9a-f]{3,8}$/i.test(accent) ? accent : DEFAULT_ACCENT
   return `
 <style data-studydocs>
   :where(html) { color-scheme: light dark; }
   :where(body) {
-    --sd-ink: #1f2328; --sd-soft: #5a6067; --sd-bg: #fffdf9; --sd-line: #e4ddd0; --sd-head: #f4eee4;
-    --sd-zebra: #fbf8f2; --sd-code: #f3eee5; --sd-accent: #b4531f; --sd-quote: #faf5ec; --sd-mark: #f7dfa8;
-    max-width: 820px; margin: 0 auto; padding: 36px 32px 110px;
-    font: 16px/1.72 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
-    color: var(--sd-ink); background: var(--sd-bg); -webkit-font-smoothing: antialiased;
+    --sd-accent-base: ${a};
+    --sd-accent: var(--sd-accent-base);
+    --sd-accent-2: color-mix(in srgb, var(--sd-accent-base) 55%, #7b4fd0);
+    --sd-ink: #1d2127; --sd-soft: #59606a; --sd-bg: #fffdf9; --sd-line: #e8e1d5;
+    --sd-tint: color-mix(in srgb, var(--sd-accent) 9%, transparent);
+    --sd-tint-2: color-mix(in srgb, var(--sd-accent) 16%, transparent);
+    --sd-card: #ffffff; --sd-shadow: 0 1px 2px rgba(40, 30, 20, .05), 0 6px 22px rgba(40, 30, 20, .07);
+    --sd-code: color-mix(in srgb, var(--sd-accent) 8%, #f5f1ea); --sd-mark: #f9dfa0;
+    max-width: 840px; margin: 0 auto; padding: 44px 36px 120px;
+    font: 16px/1.75 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+    color: var(--sd-ink); -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(900px 340px at 100% -60px, color-mix(in srgb, var(--sd-accent) 11%, transparent), transparent 70%),
+      radial-gradient(700px 300px at -10% -80px, color-mix(in srgb, var(--sd-accent-2) 8%, transparent), transparent 70%),
+      var(--sd-bg);
+    background-repeat: no-repeat;
   }
   @media (prefers-color-scheme: dark) {
     :where(body) {
-      --sd-ink: #e8e6e1; --sd-soft: #a7abb1; --sd-bg: #24272c; --sd-line: #3a3e45; --sd-head: #2d3137;
-      --sd-zebra: #282b31; --sd-code: #2f3238; --sd-accent: #e39a6a; --sd-quote: #2a2d33; --sd-mark: #6b5420;
+      --sd-accent: color-mix(in srgb, var(--sd-accent-base) 62%, white);
+      --sd-accent-2: color-mix(in srgb, var(--sd-accent-base) 45%, #b39cff);
+      --sd-ink: #e9e7e2; --sd-soft: #a8adb4; --sd-bg: #23262b; --sd-line: #393d44;
+      --sd-tint: color-mix(in srgb, var(--sd-accent) 12%, transparent);
+      --sd-tint-2: color-mix(in srgb, var(--sd-accent) 22%, transparent);
+      --sd-card: #282b31; --sd-shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 26px rgba(0, 0, 0, .28);
+      --sd-code: color-mix(in srgb, var(--sd-accent) 12%, #2c2f35); --sd-mark: #6b5420;
     }
   }
-  :where(h1, h2, h3, h4, h5, h6) { line-height: 1.28; margin: 1.6em 0 .5em; font-weight: 700; letter-spacing: -.01em; }
-  :where(h1) { font-size: 2.05em; margin-top: .2em; }
-  :where(h2) { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--sd-line); }
-  :where(h3) { font-size: 1.22em; }
-  :where(h4) { font-size: 1.05em; }
-  :where(p, ul, ol, dl, table, pre, blockquote, figure) { margin: .75em 0; }
-  :where(ul, ol) { padding-left: 1.6em; }
-  :where(li) { margin: .2em 0; }
-  :where(li::marker) { color: var(--sd-accent); }
-  :where(a) { color: var(--sd-accent); text-underline-offset: 2px; }
+  :where(::selection) { background: var(--sd-tint-2); }
+  :where(html)::-webkit-scrollbar { width: 10px; height: 10px; }
+  :where(html)::-webkit-scrollbar-track { background: transparent; }
+  :where(html)::-webkit-scrollbar-button { display: none; }
+  :where(html)::-webkit-scrollbar-thumb { background-color: rgba(128, 128, 128, .35); border: 3px solid transparent; border-radius: 999px; background-clip: padding-box; }
+  :where(html)::-webkit-scrollbar-thumb:hover { background-color: rgba(128, 128, 128, .6); border-width: 2px; }
+
+  :where(h1, h2, h3, h4, h5, h6) { line-height: 1.25; margin: 1.7em 0 .55em; font-weight: 750; letter-spacing: -.015em; }
+  :where(h1) {
+    font-size: 2.3em; margin-top: .1em; padding-bottom: .35em;
+    background: linear-gradient(120deg, var(--sd-ink) 30%, var(--sd-accent) 75%, var(--sd-accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    border-bottom: 3px solid transparent;
+    border-image: linear-gradient(90deg, var(--sd-accent), var(--sd-accent-2) 30%, transparent 60%) 1;
+  }
+  :where(h2) { font-size: 1.5em; padding-left: .65em; border-left: 4px solid var(--sd-accent); border-radius: 2px; }
+  :where(h3) { font-size: 1.22em; color: var(--sd-accent); }
+  :where(h4) { font-size: 1.05em; text-transform: uppercase; letter-spacing: .06em; color: var(--sd-soft); }
+
+  :where(p, ul, ol, dl, table, pre, blockquote, figure, details) { margin: .85em 0; }
+  :where(p > b:only-child, p > strong:only-child) {
+    display: inline-block; padding: .15em .7em; border-radius: 8px;
+    background: var(--sd-tint); color: color-mix(in srgb, var(--sd-accent) 70%, var(--sd-ink));
+  }
   :where(b, strong) { font-weight: 650; }
-  :where(code, kbd, samp) { font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace; font-size: .88em; }
-  :where(code) { background: var(--sd-code); padding: .12em .38em; border-radius: 5px; }
-  :where(pre) { background: var(--sd-code); padding: 14px 16px; border-radius: 10px; overflow-x: auto; line-height: 1.55; }
-  :where(pre code) { background: none; padding: 0; }
-  :where(blockquote) { margin-left: 0; padding: .4em 1.1em; color: var(--sd-soft); background: var(--sd-quote);
-    border-left: 3px solid var(--sd-accent); border-radius: 0 8px 8px 0; }
-  :where(table) { border-collapse: collapse; border: 1px solid var(--sd-line); border-radius: 8px; font-size: .95em; }
-  :where(th, td) { border: 1px solid var(--sd-line); padding: 7px 13px; text-align: left; vertical-align: top; }
-  :where(th) { background: var(--sd-head); font-weight: 650; }
-  :where(tbody tr:nth-child(even) td) { background: var(--sd-zebra); }
-  :where(img, video) { max-width: 100%; height: auto; border-radius: 8px; }
-  :where(hr) { border: none; border-top: 1px solid var(--sd-line); margin: 2.2em 0; }
-  :where(mark) { background: var(--sd-mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+  :where(ul, ol) { padding-left: 1.5em; }
+  :where(li) { margin: .3em 0; padding-left: .2em; }
+  :where(li)::marker { color: var(--sd-accent); font-weight: 700; }
+  :where(a) { color: var(--sd-accent); text-decoration: none; background: linear-gradient(currentColor, currentColor) 0 100% / 100% 1px no-repeat; transition: background-size .2s; }
+  :where(a:hover) { background-size: 100% 2px; }
+
+  :where(code, kbd, samp) { font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace; font-size: .87em; }
+  :where(code) { background: var(--sd-code); color: color-mix(in srgb, var(--sd-accent) 65%, var(--sd-ink)); padding: .15em .42em; border-radius: 6px; }
+  :where(kbd) { padding: .1em .45em; border: 1px solid var(--sd-line); border-bottom-width: 2px; border-radius: 6px; background: var(--sd-card); }
+  :where(pre) { background: var(--sd-code); padding: 16px 18px; border-radius: 12px; overflow-x: auto; line-height: 1.55;
+    border: 1px solid var(--sd-line); box-shadow: inset 3px 0 0 var(--sd-accent); }
+  :where(pre code) { background: none; padding: 0; color: inherit; }
+
+  :where(blockquote) { margin-left: 0; padding: .7em 1.2em; color: var(--sd-soft);
+    background: linear-gradient(90deg, var(--sd-tint-2), var(--sd-tint) 40%, transparent);
+    border-left: 4px solid var(--sd-accent); border-radius: 0 12px 12px 0; }
+
+  :where(table) { border-collapse: separate; border-spacing: 0; min-width: min(100%, 360px); font-size: .95em;
+    background: var(--sd-card); border: 1px solid var(--sd-line); border-radius: 12px; overflow: hidden; box-shadow: var(--sd-shadow); }
+  :where(th, td) { padding: 9px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--sd-line); }
+  :where(th + th, td + td, th + td, td + th) { border-left: 1px solid color-mix(in srgb, var(--sd-line) 60%, transparent); }
+  :where(tr:last-child > td, tr:last-child > th) { border-bottom: none; }
+  :where(thead th, tr:first-child > th) {
+    background: linear-gradient(180deg, var(--sd-tint-2), var(--sd-tint));
+    color: color-mix(in srgb, var(--sd-accent) 75%, var(--sd-ink)); font-weight: 700;
+    font-size: .88em; text-transform: uppercase; letter-spacing: .05em;
+  }
+  :where(tbody tr:nth-child(even) > td) { background: color-mix(in srgb, var(--sd-tint) 45%, transparent); }
+  :where(tbody tr) { transition: background-color .15s; }
+  :where(tbody tr:hover > td) { background: var(--sd-tint); }
+  :where(td:first-child) { font-weight: 600; }
+
+  :where(img, video) { max-width: 100%; height: auto; border-radius: 12px; box-shadow: var(--sd-shadow); }
+  :where(hr) { border: none; height: 2px; margin: 2.4em 0; background: linear-gradient(90deg, transparent, var(--sd-accent), var(--sd-accent-2), transparent); opacity: .5; }
+  :where(mark) { background: var(--sd-mark); color: inherit; border-radius: 4px; padding: 0 3px; }
   :where(figcaption) { color: var(--sd-soft); font-size: .9em; text-align: center; }
+  :where(details) { padding: .5em 1em; border: 1px solid var(--sd-line); border-radius: 10px; background: var(--sd-card); }
+  :where(summary) { cursor: pointer; font-weight: 600; color: var(--sd-accent); }
 </style>`
 }

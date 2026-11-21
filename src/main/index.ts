@@ -1938,7 +1938,7 @@ if (!app.requestSingleInstanceLock()) {
       if (new URL(request.url).searchParams.get('edit') === '1' && kindOf(abs) === 'html') {
         const nonce = randomBytes(16).toString('base64')
         const source = await fs.readFile(abs, 'utf8')
-        return new Response(source + plainPageStyle(source) + editModeInjection(nonce), {
+        return new Response(source + plainPageStyle(source, (await loadUiSettings()).accent) + editModeInjection(nonce), {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Content-Security-Policy': `script-src 'nonce-${nonce}'; object-src 'none'`
@@ -1963,7 +1963,7 @@ if (!app.requestSingleInstanceLock()) {
         }
         // Reading mode: add the helper for outline, highlights, reading position and shortcuts.
         // A page without a style of its own gets a reading style (not written to the file).
-        return html(source + plainPageStyle(source) + viewModeInjection())
+        return html(source + plainPageStyle(source, (await loadUiSettings()).accent) + viewModeInjection())
       }
       return net.fetch(pathToFileURL(abs).toString())
     })

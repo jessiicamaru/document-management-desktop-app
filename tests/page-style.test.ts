@@ -22,3 +22,10 @@ describe('reading style for plain HTML pages', () => {
     for (const s of selectors) expect(s.startsWith(':where(')).toBe(true)
   })
 })
+
+describe('reading style colours', () => {
+  it('uses the accent colour of the app, and only a real colour', () => {
+    expect(plainPageStyle('<p>x</p>', '#2f5d8a')).toContain('--sd-accent-base: #2f5d8a;')
+    expect(plainPageStyle('<p>x</p>', 'red;}</style><script>')).toContain('--sd-accent-base: #b4531f;')
+  })
+})
