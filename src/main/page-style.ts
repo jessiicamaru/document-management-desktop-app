@@ -1,19 +1,45 @@
-// A reading style for HTML pages that have none of their own (notes made in the app, pages
-// saved as bare HTML): readable width and font, headings with a touch of colour, tables as
-// cards, code, quotes, in the app's accent colour and light or dark. Only shown in the app;
-// the file is not changed.
+// The look of HTML notes made in the app, and of bare HTML pages without CSS of their own:
+// readable width and font, headings with a touch of colour, tables as cards, code, quotes, in
+// the app's accent colour and light or dark.
 //
-// Pages with a <style> or a stylesheet <link> keep their own look. Every selector is wrapped in
-// :where() so it weighs nothing against a style="" attribute or anything else on the page.
+// - A new HTML note carries this style in the file (<style data-studydocs-note>), so it also
+//   looks right outside the app. In the app that block is switched off and the current style,
+//   in the chosen accent colour, is shown instead, so notes follow later changes of the style.
+//   Notes made with the first template (its plainer style) get it too.
+// - Pages with a style of their own (imported pages) keep their own look, untouched.
+// - Nothing is written to the file when a page is shown. Every selector is wrapped in :where()
+//   so it weighs nothing against a style="" attribute or anything else on the page.
 
 const HAS_STYLE = /<style[\s>]|<link\b[^>]*\brel\s*=\s*["']?[^"'>]*\bstylesheet\b/i
 const DEFAULT_ACCENT = '#b4531f'
 
-export function plainPageStyle(source: string, accent = DEFAULT_ACCENT): string {
-  if (HAS_STYLE.test(source)) return ''
+/** The app's style block in a note made with New note. */
+const NOTE_STYLE = /<style data-studydocs-note>([\s\S]*?)<\/style>/g
+/** The style block of notes made with the first template (v0.12 to v0.15), known by its first rule. */
+const OLD_NOTE_STYLE = /<style>(\s*body \{ max-width: 760px; margin: 40px auto; padding: 0 20px; font: 16px\/1\.65 "Segoe UI", system-ui, sans-serif;[\s\S]*?)<\/style>/g
+const SWITCHED_OFF = /<style data-studydocs-note media="not all">[\s\S]*?<\/style>/g
+
+/** What a new HTML note carries in its <head>. */
+export function noteStyleBlock(): string {
+  return `<style data-studydocs-note>${readingCss()}</style>`
+}
+
+/**
+ * The page as shown in the app: an app note's own style block switched off (media="not all",
+ * so the elements of the page keep their places) and the current style added; a page without
+ * any style gets it too; a page with a style of its own is returned as it is.
+ */
+export function withReadingStyle(source: string, accent = DEFAULT_ACCENT): string {
+  const off = (_m: string, body: string): string => `<style data-studydocs-note media="not all">${body}</style>`
+  const shown = source.replace(NOTE_STYLE, off).replace(OLD_NOTE_STYLE, off)
+  if (HAS_STYLE.test(shown.replace(SWITCHED_OFF, ''))) return source
+  return `${shown}\n<style data-studydocs>${readingCss(accent)}</style>`
+}
+
+/** The rules of the style, in an accent colour. */
+export function readingCss(accent = DEFAULT_ACCENT): string {
   const a = /^#[0-9a-f]{3,8}$/i.test(accent) ? accent : DEFAULT_ACCENT
   return `
-<style data-studydocs>
   :where(html) { color-scheme: light dark; }
   :where(body) {
     --sd-accent-base: ${a};
@@ -64,10 +90,6 @@ export function plainPageStyle(source: string, accent = DEFAULT_ACCENT): string 
   :where(h4) { font-size: 1.05em; text-transform: uppercase; letter-spacing: .06em; color: var(--sd-soft); }
 
   :where(p, ul, ol, dl, table, pre, blockquote, figure, details) { margin: .85em 0; }
-  :where(p > b:only-child, p > strong:only-child) {
-    display: inline-block; padding: .15em .7em; border-radius: 8px;
-    background: var(--sd-tint); color: color-mix(in srgb, var(--sd-accent) 70%, var(--sd-ink));
-  }
   :where(b, strong) { font-weight: 650; }
   :where(ul, ol) { padding-left: 1.5em; }
   :where(li) { margin: .3em 0; padding-left: .2em; }
@@ -107,5 +129,5 @@ export function plainPageStyle(source: string, accent = DEFAULT_ACCENT): string 
   :where(figcaption) { color: var(--sd-soft); font-size: .9em; text-align: center; }
   :where(details) { padding: .5em 1em; border: 1px solid var(--sd-line); border-radius: 10px; background: var(--sd-card); }
   :where(summary) { cursor: pointer; font-weight: 600; color: var(--sd-accent); }
-</style>`
+`
 }

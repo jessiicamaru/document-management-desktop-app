@@ -2,6 +2,7 @@
 // No Electron imports here, so this file is unit tested directly.
 
 import { t } from '../shared/i18n'
+import { noteStyleBlock } from './page-style'
 
 export type NoteKind = 'md' | 'html'
 
@@ -36,7 +37,7 @@ export function renamedFileName(input: string, current: string): string {
 
 const escapeHtml = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
-/** What a new note starts with: its title, and for HTML a small readable page. */
+/** What a new note starts with: its title, and for HTML a page with the app's note style (page-style.ts). */
 export function noteTemplate(fileName: string, kind: NoteKind): string {
   const title = fileName.replace(/\.(md|markdown|html?)$/i, '')
   if (kind === 'md') return `# ${title}\n\n`
@@ -46,19 +47,7 @@ export function noteTemplate(fileName: string, kind: NoteKind): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<style>
-  body { max-width: 760px; margin: 40px auto; padding: 0 20px; font: 16px/1.65 "Segoe UI", system-ui, sans-serif; color: #1f2328; background: #fffdf9; }
-  h1, h2, h3 { line-height: 1.25; }
-  img { max-width: 100%; height: auto; }
-  code { font-family: Consolas, monospace; background: #f1ece3; padding: 1px 4px; border-radius: 4px; }
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #ddd5c6; padding: 6px 10px; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #24272c; color: #e8e6e1; }
-    code { background: #2c2f35; }
-    th, td { border-color: #3a3d43; }
-  }
-</style>
+${noteStyleBlock()}
 </head>
 <body>
 <h1>${escapeHtml(title)}</h1>
