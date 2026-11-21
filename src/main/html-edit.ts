@@ -78,18 +78,48 @@ export function sanitizeList(html: string, indent: string): string {
   return items.map((li) => `\n${indent}<li>${sanitizeInline(serialize(li))}</li>`).join('')
 }
 
+/** What a block of the file already had: kept as it was when the block is edited. */
+interface Original {
+  comments: Set<string>
+  /** tag, attribute and value of every attribute in it. */
+  attrs: Set<string>
+  /** Elements left empty on purpose (an icon <i class="…"></i>): tag and attributes. */
+  empties: Set<string>
+}
+const attrKey = (tag: string, name: string, value: string): string => `${tag}\u0000${name}\u0000${value}`
+const emptyKey = (el: Element): string => [el.tagName, ...el.attrs.map((a) => `${a.name}=${a.value}`)].join('\u0000')
+
+function originalOf(html: string): Original {
+  const o: Original = { comments: new Set(), attrs: new Set(), empties: new Set() }
+  const walk = (parent: ParentNode): void => {
+    for (const node of parent.childNodes as ChildNode[]) {
+      if (node.nodeName === '#comment' && 'data' in node) o.comments.add(node.data)
+      if (!isElement(node)) continue
+      for (const a of node.attrs) o.attrs.add(attrKey(node.tagName, a.name, a.value))
+      if (node.childNodes.length === 0) o.empties.add(emptyKey(node))
+      walk(node)
+    }
+  }
+  walk(parseFragment(html))
+  return o
+}
+
 /**
  * The inner HTML of an edited block, made safe to write: inline tags only (others are unwrapped,
  * scripts and styles dropped), no on…="" handlers, no javascript: links. Other attributes
  * (class, style, title…) are kept, so a block's own look is not lost by editing it.
+ *
+ * `original` is the block's inner HTML in the file. What was already there (comments, handlers,
+ * data: links, empty icons) is the file's own and is kept; only what is new is cleaned.
  */
-export function sanitizeInline(html: string): string {
+export function sanitizeInline(html: string, original?: string): string {
+  const had = original ? originalOf(original) : null
   const fragment = parseFragment(html)
   const clean = (parent: ParentNode): void => {
     for (let i = 0; i < parent.childNodes.length; i++) {
       const node = parent.childNodes[i] as ChildNode
       if (node.nodeName === '#comment') {
-        parent.childNodes.splice(i--, 1)
+        if (!(had && 'data' in node && had.comments.has(node.data))) parent.childNodes.splice(i--, 1)
         continue
       }
       if (!isElement(node)) continue
@@ -107,6 +137,7 @@ export function sanitizeInline(html: string): string {
         continue
       }
       node.attrs = node.attrs.filter((a) => {
+        if (had?.attrs.has(attrKey(tag, a.name, a.value))) return true
         const name = a.name.toLowerCase()
         if (name.startsWith('on')) return false
         if (name === 'href' || name === 'src' || name === 'xlink:href' || name === 'formaction') {
@@ -118,7 +149,7 @@ export function sanitizeInline(html: string): string {
       })
       clean(node)
       // Formatting left empty (bold switched off, then Enter) is not written.
-      if (node.childNodes.length === 0 && !['br', 'img', 'wbr'].includes(tag) && !node.attrs.some((a) => a.name === 'id' || a.name === 'name')) {
+      if (node.childNodes.length === 0 && !['br', 'img', 'wbr'].includes(tag) && !node.attrs.some((a) => a.name === 'id' || a.name === 'name') && !had?.empties.has(emptyKey(node))) {
         parent.childNodes.splice(i--, 1)
       }
     }
@@ -200,7 +231,7 @@ export function applyHtmlEdits(source: string, edits: HtmlBlockEdit[]): string {
       ops.push({ start: loc.startTag.startOffset, end: loc.startTag.startOffset, render: () => added })
     }
     if (typeof edit.html === 'string' && loc?.startTag && loc.endTag) {
-      const inner = sanitizeInline(edit.html)
+      const inner = sanitizeInline(edit.html, text.slice(loc.startTag.endOffset, loc.endTag.startOffset))
       ops.push({ start: loc.startTag.endOffset, end: loc.endTag.startOffset, render: () => inner })
     }
     if (edit.after?.length && loc?.startTag && loc.endTag) {

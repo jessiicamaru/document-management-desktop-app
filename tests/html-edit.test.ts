@@ -195,3 +195,32 @@ describe('tables while editing', () => {
   })
 })
 
+
+describe('editing a block keeps what the file already had in it', () => {
+  const kept = `<!doctype html>
+<html>
+<body>
+  <p>Tải <a href="data:text/plain;base64,SGk=" download="a.txt" onclick="track()">file</a> <!-- ghi chú --> và <i class="icon"></i> xong.</p>
+</body>
+</html>
+`
+  // body = [1], p = [1,0]
+  it('comments, handlers, data: links and empty icons that were there stay', () => {
+    const html = 'Tải xuống <a href="data:text/plain;base64,SGk=" download="a.txt" onclick="track()">file</a> <!-- ghi chú --> và <i class="icon"></i> xong.'
+    const out = applyHtmlEdits(kept, [{ path: [1, 0], tag: 'p', html }])
+    expect(out).toBe(kept.replace('Tải <a', 'Tải xuống <a'))
+  })
+
+  it('the same things typed in new are still cleaned', () => {
+    const html = 'Tải <a href="data:text/plain;base64,SGk=" download="a.txt" onclick="track()">file</a> <!-- ghi chú --> và <i class="icon"></i> xong. <b onclick="evil()">Mới</b><!-- lạ --><a href="data:text/html,x">y</a><i class="other"></i><a href="javascript:alert(1)">z</a>'
+    const out = applyHtmlEdits(kept, [{ path: [1, 0], tag: 'p', html }])
+    expect(out).toContain('xong. <b>Mới</b><a>y</a><a>z</a></p>')
+    expect(out).toContain('onclick="track()"')
+    expect(out).not.toContain('evil')
+  })
+
+  it('a handler of the file moved to another tag is new there', () => {
+    const html = 'Tải <b onclick="track()">file</b> xong.'
+    expect(applyHtmlEdits(kept, [{ path: [1, 0], tag: 'p', html }])).toContain('<p>Tải <b>file</b> xong.</p>')
+  })
+})

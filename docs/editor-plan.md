@@ -45,7 +45,7 @@ Work top to bottom; each step ships on its own.
 
 ## Step 4: HTML with formatting
 
-1. [x] `Ctrl+B` / `Ctrl+I` / `Ctrl+U`, links, pasted images inside a block; saved as that block's new inner HTML (sanitized).
+1. [x] `Ctrl+B` / `Ctrl+I` / `Ctrl+U`, links, pasted images inside a block; saved as that block's new inner HTML (sanitized: only what is new is cleaned; comments, handlers, data: links and empty icons the block already had in the file are kept).
 2. [x] `Enter` in a paragraph, heading or list item starts a new paragraph (a new item in a list), written right after that block in the file; `Shift+Enter` is a line break. The Paragraph type menu turns a block just added into a heading, paragraph or list (an item added to a list already in the file becomes a paragraph after that list). Tables: see 4.
 3. [x] A ⋮⋮ handle drags a block among its neighbours; the file gets the same elements in the new order (`order`), each keeping its own edits, with the spacing between them unchanged. Refused when text or a comment sits between them.
 4. [x] Tables: "Table" inserts one (header row + two rows, written with <thead>/<tbody>, a row per line); empty cells of the file are editable; a bar over the table adds/deletes rows and columns (new cells go on the same line as their neighbours, a deleted row takes its line), or deletes the table. Tables with colspan/rowspan: Raw.
